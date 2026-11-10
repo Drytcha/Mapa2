@@ -107,6 +107,7 @@ interface PlanningPanelProps {
   onOpenPdf: () => void;
   navPlaying: boolean;
   pickTarget: string | null;
+  clearNonce?: number;
   onSelectPlace: (index: number, place: Place) => void;
   onRemovePoint: (id: string) => void;
   onClearEndpoint: (id: string) => void;
@@ -227,6 +228,8 @@ export default function PlanningPanel(props: PlanningPanelProps) {
           avoid={props.avoid}
           isRouting={props.isRouting}
           pickTarget={props.pickTarget}
+          clearNonce={props.clearNonce}
+          hasRoute={props.routeReady || props.route.coords.length >= 2}
           addMode={props.addMode}
           onToggleAddMode={props.onToggleAddMode}
           onSelectPlace={props.onSelectPlace}
@@ -247,7 +250,7 @@ export default function PlanningPanel(props: PlanningPanelProps) {
             role="alert"
             className="mt-2 rounded-lg border border-warning/20 bg-warning-soft px-3 py-2 text-[10px] leading-relaxed text-warning"
           >
-            {props.routingError} Mapa może pokazywać poprzednią trasę. Eksport jest zablokowany do
+            {props.routingError} Poprzednia trasa została wyczyszczona. Eksport jest zablokowany do
             udanego przeliczenia.
           </div>
         )}

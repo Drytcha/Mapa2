@@ -121,7 +121,7 @@ export default function EndpointStopPicker({
           </p>
           {loading && (
             <p role="status" className="py-2 text-[10px] text-brand-ink">
-              Wczytywanie przystanków z rozkładu GTFS. Dostępne pozycje możesz już wybrać.
+              Pobieranie przystanków OSM. Dostępne pozycje możesz już wybrać.
             </p>
           )}
           {error && (
@@ -200,7 +200,7 @@ export default function EndpointStopPicker({
           )}
           <div className="mt-1 flex justify-between text-[8px] text-mute">
             <span>{filtered.length} pasujących przystanków</span>
-            <span>Rozkład GTFS Wałbrzych · tylko z kursami</span>
+            <span>© OpenStreetMap</span>
           </div>
         </div>
       )}

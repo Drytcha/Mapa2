@@ -265,16 +265,11 @@ export function writeSnapshot(snapshot: LastRouteSnapshot): boolean {
   }
 }
 
-/**
- * Removes the persisted route so a cleared plan does not come back after reload.
- * Fleet, speeds, schedule and brigade settings live under their own keys and are kept.
- */
-export function clearSnapshot(): boolean {
+export function clearLastRoute(): void {
   try {
     localStorage.removeItem(LAST_ROUTE_KEY);
     localStorage.removeItem(LEGACY_ROUTE_KEY);
-    return true;
   } catch {
-    return false;
+    /* Storage optional */
   }
 }

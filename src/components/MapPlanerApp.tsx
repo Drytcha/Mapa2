@@ -91,7 +91,7 @@ import {
   buildPlanKey,
   buildSnapshot,
   cleanSpeeds,
-  clearSnapshot,
+  clearLastRoute,
   defaultSpeedMap,
   loadLastRoute,
   snapshotSignature,
@@ -258,6 +258,7 @@ function MapPlanerWorkspace() {
   const [isRouting, setIsRouting] = useState(false);
   const [fitNonce, setFitNonce] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [clearNonce, setClearNonce] = useState(0);
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
   const [stepsOpen, setStepsOpen] = useState(false);
@@ -288,19 +289,17 @@ function MapPlanerWorkspace() {
     boot?.route ? snapshotSignature(boot as LastRouteSnapshot) : ""
   );
   const skipNextRouteKeyRef = useRef<string | null>(null);
-  /**
-   * The route restored from localStorage must not be re-fetched on first mount,
-   * but once the user changes or clears the plan the guard has to be dropped –
-   * otherwise re-entering the very same points would never produce a route.
-   */
-  const bootGuardRef = useRef<string | null>(boot?.route ? boot.planKey : null);
+  const bootPlanKeyRef = useRef<string | null>(
+    boot?.route ? buildPlanKey(initialWaypoints, boot.avoid) : null
+  );
+  const resolvedKeyRef = useRef<string>(
+    boot?.route ? buildPlanKey(initialWaypoints, boot.avoid) : ""
+  );
 
   const waypointsRef = useRef(waypoints);
   waypointsRef.current = waypoints;
   const avoidRef = useRef(avoid);
   avoidRef.current = avoid;
-  const resolvedKeyRef = useRef(resolvedKey);
-  resolvedKeyRef.current = resolvedKey;
 
   const showToast = useCallback((message: string) => setToastMessage(message), []);
   const closeToast = useCallback(() => setToastMessage(null), []);
@@ -350,18 +349,16 @@ function MapPlanerWorkspace() {
     const dismissEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setContextMenu(null);
     };
-    // Zooming with the wheel moves the map under the menu – close it so the
-    // menu never floats detached from the point it was opened for.
-    const dismissWheel = () => setContextMenu(null);
+    const dismissViewportChange = () => setContextMenu(null);
     document.addEventListener("pointerdown", dismissOutside);
-    document.addEventListener("wheel", dismissWheel, { passive: true });
     window.addEventListener("keydown", dismissEscape);
-    window.addEventListener("resize", dismissWheel);
+    window.addEventListener("resize", dismissViewportChange);
+    window.addEventListener("wheel", dismissViewportChange, { passive: true });
     return () => {
       document.removeEventListener("pointerdown", dismissOutside);
-      document.removeEventListener("wheel", dismissWheel);
       window.removeEventListener("keydown", dismissEscape);
-      window.removeEventListener("resize", dismissWheel);
+      window.removeEventListener("resize", dismissViewportChange);
+      window.removeEventListener("wheel", dismissViewportChange);
     };
   }, [contextMenu]);
 
@@ -376,16 +373,20 @@ function MapPlanerWorkspace() {
     !isRouting &&
     !addMode &&
     !routingError;
+  const activeRoute =
+    readyForRouting && !addMode && !routingError && resolvedKey === planKey
+      ? route
+      : EMPTY_ROUTE;
 
   // Detect traffic signals whenever route geometry updates
   useEffect(() => {
-    if (!routeReady || route.coords.length < 2) {
+    if (!routeReady || activeRoute.coords.length < 2) {
       setTrafficSignals([]);
       return;
     }
     const controller = new AbortController();
     setSignalsLoading(true);
-    detectTrafficSignalsAlongRoute(route.coords, controller.signal)
+    detectTrafficSignalsAlongRoute(activeRoute.coords, controller.signal)
       .then((res) => {
         if (!controller.signal.aborted) {
           setTrafficSignals(res.intersections);
@@ -400,11 +401,11 @@ function MapPlanerWorkspace() {
     return () => {
       controller.abort();
     };
-  }, [routeReady, route.coords]);
+  }, [routeReady, activeRoute.coords]);
 
   const baseComparisons = useMemo(
-    () => buildComparisons(route, undefined, avoid, speeds),
-    [route, avoid, speeds, fleet]
+    () => buildComparisons(activeRoute, undefined, avoid, speeds),
+    [activeRoute, avoid, speeds, fleet]
   );
 
   const scheduleContext = useMemo(
@@ -435,8 +436,8 @@ function MapPlanerWorkspace() {
 
   const exportReady = routeReady && !!metrics.journey;
   const navigationRoute = useMemo(
-    () => scaleRouteTimes(route, metrics.duration),
-    [route, metrics.duration]
+    () => scaleRouteTimes(activeRoute, metrics.duration),
+    [activeRoute, metrics.duration]
   );
   const visibleStops = useMemo(() => filterStops(busStops, busQuery), [busStops, busQuery]);
   const visibleLiveBuses = useMemo(
@@ -457,11 +458,11 @@ function MapPlanerWorkspace() {
     [waypoints]
   );
   const nearRoute = useMemo(() => {
-    if (!routeReady || route.coords.length < 2) return new Map<string, number>();
+    if (!routeReady || activeRoute.coords.length < 2) return new Map<string, number>();
     return new Map(
-      stopsAlongRoute(busStops, route.coords, 70).map((item) => [item.stop.id, item.distance])
+      stopsAlongRoute(busStops, activeRoute.coords, 70).map((item) => [item.stop.id, item.distance])
     );
-  }, [busStops, route.coords, routeReady]);
+  }, [busStops, activeRoute.coords, routeReady]);
   const nearRouteIds = useMemo(() => new Set(nearRoute.keys()), [nearRoute]);
   const mapStops = useMemo(() => {
     if (stopDisplay === "off") return [];
@@ -551,28 +552,33 @@ function MapPlanerWorkspace() {
   }, [theme]);
 
   useEffect(() => {
-    if (!readyForRouting) {
-      // Start or destination was cleared – the previously drawn line no longer
-      // belongs to any plan, so remove it from the map instead of leaving it behind.
-      requestIdRef.current += 1;
-      setIsRouting(false);
-      setRoutingError("");
-      setRoute((current) => (current.coords.length ? EMPTY_ROUTE : current));
-      setResolvedKey("");
-      return;
-    }
-    if (addMode) {
-      setIsRouting(false);
-      return;
-    }
     if (skipNextRouteKeyRef.current === planKey) {
       skipNextRouteKeyRef.current = null;
       return;
     }
-    if (bootGuardRef.current !== null) {
-      if (refreshTick === 0 && planKey === bootGuardRef.current) return;
-      bootGuardRef.current = null;
+    if (bootPlanKeyRef.current === planKey && refreshTick === 0) {
+      return;
     }
+    bootPlanKeyRef.current = null;
+
+    if (addMode || !readyForRouting) {
+      requestIdRef.current += 1;
+      resolvedKeyRef.current = "";
+      setIsRouting(false);
+      setRoutingError("");
+      setRoute(EMPTY_ROUTE);
+      setResolvedKey("");
+      setTrafficSignals([]);
+      return;
+    }
+
+    if (resolvedKeyRef.current !== planKey) {
+      resolvedKeyRef.current = "";
+      setRoute(EMPTY_ROUTE);
+      setResolvedKey("");
+      setTrafficSignals([]);
+    }
+
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
     setIsRouting(true);
@@ -585,6 +591,7 @@ function MapPlanerWorkspace() {
       })
         .then((data) => {
           if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+          resolvedKeyRef.current = planKey;
           setRoute(data);
           setResolvedKey(planKey);
           if (pendingFitRef.current) {
@@ -594,17 +601,15 @@ function MapPlanerWorkspace() {
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+          resolvedKeyRef.current = "";
+          setRoute(EMPTY_ROUTE);
+          setResolvedKey("");
+          setTrafficSignals([]);
           setRoutingError(
             error instanceof Error
               ? error.message
               : "Nie udało się pobrać trasy. Spróbuj ponownie."
           );
-          // The line on the map was computed for a different set of points –
-          // keep it only when a manual refresh of the very same plan failed.
-          if (resolvedKeyRef.current !== planKey) {
-            setRoute((current) => (current.coords.length ? EMPTY_ROUTE : current));
-            setResolvedKey("");
-          }
         })
         .finally(() => {
           if (!controller.signal.aborted && requestId === requestIdRef.current) {
@@ -682,9 +687,7 @@ function MapPlanerWorkspace() {
       setBusStops(stops);
       setBusScope(scope);
       if (!stops.length) {
-        setBusError(
-          "Brak przystanków obsługiwanych przez kursy w tym obszarze. Pokazywane są wyłącznie przystanki, na których zatrzymują się autobusy wg rozkładu GTFS Wałbrzych."
-        );
+        setBusError("Brak przystanków obsługiwanych przez autobusy i kursówki w tym obszarze.");
       }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -706,8 +709,6 @@ function MapPlanerWorkspace() {
     const bounds = mapRef.current?.getBounds();
     if (!bounds) return;
     setSelectedStop(null);
-    // Re-reads the GTFS timetable and keeps only stops with scheduled calls inside
-    // the current view – no OpenStreetMap stops are mixed in anymore.
     void loadBusStops(bounds, "Bieżący widok mapy", true);
   }, [loadBusStops]);
 
@@ -865,16 +866,20 @@ function MapPlanerWorkspace() {
   const handleMapContextMenu = (lat: number, lon: number, clientX: number, clientY: number) => {
     const bounds = mapAreaRef.current?.getBoundingClientRect();
     if (!bounds) return;
-    // Must match the rendered <MapContextMenu> box (w-[224px], header + 2 × h-10 rows).
     const menuWidth = 224;
-    const menuHeight = 136;
-    // The menu is positioned absolutely inside the map area, so convert the
-    // viewport coordinates of the click into map-area coordinates and keep the
-    // whole box inside the visible map.
-    const x = clientX - bounds.left;
-    const y = clientY - bounds.top;
-    const left = Math.max(8, Math.min(x, bounds.width - menuWidth - 8));
-    const top = Math.max(8, Math.min(y, bounds.height - menuHeight - 8));
+    const menuHeight = 148;
+    const rawLeft = clientX - bounds.left;
+    const rawTop = clientY - bounds.top;
+    const maxLeft = Math.max(8, bounds.width - menuWidth - 8);
+    const maxTop = Math.max(8, bounds.height - menuHeight - 8);
+    const left =
+      rawLeft + menuWidth <= bounds.width - 8
+        ? Math.max(8, rawLeft)
+        : Math.max(8, Math.min(rawLeft - menuWidth, maxLeft));
+    const top =
+      rawTop + menuHeight <= bounds.height - 8
+        ? Math.max(8, rawTop)
+        : Math.max(8, Math.min(rawTop - menuHeight, maxTop));
     setSelectedStop(null);
     setSelectedLiveBus(null);
     setPickTarget(null);
@@ -1036,43 +1041,41 @@ function MapPlanerWorkspace() {
 
   const handleClearEndpoint = (id: string) => {
     stopNavigation();
-    setContextMenu(null);
+    requestIdRef.current += 1;
+    bootPlanKeyRef.current = null;
+    resolvedKeyRef.current = "";
+    lastSavedSignatureRef.current = "";
+    clearLastRoute();
     setPickTarget((current) => (current === id ? null : current));
-    setWaypoints((current) =>
-      current.map((point) => (point.id === id ? createEmptyWaypoint(point.id) : point))
-    );
-    // Without a start or destination there is no valid plan – drop the stale
-    // geometry right away instead of keeping the previous route on the map,
-    // and forget the persisted plan so it is not resurrected on reload.
-    bootGuardRef.current = null;
     setRoutingError("");
     setRoute(EMPTY_ROUTE);
     setResolvedKey("");
     setTrafficSignals([]);
-    clearSnapshot();
-    lastSavedSignatureRef.current = "";
+    setClearNonce((current) => current + 1);
+    setWaypoints((current) =>
+      current.map((point) => (point.id === id ? createEmptyWaypoint(point.id) : point))
+    );
   };
 
   const handleClearRoute = () => {
     stopNavigation();
-    setAddMode(false);
-    setPickTarget(null);
-    setContextMenu(null);
-    setSelectedStop(null);
-    setRoutingError("");
-    setIsRouting(false);
     requestIdRef.current += 1;
     pendingFitRef.current = false;
-    skipNextRouteKeyRef.current = null;
-    bootGuardRef.current = null;
+    bootPlanKeyRef.current = null;
+    resolvedKeyRef.current = "";
+    lastSavedSignatureRef.current = "";
+    clearLastRoute();
+    setAddMode(false);
+    setPickTarget(null);
+    setRoutingError("");
     setRoute(EMPTY_ROUTE);
     setResolvedKey("");
     setTrafficSignals([]);
     setKursowkaOverlay(null);
+    setSelectedStop(null);
+    setContextMenu(null);
+    setClearNonce((current) => current + 1);
     setWaypoints(createInitialWaypoints());
-    // Forget the persisted plan too – otherwise the old route is restored on reload.
-    clearSnapshot();
-    lastSavedSignatureRef.current = "";
     showToast("Trasa wyczyszczona.");
   };
 
@@ -1272,16 +1275,19 @@ function MapPlanerWorkspace() {
     }
     if (plan.speeds) setSpeeds(plan.speeds);
     if (plan.schedule) setSchedule(plan.schedule);
+    bootPlanKeyRef.current = null;
+    const currentPlanKey = buildPlanKey(waypointsRef.current, avoidRef.current);
     setAvoid(plan.avoid);
     setWaypoints(plan.waypoints);
     const nextPlanKey = buildPlanKey(plan.waypoints, plan.avoid);
     if (plan.route && plan.route.engine === "osrm" && plan.route.coords.length >= 2) {
-      skipNextRouteKeyRef.current = nextPlanKey;
+      if (nextPlanKey !== currentPlanKey) skipNextRouteKeyRef.current = nextPlanKey;
+      resolvedKeyRef.current = nextPlanKey;
       setRoute(plan.route);
       setResolvedKey(nextPlanKey);
       setFitNonce((current) => current + 1);
     } else {
-      // No stored geometry – hide the previous line while the new plan is routed.
+      resolvedKeyRef.current = "";
       setRoute(EMPTY_ROUTE);
       setResolvedKey("");
       setTrafficSignals([]);
@@ -1337,16 +1343,17 @@ function MapPlanerWorkspace() {
       headsign?: string;
     }) => {
       stopNavigation();
+      requestIdRef.current += 1;
+      bootPlanKeyRef.current = null;
+      resolvedKeyRef.current = "";
       setAddMode(false);
       setPickTarget(null);
-      setContextMenu(null);
       setRoutingError("");
-      setBrigade({ line: payload.line, duty: payload.duty });
-      // A brand-new plan replaces the previous one: hide the old line immediately
-      // instead of showing it under the new pins until OSRM answers.
       setRoute(EMPTY_ROUTE);
       setResolvedKey("");
       setTrafficSignals([]);
+      setKursowkaOverlay(null);
+      setBrigade({ line: payload.line, duty: payload.duty });
       setWaypoints(payload.waypoints);
       if (payload.departureTime) {
         setSchedule((prev) => ({
@@ -1356,6 +1363,7 @@ function MapPlanerWorkspace() {
         }));
       }
       pendingFitRef.current = true;
+      setKursowkiOpen(false);
       setMobileExpanded(false);
       showToast(
         `Wczytano kurs kursówki ${payload.duty} (${payload.headsign || `${payload.waypoints.length} przyst.`}) do Planera.`
@@ -1441,9 +1449,9 @@ function MapPlanerWorkspace() {
     [navigationRoute, navProgress]
   );
   const suggestedStepIndex = useMemo(() => {
-    const index = route.steps.findIndex((step) => step.maneuver !== "depart");
+    const index = activeRoute.steps.findIndex((step) => step.maneuver !== "depart");
     return index >= 0 ? index : 0;
-  }, [route]);
+  }, [activeRoute]);
   const hudStepIndex = navActive ? currentStepInfo.index : suggestedStepIndex;
   const hudStep = navigationRoute.steps[hudStepIndex];
   const hudRemainingDistance = navActive
@@ -1453,8 +1461,8 @@ function MapPlanerWorkspace() {
     ? metrics.duration * (1 - navProgress)
     : hudStep?.duration ?? 0;
   const navCoord = useMemo<[number, number] | null>(
-    () => (navActive ? pointAtProgress(route, navProgress) : null),
-    [navActive, route, navProgress]
+    () => (navActive ? pointAtProgress(activeRoute, navProgress) : null),
+    [navActive, activeRoute, navProgress]
   );
 
   const panelProps = {
@@ -1467,7 +1475,7 @@ function MapPlanerWorkspace() {
     waypoints,
     vehicle,
     avoid,
-    route,
+    route: activeRoute,
     metrics,
     comparisons,
     isRouting,
@@ -1483,13 +1491,14 @@ function MapPlanerWorkspace() {
     onScheduleChange: handleScheduleChange,
     speeds,
     addMode,
-    automaticSpeed: estimateAverageSpeed(route.distance, metrics.automaticDuration),
+    automaticSpeed: estimateAverageSpeed(activeRoute.distance, metrics.automaticDuration),
     onSpeedChange: handleSpeedChange,
     onSaveVehicleAverageSpeed: handleSaveVehicleAverageSpeed,
     onToggleAddMode: handleToggleAddMode,
     onOpenPdf: openPdf,
     navPlaying,
     pickTarget,
+    clearNonce,
     onSelectPlace: handleSelectPlace,
     onRemovePoint: handleRemovePoint,
     onClearEndpoint: handleClearEndpoint,
@@ -1532,7 +1541,7 @@ function MapPlanerWorkspace() {
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <TopBar
-        route={route}
+        route={activeRoute}
         isRouting={isRouting}
         routeReady={routeReady}
         theme={theme}
@@ -1566,7 +1575,7 @@ function MapPlanerWorkspace() {
 
         <main
           ref={mapAreaRef}
-          className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#dfe6d9] dark:bg-[#232932]"
+          className="relative min-h-0 min-w-0 flex-1 select-none overflow-hidden bg-[#dfe6d9] dark:bg-[#232932]"
         >
           <Suspense
             fallback={
@@ -1577,7 +1586,7 @@ function MapPlanerWorkspace() {
           >
             <MapView
               ref={mapRef}
-              route={route}
+              route={activeRoute}
               waypoints={waypoints}
               mapStyle={mapStyle}
               theme={theme}
@@ -1619,55 +1628,49 @@ function MapPlanerWorkspace() {
             />
           </Suspense>
 
-          <div className="pointer-events-none absolute inset-0 z-[500]">
-            <div className="absolute left-3 top-5 flex max-w-[calc(100%-72px)] flex-col gap-2 lg:top-3">
+          <div className="pointer-events-none absolute inset-0 z-[500] select-none">
+            <div className="pointer-events-none absolute left-3 top-5 flex max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
               {addMode ? (
-                <div className="pointer-events-auto">
-                  <MapDrawingBanner
-                    count={assignedCount}
-                    onDone={() => setAddMode(false)}
-                    onUndo={() => {
-                      if (waypoints.length > 2) {
-                        handleRemovePoint(waypoints[waypoints.length - 2].id);
-                      }
-                    }}
-                  />
-                </div>
-              ) : pickTarget ? (
-                <div className="pointer-events-auto">
-                  <PickBanner
-                    target={
-                      pickTarget === waypoints[0]?.id
-                        ? "start"
-                        : pickTarget === waypoints[waypoints.length - 1]?.id
-                          ? "meta"
-                          : "punkt"
+                <MapDrawingBanner
+                  count={assignedCount}
+                  onDone={() => setAddMode(false)}
+                  onUndo={() => {
+                    if (waypoints.length > 2) {
+                      handleRemovePoint(waypoints[waypoints.length - 2].id);
                     }
-                    onCancel={() => setPickTarget(null)}
-                  />
-                </div>
+                  }}
+                />
+              ) : pickTarget ? (
+                <PickBanner
+                  target={
+                    pickTarget === waypoints[0]?.id
+                      ? "start"
+                      : pickTarget === waypoints[waypoints.length - 1]?.id
+                        ? "meta"
+                        : "punkt"
+                  }
+                  onCancel={() => setPickTarget(null)}
+                />
               ) : (
-                <div className="flex flex-col gap-2">
-                  <div className="pointer-events-auto">
-                    <LiveFleetControl
-                      showLiveBuses={showLiveBuses}
-                      onToggleLiveBuses={() => setShowLiveBuses((c) => !c)}
-                      operatorFilter={operatorFilter}
-                      onOperatorFilter={setOperatorFilter}
-                      liveVehicles={liveVehicles}
-                      liveTraffic={liveTraffic}
-                      liveLoading={liveLoading}
-                      onRefreshLive={() => void fetchLiveBuses(true)}
-                      signalCount={trafficSignals.length}
-                      showTrafficSignals={showTrafficSignals}
-                      onToggleTrafficSignals={() => setShowTrafficSignals((c) => !c)}
-                      kursowkaOverlayTitle={kursowkaOverlay?.title ?? null}
-                      onClearKursowkaOverlay={() => setKursowkaOverlay(null)}
-                      onSelectBus={handleSelectBus}
-                    />
-                  </div>
+                <div className="pointer-events-none flex flex-col items-start gap-2">
+                  <LiveFleetControl
+                    showLiveBuses={showLiveBuses}
+                    onToggleLiveBuses={() => setShowLiveBuses((c) => !c)}
+                    operatorFilter={operatorFilter}
+                    onOperatorFilter={setOperatorFilter}
+                    liveVehicles={liveVehicles}
+                    liveTraffic={liveTraffic}
+                    liveLoading={liveLoading}
+                    onRefreshLive={() => void fetchLiveBuses(true)}
+                    signalCount={trafficSignals.length}
+                    showTrafficSignals={showTrafficSignals}
+                    onToggleTrafficSignals={() => setShowTrafficSignals((c) => !c)}
+                    kursowkaOverlayTitle={kursowkaOverlay?.title ?? null}
+                    onClearKursowkaOverlay={() => setKursowkaOverlay(null)}
+                    onSelectBus={handleSelectBus}
+                  />
                   <MapRouteCard
-                    route={route}
+                    route={activeRoute}
                     waypoints={waypoints}
                     metrics={metrics}
                     vehicle={vehicle}
@@ -1677,7 +1680,6 @@ function MapPlanerWorkspace() {
                   />
                   {selectedStop && (
                     <BusStopCard
-                      className="pointer-events-auto"
                       stop={selectedStop}
                       alreadyInRoute={selectedStopInRoute}
                       canAdd={waypoints.length < MAX_WAYPOINTS}
@@ -1692,23 +1694,21 @@ function MapPlanerWorkspace() {
                     />
                   )}
                   {selectedLiveBus && (
-                    <div className="pointer-events-auto">
-                      <LiveBusCard
-                        bus={selectedLiveBus}
-                        onClose={() => setSelectedLiveBus(null)}
-                        onOpenKursowka={(code) => handleOpenKursowkaFromItem("", code)}
-                        onSetOperator={handleSetOperator}
-                        onCenter={() =>
-                          mapRef.current?.centerOn(selectedLiveBus.lat, selectedLiveBus.lon, 16)
-                        }
-                      />
-                    </div>
+                    <LiveBusCard
+                      bus={selectedLiveBus}
+                      onClose={() => setSelectedLiveBus(null)}
+                      onOpenKursowka={(code) => handleOpenKursowkaFromItem("", code)}
+                      onSetOperator={handleSetOperator}
+                      onCenter={() =>
+                        mapRef.current?.centerOn(selectedLiveBus.lat, selectedLiveBus.lon, 16)
+                      }
+                    />
                   )}
                 </div>
               )}
             </div>
 
-            <div className="pointer-events-auto absolute right-3 top-3">
+            <div className="pointer-events-none absolute right-3 top-3">
               <MapControls
                 mapStyle={mapStyle}
                 onMapStyle={setMapStyle}
@@ -1729,35 +1729,39 @@ function MapPlanerWorkspace() {
               />
             </div>
 
-            <div className="pointer-events-auto absolute bottom-8 left-3 hidden lg:block">
-              <NavigationHud
-                active={navActive}
-                playing={navPlaying}
-                progress={navProgress}
-                step={hudStep}
-                stepIndex={hudStepIndex}
-                totalSteps={route.steps.length}
-                remainingDistance={hudRemainingDistance}
-                remainingTime={hudRemainingTime}
-                vehicle={vehicle}
-                vehicleShort={metrics.short}
-                onStart={startNavigation}
-                onToggle={toggleNavigation}
-                onStop={stopNavigation}
-                onOpenSteps={() => setStepsOpen(true)}
-              />
-            </div>
+            {routeReady && (
+              <div className="pointer-events-none absolute bottom-10 left-3 hidden lg:block">
+                <NavigationHud
+                  active={navActive}
+                  playing={navPlaying}
+                  progress={navProgress}
+                  step={hudStep}
+                  stepIndex={hudStepIndex}
+                  totalSteps={activeRoute.steps.length}
+                  remainingDistance={hudRemainingDistance}
+                  remainingTime={hudRemainingTime}
+                  vehicle={vehicle}
+                  vehicleShort={metrics.short}
+                  onStart={startNavigation}
+                  onToggle={toggleNavigation}
+                  onStop={stopNavigation}
+                  onOpenSteps={() => setStepsOpen(true)}
+                />
+              </div>
+            )}
 
-            <div className="pointer-events-auto absolute bottom-8 right-3 hidden xl:block">
-              <QuickComparison
-                metrics={comparisons}
-                activeVehicle={vehicle}
-                onSelectVehicle={handleVehicleChange}
-                onOpenReport={() => setReportOpen(true)}
-              />
-            </div>
+            {routeReady && (
+              <div className="pointer-events-none absolute bottom-8 right-3 hidden xl:block">
+                <QuickComparison
+                  metrics={comparisons}
+                  activeVehicle={vehicle}
+                  onSelectVehicle={handleVehicleChange}
+                  onOpenReport={() => setReportOpen(true)}
+                />
+              </div>
+            )}
 
-            <div className="absolute bottom-[14px] left-3 hidden items-center gap-2 rounded-full border border-line/70 bg-surface/80 px-2 py-1 backdrop-blur sm:flex">
+            <div className="pointer-events-none absolute bottom-2.5 left-3 hidden select-none items-center gap-2 rounded-full border border-line/70 bg-surface/80 px-2 py-1 backdrop-blur sm:flex">
               <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
                 <span className="h-1.5 w-1.5 rounded-full bg-brand" /> A start
               </span>
@@ -1855,13 +1859,13 @@ function MapPlanerWorkspace() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        engine={route.engine === "osrm" ? "OSRM (bez klucza)" : "Schemat demonstracyjny"}
+        engine={activeRoute.engine === "osrm" ? "OSRM (bez klucza)" : "Schemat demonstracyjny"}
       />
       <ReportDialog
         open={reportOpen}
         onClose={() => setReportOpen(false)}
         waypoints={waypoints}
-        route={route}
+        route={activeRoute}
         metrics={comparisons}
         activeVehicle={vehicle}
         brigade={brigade}

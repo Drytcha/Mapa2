@@ -13,13 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { BusStop } from "@/lib/types";
-import {
-  BUS_STOP_SOURCE_LABEL,
-  describeCalls,
-  filterStops,
-  groupStopsByName,
-  stopCallsTotal,
-} from "@/lib/busStops";
+import { filterStops, groupStopsByName } from "@/lib/busStops";
 import { cn } from "@/utils/cn";
 import { CollapseToggle, FieldLabel } from "./UI";
 import GtfsSchedule from "./GtfsSchedule";
@@ -206,14 +200,9 @@ export default function BusStopPanel({
           </div>
 
           <div className="mt-1.5 flex items-center justify-between gap-2">
-            <p
-              className="flex min-w-0 items-center gap-1 text-[7.5px] font-semibold text-mute"
-              title={`${scopeLabel} · ${BUS_STOP_SOURCE_LABEL} (bez przystanków OSM i nieobsługiwanych)`}
-            >
+            <p className="flex min-w-0 items-center gap-1 text-[7.5px] font-semibold text-mute">
               <Layers3 className="h-2.5 w-2.5 shrink-0" />
-              <span className="truncate">
-                Zawsze na mapie · {scopeLabel} · {BUS_STOP_SOURCE_LABEL}
-              </span>
+              <span className="truncate">Zawsze na mapie · {scopeLabel}</span>
             </p>
             <button
               type="button"
@@ -317,22 +306,9 @@ export default function BusStopPanel({
                               {line}
                             </span>
                           ))}
-                          {group.lines.length > 6 && (
-                            <span className="text-[7.5px] font-semibold text-mute">
-                              +{group.lines.length - 6}
-                            </span>
-                          )}
-                          {member.calls && stopCallsTotal(member) > 0 && (
-                            <span
-                              className="metric text-[7.5px] font-semibold text-mute"
-                              title={`Kursy wg rozkładu GTFS: dni robocze ${member.calls.weekday}, soboty ${member.calls.saturday}, niedziele ${member.calls.sunday}`}
-                            >
-                              {describeCalls(member)}
-                            </span>
-                          )}
                           {group.lines.length === 0 && !Number.isFinite(nearDistance) && (
                             <span className="text-[7.5px] text-mute">
-                              {member.operator ?? "Rozkład jazdy Wałbrzych"}
+                              {member.operator ?? "Przystanek OSM"}
                             </span>
                           )}
                         </span>

@@ -729,7 +729,7 @@ export function SettingsDialog({
             ],
             [
               "Overpass API / OSM",
-              "Używany wyłącznie do wykrywania sygnalizacji świetlnej wzdłuż trasy. Przystanki z OpenStreetMap nie trafiają już na mapę — nie da się dla nich potwierdzić, że zatrzymują się tam autobusy.",
+              "Uzupełnianie informacji o wiatach przystankowych dla aktywnych przystanków z rozkładu Wałbrzych oraz wykrywanie sygnalizacji świetlnej. Nieobsługiwane przystanki OSM bez kursów nie są dodawane.",
             ],
             [
               "OSM Standard",
@@ -756,8 +756,8 @@ export function SettingsDialog({
               "Numery brygad pochodzą z rozkładu pracy kierowców operatora — tych samych otwartych danych, na których opiera się livetransport.eu. Dzięki temu brygady są przypisane poprawnie (np. 2-01 … 2-08, a brygady wieloliniowe jak 8-02 widoczne są pod każdą obsługiwaną linią) i nie powstają numery fikcyjne. Wybrana data jest zawsze weryfikowana z okresem ważności feedu GTFS (feed_info.txt) i dokładnym kalendarzem (calendar_dates.txt). Rozkład brygad jest cache'owany w IndexedDB, więc wczytany dzień działa także offline; dla dat spoza okna źródła aplikacja pokazuje kursy GTFS bez wymyślania numerów.",
             ],
             [
-              "Przystanki — tylko obsługiwane przez kursy",
-              "Na mapie i w listach są wyłącznie przystanki, na których zgodnie z aktualnym rozkładem GTFS Wałbrzych zatrzymuje się co najmniej jeden kurs (kursówka) w okresie ważności feedu. Pomijane są: przystanki ze stops.txt bez żadnego kursu, przejazdy bez zatrzymania (pickup/drop-off = 1), pozycje znane tylko z migawki rozklad.walbrzych.eu (np. Mezimesti, Kosynierów) oraz przystanki z OpenStreetMap. Linie przy przystanku pochodzą z kursów, które realnie się na nim zatrzymują; karta przystanku pokazuje liczbę kursów w dni robocze, soboty i niedziele.",
+              "Przystanki — rozkład Wałbrzych",
+              "Wyłącznie czynne przystanki faktycznie obsługiwane przez autobusy, kursy i kursówki w aktualnym rozkładzie Wałbrzych GTFS (bez nieużywanych słupków technicznych, sezonowych lub nieistniejących w kursówkach).",
             ],
             [
               "Sygnalizacja świetlna i korki",

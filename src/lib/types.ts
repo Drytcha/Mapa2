@@ -87,8 +87,6 @@ export interface BusStop {
   gtfsId?: string;
   /** Where the stop comes from: Wałbrzych timetable (GTFS + rozklad.walbrzych.eu) or OpenStreetMap only. */
   source?: "timetable" | "osm";
-  /** Scheduled bus calls at this stop (weekday / Saturday / Sunday) – proof the stop is in service. */
-  calls?: { weekday: number; saturday: number; sunday: number };
 }
 
 export interface RouteStep {

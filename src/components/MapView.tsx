@@ -236,20 +236,19 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       mapClickRef.current(event.latlng.lat, event.latlng.lng);
     });
     map.on("contextmenu", (event: L.LeafletMouseEvent) => {
-      const original = event.originalEvent as Event | undefined;
-      if (original) L.DomEvent.stop(original);
-      // Derive the screen position from the geographic point instead of trusting
-      // `clientX/clientY` of the original event: Leaflet synthesises contextmenu on
-      // long-press (touch) and the map container is offset from the viewport by the
-      // side panel and top bar. Container point + container rect is always exact.
-      const containerPoint = map.latLngToContainerPoint(event.latlng);
+      const original = event.originalEvent as MouseEvent | undefined;
+      if (!original) return;
+      L.DomEvent.stop(original);
       const rect = container.getBoundingClientRect();
-      contextMenuRef.current(
-        event.latlng.lat,
-        event.latlng.lng,
-        rect.left + containerPoint.x,
-        rect.top + containerPoint.y
-      );
+      const clientX =
+        original.clientX === 0 && original.clientY === 0 && event.containerPoint
+          ? rect.left + event.containerPoint.x
+          : original.clientX;
+      const clientY =
+        original.clientX === 0 && original.clientY === 0 && event.containerPoint
+          ? rect.top + event.containerPoint.y
+          : original.clientY;
+      contextMenuRef.current(event.latlng.lat, event.latlng.lng, clientX, clientY);
     });
 
     const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
@@ -351,7 +350,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     const hitArea = L.polyline(route.coords, {
       color: "#000000",
-      weight: 26,
+      weight: 16,
       opacity: 0.001,
       lineCap: "round",
     }).addTo(group);
@@ -360,10 +359,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     hitArea.on("mousedown", (event: L.LeafletMouseEvent) => {
       const mapInstance = mapRef.current;
-      if (!mapInstance || !event.originalEvent || pickModeRef.current) return;
-      // Only the primary button starts the "drag a new via point" gesture –
-      // the right button must fall through to the map context menu.
-      if ((event.originalEvent as MouseEvent).button !== 0) return;
+      if (
+        !mapInstance ||
+        !event.originalEvent ||
+        event.originalEvent.button !== 0 ||
+        pickModeRef.current
+      ) {
+        return;
+      }
       L.DomEvent.stop(event.originalEvent);
       const ghost = L.marker(event.latlng, {
         icon: L.divIcon({
@@ -417,11 +420,15 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     });
     hitArea.bringToFront();
 
+    let fitTimer: number | undefined;
     if (!hasFittedRef.current || lastFitNonceRef.current !== fitNonce) {
       hasFittedRef.current = true;
       lastFitNonceRef.current = fitNonce;
-      window.setTimeout(fitBounds, 140);
+      fitTimer = window.setTimeout(fitBounds, 140);
     }
+    return () => {
+      if (fitTimer !== undefined) window.clearTimeout(fitTimer);
+    };
   }, [route, mapStyle, fitNonce]);
 
   /* GTFS Kursówka shape overlay */
@@ -513,27 +520,32 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
       const company = OPERATOR_STYLES[bus.operatorKey] ?? OPERATOR_STYLES.other;
       const vehNum = formatVehicleNumber(bus.vehicleId);
-      const label = bus.kursowka
-        ? `${bus.kursowka} ${vehNum}`
-        : bus.routeName
-          ? `${bus.routeName} ${vehNum}`
-          : vehNum;
+      const lineText = bus.routeName || "—";
+      const kursowkaText = bus.kursowka || bus.brigade || "—";
+      const labelHtml = [
+        `<span>${escapeHtml(lineText)}</span>`,
+        `<span class="live-bus-sep">|</span>`,
+        `<span>${escapeHtml(kursowkaText)}</span>`,
+        `<span class="live-bus-sep">|</span>`,
+        `<span>${escapeHtml(vehNum)}</span>`,
+      ].join("");
       const speedText = formatSpeed(bus.speedKmh);
       const delayText = formatDelay(bus.delaySeconds);
       const opLetter = bus.operatorKey === "mzuk" ? "M" : bus.operatorKey === "ska" ? "Ś" : "?";
       const arrowHtml =
         typeof bus.bearing === "number"
-          ? `<span class="live-bus-arrow" style="transform:rotate(${bus.bearing}deg)">▲</span>`
+          ? `<span class="live-bus-arrow" style="transform:rotate(${bus.bearing}deg)" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L20.5 20.5L12 16.2L3.5 20.5L12 2Z" fill="currentColor" stroke="rgba(255,255,255,0.9)" stroke-width="2.2" stroke-linejoin="round"/></svg></span>`
           : "";
       const html = [
         `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};--operator-bg:${company.bg};--operator-fg:${company.fg}">`,
         `<div class="live-bus${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
         `<span class="live-bus-op live-bus-op--${bus.operatorKey}">${opLetter}</span>${arrowHtml}`,
-        `<span class="live-bus-label">${escapeHtml(label)}</span></div>`,
+        `<span class="live-bus-label">${labelHtml}</span></div>`,
         `<div class="live-bus-chip"><span>${escapeHtml(speedText)}</span>`,
+        `<span class="live-bus-sep">|</span>`,
         `<span class="live-bus-delay" title="${escapeHtml(describeDelay(bus.delaySeconds))}">${escapeHtml(delayText)}</span></div></div>`,
       ].join("");
-      const tooltip = `Linia ${escapeHtml(bus.routeName)} · Kursówka ${escapeHtml(bus.kursowka || "—")} · Wóz #${escapeHtml(bus.vehicleId)} (${escapeHtml(bus.operatorName)}) · ${escapeHtml(speedText)} · ${escapeHtml(describeDelay(bus.delaySeconds))}`;
+      const tooltip = `${escapeHtml(lineText)} | ${escapeHtml(kursowkaText)} | ${escapeHtml(vehNum)} (${escapeHtml(bus.operatorName)}) · ${escapeHtml(speedText)} | ${escapeHtml(describeDelay(bus.delaySeconds))}`;
 
       const prev = existing.get(bus.vehicleId);
       if (prev) {
@@ -541,10 +553,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         if (prev.html !== html) {
           prev.marker.setIcon(
             L.divIcon({
-              className: "pin-wrap",
+              className: "pin-wrap pin-wrap--passive",
               html,
-              iconSize: [144, 48],
-              iconAnchor: [72, 13],
+              iconSize: [210, 56],
+              iconAnchor: [105, 14],
             })
           );
           prev.html = html;
@@ -559,10 +571,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         }
       } else {
         const icon = L.divIcon({
-          className: "pin-wrap",
+          className: "pin-wrap pin-wrap--passive",
           html,
-          iconSize: [144, 48],
-          iconAnchor: [72, 13],
+          iconSize: [210, 56],
+          iconAnchor: [105, 14],
         });
         const marker = L.marker([bus.lat, bus.lon], {
           icon,
@@ -792,10 +804,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const tileTone = mapStyle === "satellite" ? "satellite" : theme;
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="relative h-full w-full select-none overflow-hidden">
       <div
         ref={containerRef}
-        className="h-full w-full outline-none"
+        className="h-full w-full select-none outline-none"
         style={{ cursor: pickMode ? "crosshair" : undefined }}
         role="application"
         aria-label="Interaktywna mapa trasy"

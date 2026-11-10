@@ -28,6 +28,7 @@ interface WaypointFieldProps {
   index: number;
   total: number;
   isPicking: boolean;
+  clearNonce: number;
   onSelect: (place: Place) => void;
   onRemove: () => void;
   onClearEndpoint: () => void;
@@ -43,6 +44,7 @@ function WaypointField({
   index,
   total,
   isPicking,
+  clearNonce,
   onSelect,
   onRemove,
   onClearEndpoint,
@@ -67,8 +69,14 @@ function WaypointField({
   const label = isFirst ? "Start" : isLast ? "Meta" : `Przez ${index}`;
 
   useEffect(() => {
-    setQuery(isWaypointSet(point) ? point.label : "");
-  }, [point?.id, point?.label, point?.empty]);
+    const hasPoint = isWaypointSet(point);
+    setQuery(hasPoint ? point.label : "");
+    if (!hasPoint) {
+      setRemote([]);
+      setSearchError("");
+      setOpen(false);
+    }
+  }, [point?.id, point?.label, point?.empty, clearNonce]);
 
   useEffect(() => () => searchController.current?.abort(), []);
 
@@ -354,6 +362,8 @@ interface RouteFormProps {
   avoid: AvoidOptions;
   isRouting: boolean;
   pickTarget: string | null;
+  clearNonce?: number;
+  hasRoute?: boolean;
   onSelectPlace: (index: number, place: Place) => void;
   onRemovePoint: (id: string) => void;
   onClearEndpoint: (id: string) => void;
@@ -378,6 +388,8 @@ export default function RouteForm({
   avoid,
   isRouting,
   pickTarget,
+  clearNonce = 0,
+  hasRoute = false,
   onSelectPlace,
   onRemovePoint,
   onClearEndpoint,
@@ -442,7 +454,7 @@ export default function RouteForm({
           </Pill>
         </button>
         <div className="flex shrink-0 items-center gap-1">
-          {assignedCount > 0 && (
+          {(assignedCount > 0 || waypoints.length > 2 || hasRoute) && (
             <IconButton label="Wyczyść całą trasę" onClick={onClearRoute} className="h-6 w-6">
               <RotateCcw className="h-3 w-3" strokeWidth={2.2} />
             </IconButton>
@@ -494,6 +506,7 @@ export default function RouteForm({
                   index={index}
                   total={waypoints.length}
                   isPicking={pickTarget === point.id}
+                  clearNonce={clearNonce}
                   onSelect={(place) => onSelectPlace(index, place)}
                   onRemove={() => onRemovePoint(point.id)}
                   onClearEndpoint={() => onClearEndpoint(point.id)}

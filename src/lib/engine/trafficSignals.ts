@@ -196,13 +196,44 @@ export async function detectTrafficSignalsAlongRoute(
     );
   }
 
-  // Degree bounding-box slack for 26 m (~0.0004 deg) skips distant segments in O(1)
-  const degSlack = 0.00045;
-  const hits: DetectedSignalIntersection[] = [];
-  for (const node of nodes) {
+  // Pre-group raw traffic signal nodes into physical intersections (single-linkage 70 m).
+  // Large multi-arm junctions in Wałbrzych span up to ~104 m across stop lines, while distinct
+  // intersections are >= 115 m apart.
+  const clusterByNodeIndex = new Int32Array(nodes.length);
+  let nextClusterId = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (clusterByNodeIndex[i] !== 0) continue;
+    nextClusterId += 1;
+    clusterByNodeIndex[i] = nextClusterId;
+    const queue = [i];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const curNode = nodes[cur];
+      for (let j = 0; j < nodes.length; j += 1) {
+        if (clusterByNodeIndex[j] !== 0) continue;
+        if (haversineMeters(curNode.lat, curNode.lon, nodes[j].lat, nodes[j].lon) <= 70) {
+          clusterByNodeIndex[j] = nextClusterId;
+          queue.push(j);
+        }
+      }
+    }
+  }
+
+  // Tight 15 m match prevents grabbing signals on perpendicular side roads or opposite approaches.
+  const MAX_DIST_METERS = 15;
+  const degSlack = 0.0003;
+  interface RawSignalHit extends DetectedSignalIntersection {
+    dist: number;
+    clusterId: number;
+  }
+  const hits: RawSignalHit[] = [];
+
+  for (let nodeIdx = 0; nodeIdx < nodes.length; nodeIdx += 1) {
+    const node = nodes[nodeIdx];
     if (node.lat < south || node.lat > north || node.lon < west || node.lon > east) continue;
-    let bestDist = 26;
-    let bestOffset = 0;
+
+    // Collect distinct passes near this node (supporting loops / bidirectional routes).
+    const passes: Array<{ dist: number; offset: number }> = [];
     for (let i = 1; i < coords.length; i += 1) {
       const a = coords[i - 1];
       const b = coords[i];
@@ -214,38 +245,62 @@ export async function detectTrafficSignalsAlongRoute(
       if (node.lon < minLon || node.lon > maxLon) continue;
 
       const seg = pointToSegmentMeters(node.lat, node.lon, a[0], a[1], b[0], b[1]);
-      if (seg.distance <= bestDist) {
-        bestDist = seg.distance;
-        bestOffset = cumMeters[i - 1] + (cumMeters[i] - cumMeters[i - 1]) * seg.t;
+      if (seg.distance > MAX_DIST_METERS) continue;
+
+      const offset = cumMeters[i - 1] + (cumMeters[i] - cumMeters[i - 1]) * seg.t;
+      const samePass = passes.find((p) => Math.abs(offset - p.offset) <= 150);
+      if (samePass) {
+        if (seg.distance < samePass.dist) {
+          samePass.dist = seg.distance;
+          samePass.offset = offset;
+        }
+      } else {
+        passes.push({ dist: seg.distance, offset });
       }
     }
-    if (bestDist < 26) {
+
+    for (const pass of passes) {
       hits.push({
         id: node.id,
         lat: node.lat,
         lon: node.lon,
-        routeOffsetMeters: Math.round(bestOffset),
+        routeOffsetMeters: Math.round(pass.offset),
+        dist: pass.dist,
+        clusterId: clusterByNodeIndex[nodeIdx],
       });
     }
   }
 
-  hits.sort((a, b) => a.routeOffsetMeters - b.routeOffsetMeters);
-  const clustered: DetectedSignalIntersection[] = [];
+  // Sort by closest perpendicular distance to the route first so each intersection picks
+  // the signal actually lying on the bus's road rather than a side-street node.
+  hits.sort((a, b) => a.dist - b.dist || a.routeOffsetMeters - b.routeOffsetMeters);
+
+  const clustered: RawSignalHit[] = [];
   for (const hit of hits) {
-    const prev = clustered[clustered.length - 1];
-    if (
-      prev &&
-      (Math.abs(hit.routeOffsetMeters - prev.routeOffsetMeters) <= 55 ||
-        haversineMeters(hit.lat, hit.lon, prev.lat, prev.lon) <= 45)
-    ) {
-      continue;
-    }
+    const duplicate = clustered.some(
+      (existing) =>
+        (existing.clusterId === hit.clusterId &&
+          Math.abs(hit.routeOffsetMeters - existing.routeOffsetMeters) <= 150) ||
+        (Math.abs(hit.routeOffsetMeters - existing.routeOffsetMeters) <= 115 &&
+          haversineMeters(hit.lat, hit.lon, existing.lat, existing.lon) <= 105)
+    );
+    if (duplicate) continue;
     clustered.push(hit);
   }
 
+  clustered.sort((a, b) => a.routeOffsetMeters - b.routeOffsetMeters);
+  const intersections: DetectedSignalIntersection[] = clustered.map(
+    ({ id, lat, lon, routeOffsetMeters }) => ({
+      id,
+      lat,
+      lon,
+      routeOffsetMeters,
+    })
+  );
+
   return {
-    intersections: clustered,
-    count: clustered.length,
+    intersections,
+    count: intersections.length,
     source,
   };
 }

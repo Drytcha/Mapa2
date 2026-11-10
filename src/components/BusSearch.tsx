@@ -63,8 +63,8 @@ export default function BusSearch({
               : "Szukaj autobusu: kursówka 2/03 lub wóz #404"
           }
           className={cn(
-            "min-w-0 flex-1 bg-transparent text-xs text-ink outline-none placeholder:text-mute",
-            compact ? "h-9" : "h-11"
+            "min-w-0 flex-1 select-text bg-transparent text-xs text-ink outline-none placeholder:text-mute",
+            compact ? "h-8" : "h-11"
           )}
           onChange={(event) => {
             setQuery(event.target.value);

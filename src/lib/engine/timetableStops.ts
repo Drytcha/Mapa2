@@ -1,17 +1,11 @@
 import type { BusStop } from "@/lib/types";
-import { ensureGtfsSeeded, type GtfsMemoryStore } from "./gtfsStore";
-import { loadOfficialStops } from "./officialStops";
+import { ensureGtfsSeeded } from "./gtfsStore";
 
 export interface TimetableStopsResult {
   stops: BusStop[];
   meta: {
-    /** Stops shown = GTFS stops with at least one scheduled call on an active service. */
     total: number;
-    /** All stops listed in stops.txt (including ones no trip visits). */
     fromGtfs: number;
-    /** GTFS stops dropped because no active trip calls there. */
-    unservedGtfs: number;
-    /** rozklad.walbrzych.eu stops without a GTFS counterpart – not shown (no trips). */
     officialOnly: number;
     officialSource: string;
     officialFetchedAt: string | null;
@@ -62,49 +56,16 @@ export function invalidateTimetableStops(): void {
 
 export async function getTimetableStops(force = false): Promise<TimetableStopsResult> {
   if (!force && cache && Date.now() - cache.at < TTL_MS) return cache.value;
+
   const store = await ensureGtfsSeeded();
-  const value = buildTimetableStops(store);
-  cache = { at: Date.now(), value };
-  return value;
-}
-
-/**
- * Pure builder (no I/O) so the "only served stops" rule can be verified against a
- * real GTFS archive in tests: every returned stop is a GTFS stop with at least one
- * scheduled call on an active service; nothing else is added.
- */
-export function buildTimetableStops(store: Pick<GtfsMemoryStore, "base">): TimetableStopsResult {
-  const official = loadOfficialStops();
-
   const stops: BusStop[] = [];
-  const usedOfficial = new Set<number>();
-  let unservedGtfs = 0;
 
   for (const g of store.base.stops) {
-    // Only stops that buses really call at: at least one boarding/alighting
-    // stop_time on a trip of a service active inside the feed window.
-    if (!store.base.servedStopIds.has(g.id)) {
-      unservedGtfs += 1;
-      continue;
-    }
-    let best: (typeof official.stops)[number] | null = null;
-    let bestDistance = 45;
-    for (const o of official.stops) {
-      const d = metres(g.lat, g.lon, o.lat, o.lon);
-      if (d > bestDistance) continue;
-      const a = fold(g.name);
-      const b = fold(o.name);
-      const compatible = d <= 12 || a === b || a.includes(b) || b.includes(a);
-      if (!compatible) continue;
-      best = o;
-      bestDistance = d;
-    }
-    if (best) usedOfficial.add(best.id);
-    // Lines come from the trips that actually call here; the official snapshot
-    // is only a fallback when the feed has no route information for the stop.
-    const gtfsLines = store.base.linesByStopId.get(g.id);
-    const lines = new Set<string>(gtfsLines?.size ? gtfsLines : best?.lines ?? []);
-    const calls = store.base.callsByStopId.get(g.id);
+    if (!store.base.activeStopIds.has(g.id)) continue;
+    if (!(store.stopTimesByStopId.get(g.id)?.length)) continue;
+    const lines = store.base.linesByStopId.get(g.id);
+    if (!lines || lines.size === 0) continue;
+
     stops.push({
       id: `tt-${g.id}`,
       gtfsId: g.id,
@@ -117,21 +78,7 @@ export function buildTimetableStops(store: Pick<GtfsMemoryStore, "base">): Timet
       kind: "bus_stop",
       source: "timetable",
       ref: g.platformCode || undefined,
-      calls: calls ? { ...calls } : undefined,
     });
-  }
-
-  // Stops known only from the rozklad.walbrzych.eu snapshot (no GTFS counterpart)
-  // have no trips, departures or kursówki behind them – they are counted for
-  // diagnostics but deliberately NOT added to the map.
-  let officialOnly = 0;
-  for (const o of official.stops) {
-    if (usedOfficial.has(o.id) || o.lines.length === 0) continue;
-    const near = stops.some(
-      (s) => metres(s.lat, s.lon, o.lat, o.lon) <= 30 && fold(s.name) === fold(o.name)
-    );
-    if (near) continue;
-    officialOnly += 1;
   }
 
   const groups = new Map<string, BusStop[]>();
@@ -153,15 +100,16 @@ export function buildTimetableStops(store: Pick<GtfsMemoryStore, "base">): Timet
   }
 
   stops.sort((a, b) => a.name.localeCompare(b.name, "pl"));
-  return {
+  const value: TimetableStopsResult = {
     stops,
     meta: {
       total: stops.length,
-      fromGtfs: store.base.stops.length,
-      unservedGtfs,
-      officialOnly,
-      officialSource: official.source,
-      officialFetchedAt: official.fetchedAt,
+      fromGtfs: stops.length,
+      officialOnly: 0,
+      officialSource: store.feed.source,
+      officialFetchedAt: store.feed.generatedAt,
     },
   };
+  cache = { at: Date.now(), value };
+  return value;
 }

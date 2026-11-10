@@ -112,7 +112,7 @@ interface RawTripDetail {
   stopCount: number;
 }
 
-export interface ParsedArchiveBase {
+interface ParsedArchiveBase {
   source: string;
   feedVersion: string;
   routes: GtfsRouteRecord[];
@@ -130,23 +130,9 @@ export interface ParsedArchiveBase {
   rawTripsById: Map<string, RawTripDetail>;
   rawStopTimesByTrip: Map<string, GtfsStopTimeRecord[]>;
   shapesById: Map<string, [number, number][]>;
-  /** Lines (route short names) that really call at the stop on an active service. */
   linesByStopId: Map<string, Set<string>>;
   topDestByStopId: Map<string, string>;
-  /**
-   * Stops with at least one boarding/alighting stop_time on a trip whose service is
-   * active inside the feed validity window. Stops of stops.txt that no trip visits
-   * (or that buses only pass through) are NOT in this set.
-   */
-  servedStopIds: Set<string>;
-  /** Scheduled calls per stop on the representative weekday / Saturday / Sunday. */
-  callsByStopId: Map<string, StopServiceCalls>;
-}
-
-export interface StopServiceCalls {
-  weekday: number;
-  saturday: number;
-  sunday: number;
+  activeStopIds: Set<string>;
 }
 
 interface StopTimeWithTripMeta {
@@ -384,7 +370,7 @@ function clock(totalMinutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedArchiveBase {
+function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedArchiveBase {
   const files = unzipSync(zipBytes);
   const readTxt = (name: string) => (files[name] ? strFromU8(files[name]) : "");
 
@@ -416,6 +402,7 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
 
   const stopsById = new Map<string, GtfsStopRecord>();
   for (const s of parseCsvRows(readTxt("stops.txt"))) {
+    if (s.location_type === "1") continue;
     const lat = Number.parseFloat(s.stop_lat);
     const lon = Number.parseFloat(s.stop_lon);
     if (!s.stop_id || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
@@ -540,28 +527,19 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
     });
   }
 
+  const activeCalendarServices = new Set<string>();
+  for (const [dateKey, sids] of serviceIdsByDate) {
+    if (feedStartDate > 0 && dateKey < feedStartDate) continue;
+    if (feedEndDate > 0 && dateKey > feedEndDate) continue;
+    for (const sid of sids) activeCalendarServices.add(sid);
+  }
+  const hasCalendarFilter = activeCalendarServices.size > 0;
+
   const rawTrips: RawTripDetail[] = [];
   const rawTripsById = new Map<string, RawTripDetail>();
   const linesByStopId = new Map<string, Set<string>>();
   const destCountByStop = new Map<string, Map<string, number>>();
-  const servedStopIds = new Set<string>();
-  const callsByStopId = new Map<string, StopServiceCalls>();
-
-  // Services that run on at least one date inside the feed validity window.
-  // Trips of other services exist in the archive but never operate, so the
-  // stops they list must not count as "served by buses".
-  const activeServiceIds = new Set<string>();
-  for (const [serviceId, dates] of rawServiceDates) {
-    for (const d of dates) {
-      if ((feedStartDate && d < feedStartDate) || (feedEndDate && d > feedEndDate)) continue;
-      activeServiceIds.add(serviceId);
-      break;
-    }
-  }
-  // Defensive fallback for feeds without usable calendar_dates: treat every trip as active
-  // rather than hiding every stop.
-  const isActiveService = (serviceId: string) =>
-    activeServiceIds.size === 0 || activeServiceIds.has(serviceId);
+  const activeStopIds = new Set<string>();
 
   for (const t of parseCsvRows(readTxt("trips.txt"))) {
     const sts = rawStopTimesByTrip.get(t.trip_id);
@@ -574,10 +552,6 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
     const firstStop = stopsById.get(first.stopId);
     const lastStop = stopsById.get(last.stopId);
     const lastStopName = lastStop?.name ?? last.stopId;
-    const tripActive = isActiveService(t.service_id);
-    const onWeekday = dayTypeServices.weekday.has(t.service_id);
-    const onSaturday = dayTypeServices.saturday.has(t.service_id);
-    const onSunday = dayTypeServices.sunday.has(t.service_id);
 
     const detail: RawTripDetail = {
       rawTripId: t.trip_id,
@@ -599,12 +573,12 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
     rawTrips.push(detail);
     rawTripsById.set(t.trip_id, detail);
 
-    if (!tripActive) continue;
+    if (hasCalendarFilter && !activeCalendarServices.has(t.service_id)) continue;
+
     for (const st of sts) {
-      // pickup_type = 1 and drop_off_type = 1 means the bus drives past without
-      // serving the stop – such a stop_time does not make the stop "used".
+      if (!stopsById.has(st.stopId)) continue;
       if (st.pickupType === 1 && st.dropOffType === 1) continue;
-      servedStopIds.add(st.stopId);
+      activeStopIds.add(st.stopId);
 
       let lineSet = linesByStopId.get(st.stopId);
       if (!lineSet) {
@@ -619,15 +593,6 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
         destCountByStop.set(st.stopId, counts);
       }
       counts.set(lastStopName, (counts.get(lastStopName) ?? 0) + 1);
-
-      let calls = callsByStopId.get(st.stopId);
-      if (!calls) {
-        calls = { weekday: 0, saturday: 0, sunday: 0 };
-        callsByStopId.set(st.stopId, calls);
-      }
-      if (onWeekday) calls.weekday += 1;
-      if (onSaturday) calls.saturday += 1;
-      if (onSunday) calls.sunday += 1;
     }
   }
 
@@ -703,8 +668,7 @@ export function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedA
     shapesById,
     linesByStopId,
     topDestByStopId,
-    servedStopIds,
-    callsByStopId,
+    activeStopIds,
   };
 }
 
@@ -807,7 +771,7 @@ function buildDutyIndex(base: ParsedArchiveBase, observations: DutyObservation[]
       source: base.source,
       version: `${base.feedVersion}+${DUTY_SCHEMA_VERSION}`,
       generatedAt: new Date().toISOString(),
-      stopsCount: base.servedStopIds.size,
+      stopsCount: base.activeStopIds.size,
       routesCount: base.routes.length,
       tripsCount: totalTripsCount,
       kursowkiCount: kursowki.length,
@@ -1329,8 +1293,10 @@ export async function getStopDepartures(options: {
   let matched = options.stopId ? (store.base.stopsById.get(options.stopId) ?? null) : null;
   let bestDist = matched ? distanceMeters(lat, lon, matched.lat, matched.lon) : 180;
 
+  const candidateStops = store.base.stops.filter((s) => store.base.activeStopIds.has(s.id));
+
   if (!matched) {
-    for (const s of store.base.stops) {
+    for (const s of candidateStops) {
       const dist = distanceMeters(lat, lon, s.lat, s.lon);
       if (dist > bestDist) continue;
       if (targetNorm) {
@@ -1347,7 +1313,7 @@ export async function getStopDepartures(options: {
 
   if (!matched) {
     bestDist = 95;
-    for (const s of store.base.stops) {
+    for (const s of candidateStops) {
       const dist = distanceMeters(lat, lon, s.lat, s.lon);
       if (dist < bestDist) {
         bestDist = dist;
@@ -1504,4 +1470,100 @@ export async function getStopDepartures(options: {
     },
     departures: results.slice(0, limit),
   };
+}
+
+export async function getVehicleRemainingStops(
+  bus: LiveBusVehicle
+): Promise<LiveBusVehicle["upcomingStops"]> {
+  const fallback = bus.upcomingStops ?? [];
+  const store = await ensureGtfsSeeded();
+
+  const firstLive = fallback[0];
+  const refMs = firstLive?.scheduledDeparture || bus.timestamp || Date.now();
+  const refDt = DateTime.fromMillis(refMs, { zone: ZONE });
+  // Handle late-night GTFS trips (>24:00) by checking both current day and previous service day
+  const candidateDays = [refDt.startOf("day"), refDt.minus({ days: 1 }).startOf("day")];
+
+  let matchedTripId: string | null =
+    bus.tripId && store.base.rawStopTimesByTrip.has(bus.tripId) ? bus.tripId : null;
+  let matchedDayStartMs = refDt.startOf("day").toMillis();
+
+  if (matchedTripId && firstLive) {
+    const sts = store.base.rawStopTimesByTrip.get(matchedTripId);
+    const matchSt = sts?.find((s) => s.stopSequence === firstLive.sequence);
+    if (matchSt) {
+      for (const day of candidateDays) {
+        const at = day.toMillis() + matchSt.departureMinutes * 60_000;
+        if (Math.abs(at - firstLive.scheduledDeparture) <= 120_000) {
+          matchedDayStartMs = day.toMillis();
+          break;
+        }
+      }
+    }
+  }
+
+  if (!matchedTripId && firstLive && bus.routeName) {
+    const wantedRoute = bus.routeName.trim().toUpperCase();
+    const wantedStopNorm = normalizeStopName(firstLive.name);
+    const wantedHeadsignNorm = bus.headsign ? normalizeStopName(bus.headsign) : "";
+
+    let bestScore = -1;
+    for (const day of candidateDays) {
+      const dateKey = Number(day.toFormat("yyyyMMdd"));
+      const activeServices = store.base.serviceIdsByDate.get(dateKey);
+      const dayStartMs = day.toMillis();
+      const targetMin = Math.round((firstLive.scheduledDeparture - dayStartMs) / 60_000);
+      if (targetMin < 0 || targetMin > 30 * 60) continue;
+
+      for (const trip of store.base.rawTrips) {
+        if (trip.routeShort.toUpperCase() !== wantedRoute) continue;
+        if (activeServices && activeServices.size > 0 && !activeServices.has(trip.serviceId)) {
+          continue;
+        }
+        const sts = store.base.rawStopTimesByTrip.get(trip.rawTripId);
+        if (!sts || !sts.length) continue;
+        const st = sts.find((item) => item.stopSequence === firstLive.sequence);
+        if (!st) continue;
+        if (Math.abs(st.departureMinutes - targetMin) > 2) continue;
+
+        const stopRec = store.base.stopsById.get(st.stopId);
+        if (!stopRec || stopRec.normalizedName !== wantedStopNorm) continue;
+
+        let score = 10 - Math.abs(st.departureMinutes - targetMin);
+        if (wantedHeadsignNorm && normalizeStopName(trip.headsign) === wantedHeadsignNorm) {
+          score += 5;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          matchedTripId = trip.rawTripId;
+          matchedDayStartMs = dayStartMs;
+        }
+      }
+    }
+  }
+
+  if (!matchedTripId) return fallback;
+
+  const sts = store.base.rawStopTimesByTrip.get(matchedTripId);
+  if (!sts || !sts.length) return fallback;
+
+  const minSeq = firstLive ? firstLive.sequence : sts[0].stopSequence;
+  const liveBySeq = new Map(fallback.map((item) => [item.sequence, item] as const));
+
+  const full: LiveBusVehicle["upcomingStops"] = [];
+  for (const st of sts) {
+    if (st.stopSequence < minSeq) continue;
+    const liveItem = liveBySeq.get(st.stopSequence);
+    const stopRec = store.base.stopsById.get(st.stopId);
+    full.push({
+      sequence: st.stopSequence,
+      name: liveItem?.name ?? stopRec?.name ?? st.stopId,
+      scheduledArrival:
+        liveItem?.scheduledArrival ?? matchedDayStartMs + st.arrivalMinutes * 60_000,
+      scheduledDeparture:
+        liveItem?.scheduledDeparture ?? matchedDayStartMs + st.departureMinutes * 60_000,
+    });
+  }
+
+  return full.length >= fallback.length ? full : fallback;
 }

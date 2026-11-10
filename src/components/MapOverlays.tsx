@@ -1,4 +1,4 @@
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import {
   ArrowUp,
   ArrowUpRight,
@@ -50,7 +50,7 @@ import type {
 import { MAX_WAYPOINTS } from "@/lib/types";
 import { formatBrigadeTitle } from "@/lib/brigade";
 import { isWaypointSet } from "@/lib/data";
-import { formatCalls, stopDisplayName } from "@/lib/busStops";
+import { stopDisplayName } from "@/lib/busStops";
 import { formatDistance, formatDuration, formatDurationShort } from "@/lib/geo";
 import { cn } from "@/utils/cn";
 import { OPERATOR_STYLES } from "@/lib/transit";
@@ -68,6 +68,7 @@ import { Pill, VehicleGlyph } from "./UI";
 
 export type StopDisplayMode = "all" | "route" | "off";
 import GtfsSchedule from "./GtfsSchedule";
+import { getVehicleRemainingStops } from "@/lib/engine/gtfsStore";
 import { journeyClock, journeyDateTime } from "@/lib/schedule";
 
 export function MapRouteCard({
@@ -94,8 +95,9 @@ export function MapRouteCard({
   const vias = waypoints.slice(1, -1).filter(isWaypointSet);
   const live = routeReady && route.engine !== "demo";
   const brigadeTitle = formatBrigadeTitle(brigade);
+  if (!routeReady && !hasStart && !hasEnd) return null;
   return (
-    <div className="hidden w-[328px] max-w-[calc(100vw-116px)] rounded-[14px] border border-line/80 bg-surface/93 px-3 py-2.5 shadow-[0_12px_35px_rgba(13,42,28,0.13)] backdrop-blur-xl dark:bg-surface/90 sm:block">
+    <div className="pointer-events-none hidden w-[292px] max-w-[calc(100vw-116px)] select-none rounded-[14px] border border-line/80 bg-surface/90 px-3 py-2 shadow-[0_12px_35px_rgba(13,42,28,0.13)] backdrop-blur-xl dark:bg-surface/88 sm:block">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="grid h-5 w-5 place-items-center rounded-md bg-brand text-on-brand">
@@ -235,6 +237,7 @@ export function LiveFleetControl({
   onClearKursowkaOverlay: () => void;
   onSelectBus: (bus: LiveBusVehicle) => void;
 }) {
+  const [legendExpanded, setLegendExpanded] = useState(false);
   const counts = liveTraffic?.operatorBreakdown ?? {
     mzuk: liveVehicles.filter((v) => v.operatorKey === "mzuk").length,
     ska: liveVehicles.filter((v) => v.operatorKey === "ska").length,
@@ -242,8 +245,8 @@ export function LiveFleetControl({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+    <div className="pointer-events-none flex flex-wrap items-center gap-1.5 select-none">
+      <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-1 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
         <button
           type="button"
           onClick={onToggleLiveBuses}
@@ -253,7 +256,7 @@ export function LiveFleetControl({
           )}
         >
           <Radio className={cn("h-2.5 w-2.5", showLiveBuses && "animate-pulse")} />
-          GPS Wałbrzych ({liveVehicles.length})
+          GPS ({liveVehicles.length})
         </button>
 
         {showLiveBuses && (
@@ -277,7 +280,7 @@ export function LiveFleetControl({
                     : "text-mute hover:bg-raised hover:text-ink"
                 )}
               >
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-1">
                   {item.id !== "all" && (
                     <span
                       className="h-2 w-2 rounded-full"
@@ -303,8 +306,18 @@ export function LiveFleetControl({
         </button>
       </div>
 
+      <div className="pointer-events-auto w-[225px] max-w-full sm:w-[248px]">
+        <BusSearch vehicles={liveVehicles} onSelectVehicle={onSelectBus} compact />
+      </div>
+
       {showLiveBuses && (
-        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl md:flex">
+        <button
+          type="button"
+          onClick={() => setLegendExpanded((v) => !v)}
+          title="Pokaż / ukryj legendę punktualności GPS"
+          aria-expanded={legendExpanded}
+          className="pointer-events-auto flex w-fit flex-wrap items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2 py-1.5 text-[7.5px] font-bold text-mute shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl transition-colors hover:text-ink"
+        >
           {(
             [
               ["late-high", "− opóźnienie > 3 min"],
@@ -313,39 +326,36 @@ export function LiveFleetControl({
               ["early-big", "+ przyspieszenie > 1 min"],
             ] as Array<[DelayTone, string]>
           ).map(([tone, text]) => (
-            <span key={tone} className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
+            <span key={tone} className="flex items-center gap-1" title={text}>
               <span
                 className="h-2 w-2 rounded-full ring-1 ring-black/10"
                 style={{ backgroundColor: DELAY_STYLES[tone].bg }}
               />
-              {text}
+              {legendExpanded && <span>{text}</span>}
             </span>
           ))}
-        </div>
+          {!legendExpanded && <span>Legenda</span>}
+        </button>
       )}
-
-      <div className="w-full max-w-[360px]">
-        <BusSearch vehicles={liveVehicles} onSelectVehicle={onSelectBus} compact />
-      </div>
 
       {signalCount > 0 && (
         <button
           type="button"
           onClick={onToggleTrafficSignals}
           className={cn(
-            "flex h-8 items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] backdrop-blur-xl transition-colors",
+            "pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] backdrop-blur-xl transition-colors",
             showTrafficSignals
               ? "border-amber-500/40 bg-surface/94 text-amber-700 dark:text-amber-300"
               : "border-line/80 bg-surface/94 text-mute"
           )}
         >
           <TrafficCone className="h-3 w-3" />
-          Światła na trasie: <span className="metric">{signalCount}</span>
+          Światła: <span className="metric">{signalCount}</span>
         </button>
       )}
 
       {kursowkaOverlayTitle && (
-        <div className="flex h-8 items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
+        <div className="pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
           <BusFront className="h-3 w-3" />
           <span>{kursowkaOverlayTitle}</span>
           <button
@@ -386,9 +396,34 @@ export function LiveBusCard({
     { key: "other", label: "Inny" },
   ];
 
+  const [fullStops, setFullStops] = useState<LiveBusVehicle["upcomingStops"]>(bus.upcomingStops);
+  const [stopsLoading, setStopsLoading] = useState(false);
+
+  const firstSeq = bus.upcomingStops[0]?.sequence ?? -1;
+  const firstDep = bus.upcomingStops[0]?.scheduledDeparture ?? 0;
+
+  useEffect(() => {
+    setFullStops(bus.upcomingStops);
+    let cancelled = false;
+    setStopsLoading(true);
+    getVehicleRemainingStops(bus)
+      .then((stops) => {
+        if (!cancelled && stops.length > 0) setFullStops(stops);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setStopsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bus.vehicleId, bus.tripId, bus.routeName, bus.headsign, firstSeq, firstDep]);
+
+  const vehNum = formatVehicleNumber(bus.vehicleId);
+
   return (
-    <div className="w-[318px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] backdrop-blur-xl animate-rise-in dark:bg-surface/93">
-      <div className="flex items-start gap-2.5 border-b border-line/70 bg-brand-soft/80 px-3 py-2.5">
+    <div className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] backdrop-blur-xl animate-rise-in dark:bg-surface/93">
+      <div className="flex shrink-0 items-start gap-2.5 border-b border-line/70 bg-brand-soft/80 px-3 py-2.5">
         <span
           className="metric mt-px grid h-8 min-w-[34px] shrink-0 place-items-center rounded-lg px-1.5 text-[12px] font-extrabold shadow-xs"
           style={{
@@ -402,9 +437,12 @@ export function LiveBusCard({
           <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.15em] text-brand-ink/80">
             GPS na żywo · {bus.operatorName}
           </span>
-          <h3 className="mt-0.5 text-[13px] font-extrabold leading-tight tracking-[-0.02em] text-ink">
-            Linia {bus.routeName} · Kursówka {bus.kursowka || "—"}{" "}
-            <span className="font-mono text-brand-ink">{formatVehicleNumber(bus.vehicleId)}</span>
+          <h3 className="mt-0.5 flex flex-wrap items-center gap-1 text-[13px] font-extrabold leading-tight tracking-[-0.02em] text-ink">
+            <span>{bus.routeName || "—"}</span>
+            <span className="text-mute">|</span>
+            <span>{bus.kursowka || bus.brigade || "—"}</span>
+            <span className="text-mute">|</span>
+            <span className="font-mono text-brand-ink">{vehNum}</span>
           </h3>
         </div>
         <button
@@ -417,7 +455,7 @@ export function LiveBusCard({
         </button>
       </div>
 
-      <div className="px-3 py-2.5 text-[10px]">
+      <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-3 py-2.5 text-[10px]">
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-mute">Końcowy:</span>
           <span className="truncate font-bold text-ink">
@@ -427,23 +465,24 @@ export function LiveBusCard({
         <div className="mt-1 flex items-center justify-between gap-2">
           <span className="font-semibold text-mute">Numer taborowy:</span>
           <span className="metric font-extrabold text-ink">
-            Wóz {formatVehicleNumber(bus.vehicleId)}
+            Wóz {vehNum}
             {bus.model ? ` · ${bus.model}` : ""}
           </span>
         </div>
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="font-semibold text-mute">Prędkość:</span>
-          <span className="metric font-extrabold text-ink">{formatSpeed(bus.speedKmh)}</span>
-        </div>
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="font-semibold text-mute">Punktualność:</span>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <span className="font-semibold text-mute">Prędkość | Punktualność:</span>
           <span
-            className="metric rounded-md px-1.5 py-0.5 font-extrabold"
+            className="metric inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-extrabold"
             style={{ backgroundColor: style.bg, color: style.fg }}
-            title={style.label}
+            title={`${formatSpeed(bus.speedKmh)} | ${describeDelay(bus.delaySeconds)}`}
           >
-            {formatDelay(bus.delaySeconds)} · {describeDelay(bus.delaySeconds)}
+            <span>{formatSpeed(bus.speedKmh)}</span>
+            <span className="opacity-60">|</span>
+            <span>{formatDelay(bus.delaySeconds)}</span>
           </span>
+        </div>
+        <div className="mt-0.5 text-right text-[8.5px] font-semibold text-mute">
+          {describeDelay(bus.delaySeconds)}
         </div>
 
         <div className="mt-2 border-t border-line/70 pt-2">
@@ -490,23 +529,57 @@ export function LiveBusCard({
           </div>
         </div>
 
-        {bus.upcomingStops.length > 0 && (
+        {(fullStops.length > 0 || stopsLoading) && (
           <div className="mt-2 border-t border-line/70 pt-2">
-            <span className="block text-[8px] font-extrabold uppercase tracking-[0.14em] text-mute">
-              Najbliższe przystanki
-            </span>
-            <ul className="mt-1 space-y-1">
-              {bus.upcomingStops.slice(0, 3).map((st) => {
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[8px] font-extrabold uppercase tracking-[0.14em] text-mute">
+                Przystanki do końcowego ({fullStops.length})
+              </span>
+              {stopsLoading && <Loader2 className="h-3 w-3 animate-spin text-mute" />}
+            </div>
+            <ul
+              className="scroll-area mt-1.5 max-h-[200px] space-y-1 overflow-y-auto pr-1"
+              aria-label="Lista wszystkich przystanków aż do końcowego"
+            >
+              {fullStops.map((st, idx) => {
                 const dt = new Date(st.scheduledDeparture + bus.delaySeconds * 1000);
                 const clock = `${String(dt.getHours()).padStart(2, "0")}:${String(
                   dt.getMinutes()
                 ).padStart(2, "0")}`;
+                const isNext = idx === 0;
+                const isFinal = idx === fullStops.length - 1;
                 return (
                   <li
                     key={`${st.sequence}-${st.name}`}
-                    className="flex items-center justify-between gap-2 rounded bg-raised px-2 py-1 text-[9px]"
+                    className={cn(
+                      "flex items-center gap-2 rounded px-2 py-1 text-[9px]",
+                      isFinal
+                        ? "border border-brand/30 bg-brand-soft/75"
+                        : isNext
+                          ? "border border-line-strong bg-raised"
+                          : "bg-raised/70"
+                    )}
                   >
-                    <span className="truncate font-semibold text-ink">{st.name}</span>
+                    <span
+                      className={cn(
+                        "metric grid h-4 min-w-[18px] shrink-0 place-items-center rounded px-1 text-[8px] font-bold",
+                        isFinal
+                          ? "bg-brand text-on-brand"
+                          : isNext
+                            ? "bg-highlight text-[#16240f]"
+                            : "bg-surface text-mute"
+                      )}
+                    >
+                      {idx + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-semibold text-ink">
+                      {st.name}
+                    </span>
+                    {isFinal && (
+                      <span className="shrink-0 rounded bg-brand/15 px-1 py-0.5 text-[7px] font-extrabold uppercase tracking-wide text-brand-ink">
+                        Końcowy
+                      </span>
+                    )}
                     <span className="metric shrink-0 font-bold text-brand-ink">{clock}</span>
                   </li>
                 );
@@ -607,8 +680,8 @@ export function MapControls({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative flex flex-col items-end gap-1.5">
-      <div className="flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+    <div className="pointer-events-none relative flex select-none flex-col items-end gap-1.5">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
         {(
           [
             { id: "all", icon: Bus, label: "Pokaż wszystkie przystanki" },
@@ -636,7 +709,7 @@ export function MapControls({
           );
         })}
       </div>
-      <div className="flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
         <button
           type="button"
           onClick={onRefreshBusStops}
@@ -668,7 +741,7 @@ export function MapControls({
         <span className="mx-1.5 h-px bg-line" />
       </div>
 
-      <div className="flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
@@ -714,7 +787,7 @@ export function MapControls({
       </div>
 
       {open && (
-        <div className="absolute right-10 top-0 w-[186px] rounded-xl border border-line bg-surface p-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.22)] animate-fade-in">
+        <div className="pointer-events-auto absolute right-10 top-0 w-[186px] rounded-xl border border-line bg-surface p-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.22)] animate-fade-in">
           <div className="px-2 py-1 text-[7.5px] font-extrabold uppercase tracking-[0.16em] text-mute">
             Warstwy podkładu
           </div>
@@ -780,8 +853,7 @@ export const MapContextMenu = forwardRef<
       role="menu"
       aria-label="Menu punktu na mapie"
       style={{ left, top }}
-      onContextMenu={(event) => event.preventDefault()}
-      className="pointer-events-auto absolute z-[1150] w-[224px] overflow-hidden rounded-[8px] border border-line bg-surface p-1 shadow-[0_12px_32px_rgba(13,42,28,0.18)] animate-fade-in"
+      className="pointer-events-auto absolute z-[1150] w-[224px] select-none overflow-hidden rounded-[8px] border border-line bg-surface p-1 shadow-[0_12px_32px_rgba(13,42,28,0.18)] animate-fade-in"
     >
       <div className="px-2.5 py-2">
         <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-mute">
@@ -830,7 +902,7 @@ export function PickBanner({
         ? "Kliknij mapę albo przystanek, aby ustawić METĘ"
         : "Kliknij mapę albo przystanek, aby ustawić ten punkt";
   return (
-    <div className="flex max-w-[460px] items-center gap-2 rounded-full border border-line bg-ink px-2 py-1.5 text-canvas shadow-[0_12px_30px_rgba(0,0,0,0.25)] animate-rise-in">
+    <div className="pointer-events-auto flex w-fit max-w-[460px] select-none items-center gap-2 rounded-full border border-line bg-ink px-2 py-1.5 text-canvas shadow-[0_12px_30px_rgba(0,0,0,0.25)] animate-rise-in">
       <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-highlight text-[#13210f]">
         <MousePointer2 className="h-3 w-3" strokeWidth={2.6} />
       </span>
@@ -863,7 +935,7 @@ export function MapDrawingBanner({
         : `Każde kliknięcie dodaje punkt przed metą · ${count} / ${MAX_WAYPOINTS}`;
   return (
     <div
-      className="max-w-[430px] rounded-xl border border-brand/20 bg-surface/95 p-3 shadow-lg backdrop-blur animate-rise-in"
+      className="pointer-events-auto w-fit max-w-[360px] select-none rounded-xl border border-brand/20 bg-surface/95 p-3 shadow-lg backdrop-blur animate-rise-in"
       role="status"
     >
       <div className="flex items-center gap-2">
@@ -928,10 +1000,22 @@ export function NavigationHud({
   onStop: () => void;
   onOpenSteps: () => void;
 }) {
+  const [minimized, setMinimized] = useState(false);
   return (
-    <div className="w-[326px] max-w-[calc(100vw-116px)] overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92">
-      <div className="flex items-center justify-between border-b border-line/80 bg-raised/70 px-2.5 py-1.5">
-        <div className="flex items-center gap-1.5">
+    <div
+      className={cn(
+        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92",
+        minimized ? "w-fit" : "w-[292px] max-w-[calc(100vw-116px)]"
+      )}
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-line/80 bg-raised/70 px-2.5 py-1.5">
+        <button
+          type="button"
+          onClick={() => setMinimized((v) => !v)}
+          aria-expanded={!minimized}
+          className="flex items-center gap-1.5 text-left"
+          title={minimized ? "Rozwiń nawigację" : "Zwiń nawigację"}
+        >
           <span
             className={cn(
               "h-1.5 w-1.5 rounded-full",
@@ -939,90 +1023,116 @@ export function NavigationHud({
             )}
           />
           <span className="text-[8px] font-extrabold uppercase tracking-[0.16em] text-mute">
-            {active ? "Nawigacja aktywna" : "Nawigacja krok po kroku"}
+            {active ? "Nawigacja aktywna" : "Nawigacja"}
           </span>
-        </div>
-        <span className="font-mono text-[8px] font-bold text-mute">
-          {active
-            ? `${String(Math.min(stepIndex + 1, totalSteps)).padStart(2, "0")} / ${String(
-                totalSteps
-              ).padStart(2, "0")}`
-            : `${totalSteps} manewrów`}
-        </span>
-      </div>
-      <div className="flex items-start gap-2.5 px-2.5 py-2">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
-          <ArrowUp className="h-4 w-4" strokeWidth={2.4} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="line-clamp-2 text-[10.5px] font-extrabold leading-snug tracking-[-0.01em] text-ink">
-            {step?.instruction ?? "Przelicz trasę, aby pobrać instrukcje."}
-          </p>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="metric text-[8.5px] font-bold text-brand-ink">
-              za {formatDistance(step?.distance ?? 0)}
-            </span>
-            <span className="h-2 w-px bg-line" />
-            <span className="metric text-[8px] text-mute">
-              {formatDuration(step?.duration ?? 0)}
-            </span>
-            <span className="ml-auto flex items-center gap-0.5 text-[7.5px] font-semibold text-mute">
-              <VehicleGlyph id={vehicle} className="h-2.5 w-2.5" />
-              {vehicleShort ?? "Autobus"}
-            </span>
-          </div>
-        </div>
-      </div>
-      <div className="px-2.5">
-        <div className="h-1 overflow-hidden rounded-full bg-soft">
-          <div
-            className="h-full rounded-full bg-brand transition-[width] duration-300"
-            style={{ width: `${Math.max(active ? 2 : 0, progress * 100)}%` }}
-          />
-        </div>
-        {active && (
-          <div className="mt-1 flex items-center justify-between text-[7.5px] font-semibold text-mute">
-            <span>
-              {Math.round(progress * 100)}% trasy · pozostało {formatDistance(remainingDistance)}
-            </span>
-            <span className="metric font-bold text-ink">{formatDurationShort(remainingTime)}</span>
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-1.5 px-2.5 py-2">
-        <button
-          type="button"
-          onClick={active ? onToggle : onStart}
-          className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-md bg-highlight text-[9px] font-extrabold text-[#16240f] transition-all hover:brightness-[0.97]"
-        >
-          {active && playing ? (
-            <Pause className="h-3 w-3" fill="currentColor" strokeWidth={0} />
+          <span className="font-mono text-[8px] font-bold text-mute">
+            ·{" "}
+            {active
+              ? `${String(Math.min(stepIndex + 1, totalSteps)).padStart(2, "0")}/${String(
+                  totalSteps
+                ).padStart(2, "0")}`
+              : `${totalSteps} man.`}
+          </span>
+          {minimized ? (
+            <ChevronUp className="h-3 w-3 text-mute" />
           ) : (
-            <Play className="h-3 w-3" fill="currentColor" strokeWidth={0} />
+            <ChevronDown className="h-3 w-3 text-mute" />
           )}
-          {active ? (playing ? "Pauza" : "Wznów") : "Uruchom podgląd"}
         </button>
-        <button
-          type="button"
-          onClick={onOpenSteps}
-          className="grid h-7 w-7 place-items-center rounded-md border border-line bg-surface text-ink-soft transition-colors hover:bg-soft hover:text-ink"
-          title="Wszystkie instrukcje"
-          aria-label="Wszystkie instrukcje"
-        >
-          <ListOrdered className="h-3.5 w-3.5" />
-        </button>
-        {active && (
+        {minimized && (
           <button
             type="button"
-            onClick={onStop}
-            className="grid h-7 w-7 place-items-center rounded-md border border-line bg-surface text-mute transition-colors hover:bg-soft hover:text-danger"
-            title="Zakończ nawigację"
-            aria-label="Zakończ nawigację"
+            onClick={active ? onToggle : onStart}
+            className="flex h-5 items-center gap-1 rounded bg-highlight px-2 text-[8px] font-extrabold text-[#16240f]"
           >
-            <Square className="h-2.5 w-2.5" fill="currentColor" strokeWidth={0} />
+            {active && playing ? (
+              <Pause className="h-2.5 w-2.5" fill="currentColor" strokeWidth={0} />
+            ) : (
+              <Play className="h-2.5 w-2.5" fill="currentColor" strokeWidth={0} />
+            )}
+            {active ? (playing ? "Pauza" : "Wznów") : "Start"}
           </button>
         )}
       </div>
+      {!minimized && (
+        <>
+          <div className="flex items-start gap-2.5 px-2.5 py-2">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
+              <ArrowUp className="h-4 w-4" strokeWidth={2.4} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="line-clamp-2 text-[10.5px] font-extrabold leading-snug tracking-[-0.01em] text-ink">
+                {step?.instruction ?? "Przelicz trasę, aby pobrać instrukcje."}
+              </p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="metric text-[8.5px] font-bold text-brand-ink">
+                  za {formatDistance(step?.distance ?? 0)}
+                </span>
+                <span className="h-2 w-px bg-line" />
+                <span className="metric text-[8px] text-mute">
+                  {formatDuration(step?.duration ?? 0)}
+                </span>
+                <span className="ml-auto flex items-center gap-0.5 text-[7.5px] font-semibold text-mute">
+                  <VehicleGlyph id={vehicle} className="h-2.5 w-2.5" />
+                  {vehicleShort ?? "Autobus"}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="px-2.5">
+            <div className="h-1 overflow-hidden rounded-full bg-soft">
+              <div
+                className="h-full rounded-full bg-brand transition-[width] duration-300"
+                style={{ width: `${Math.max(active ? 2 : 0, progress * 100)}%` }}
+              />
+            </div>
+            {active && (
+              <div className="mt-1 flex items-center justify-between text-[7.5px] font-semibold text-mute">
+                <span>
+                  {Math.round(progress * 100)}% trasy · pozostało {formatDistance(remainingDistance)}
+                </span>
+                <span className="metric font-bold text-ink">
+                  {formatDurationShort(remainingTime)}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-2">
+            <button
+              type="button"
+              onClick={active ? onToggle : onStart}
+              className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-md bg-highlight text-[9px] font-extrabold text-[#16240f] transition-all hover:brightness-[0.97]"
+            >
+              {active && playing ? (
+                <Pause className="h-3 w-3" fill="currentColor" strokeWidth={0} />
+              ) : (
+                <Play className="h-3 w-3" fill="currentColor" strokeWidth={0} />
+              )}
+              {active ? (playing ? "Pauza" : "Wznów") : "Uruchom podgląd"}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSteps}
+              className="grid h-7 w-7 place-items-center rounded-md border border-line bg-surface text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+              title="Wszystkie instrukcje"
+              aria-label="Wszystkie instrukcje"
+            >
+              <ListOrdered className="h-3.5 w-3.5" />
+            </button>
+            {active && (
+              <button
+                type="button"
+                onClick={onStop}
+                className="grid h-7 w-7 place-items-center rounded-md border border-line bg-surface text-mute transition-colors hover:bg-soft hover:text-danger"
+                title="Zakończ nawigację"
+                aria-label="Zakończ nawigację"
+              >
+                <Square className="h-2.5 w-2.5" fill="currentColor" strokeWidth={0} />
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1040,97 +1150,120 @@ export function QuickComparison({
   onSelectVehicle: (vehicle: VehicleId) => void;
   onOpenReport: () => void;
 }) {
+  const [minimized, setMinimized] = useState(false);
   const rows = metrics.slice(0, 5);
   const base = rows[0];
   return (
-    <div className="w-[302px] overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92">
-      <div className="flex items-center justify-between border-b border-line/80 px-2.5 py-2">
-        <div className="flex items-center gap-1.5">
+    <div
+      className={cn(
+        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92",
+        minimized ? "w-fit" : "w-[276px]"
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setMinimized((v) => !v)}
+        aria-expanded={!minimized}
+        className="flex w-full items-center justify-between gap-2 border-b border-line/80 px-2.5 py-2 text-left"
+        title={minimized ? "Rozwiń porównanie czasów" : "Zwiń porównanie czasów"}
+      >
+        <span className="flex items-center gap-1.5">
           <Scale className="h-3 w-3 text-brand-ink" />
           <span className="text-[8px] font-extrabold uppercase tracking-[0.16em] text-mute">
             Porównanie czasów
           </span>
-        </div>
-        <Pill tone="outline" className="px-1.5 py-0 text-[7px]">
-          {metrics.length} pojazdów
-        </Pill>
-      </div>
-      <div className="px-2 py-1.5">
-        {rows.map((metric) => {
-          const profileShort = metric.short ?? metric.id;
-          const active = activeVehicle === metric.id;
-          const slowest = Math.max(...rows.map((row) => row.duration), 1);
-          const width = Math.max(1, (metric.duration / Math.max(1, slowest)) * 100);
-          return (
-            <button
-              key={metric.id}
-              type="button"
-              onClick={() => onSelectVehicle(metric.id)}
-              className={cn(
-                "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-                active ? "bg-brand-soft" : "hover:bg-raised"
-              )}
-            >
-              <span
-                className={cn(
-                  "grid h-6 w-6 shrink-0 place-items-center rounded-md border",
-                  active
-                    ? "border-brand bg-brand text-on-brand"
-                    : "border-line bg-surface text-ink-soft"
-                )}
-              >
-                <VehicleGlyph id={metric.id} className="h-3 w-3" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[9px] font-bold text-ink">{profileShort}</span>
-                  <span className="metric text-[8px] font-bold text-ink-soft">
-                    {formatDuration(metric.duration)}
-                  </span>
-                </span>
-                <span className="mt-1 flex items-center gap-1">
-                  <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-soft">
-                    <span
-                      className={cn(
-                        "block h-full rounded-full",
-                        active ? "bg-brand" : "bg-line-strong group-hover:bg-brand/50"
-                      )}
-                      style={{ width: `${width}%` }}
-                    />
-                  </span>
-                  <span
-                    className={cn(
-                      "metric w-[47px] text-right text-[6.5px] font-semibold",
-                      metric.id === base.id ? "text-mute" : "text-warning"
-                    )}
-                  >
-                    {metric.id === base.id
-                      ? "baza"
-                      : metric.duration === base.duration
-                        ? "0s"
-                        : `${metric.duration > base.duration ? "+" : "−"}${formatDurationShort(
-                            Math.abs(metric.duration - base.duration)
-                          )}`}
-                  </span>
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <button
-        type="button"
-        onClick={onOpenReport}
-        className="flex w-full items-center justify-between border-t border-line/80 bg-raised/60 px-2.5 py-1.5 text-left"
-      >
-        <span className="flex items-center gap-1 text-[7.5px] font-semibold text-mute">
-          <Timer className="h-2.5 w-2.5" />
-          {metrics.length} autobusów · pełna tabela w raporcie
         </span>
-        <span className="text-[7.5px] font-extrabold text-brand-ink group-hover:underline">
-          Otwórz →
+        <span className="flex items-center gap-1">
+          <Pill tone="outline" className="px-1.5 py-0 text-[7px]">
+            {metrics.length} poj.
+          </Pill>
+          {minimized ? (
+            <ChevronUp className="h-3 w-3 text-mute" />
+          ) : (
+            <ChevronDown className="h-3 w-3 text-mute" />
+          )}
         </span>
       </button>
+      {!minimized && (
+        <>
+          <div className="px-2 py-1.5">
+            {rows.map((metric) => {
+              const profileShort = metric.short ?? metric.id;
+              const active = activeVehicle === metric.id;
+              const slowest = Math.max(...rows.map((row) => row.duration), 1);
+              const width = Math.max(1, (metric.duration / Math.max(1, slowest)) * 100);
+              return (
+                <button
+                  key={metric.id}
+                  type="button"
+                  onClick={() => onSelectVehicle(metric.id)}
+                  className={cn(
+                    "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+                    active ? "bg-brand-soft" : "hover:bg-raised"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "grid h-6 w-6 shrink-0 place-items-center rounded-md border",
+                      active
+                        ? "border-brand bg-brand text-on-brand"
+                        : "border-line bg-surface text-ink-soft"
+                    )}
+                  >
+                    <VehicleGlyph id={metric.id} className="h-3 w-3" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[9px] font-bold text-ink">{profileShort}</span>
+                      <span className="metric text-[8px] font-bold text-ink-soft">
+                        {formatDuration(metric.duration)}
+                      </span>
+                    </span>
+                    <span className="mt-1 flex items-center gap-1">
+                      <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-soft">
+                        <span
+                          className={cn(
+                            "block h-full rounded-full",
+                            active ? "bg-brand" : "bg-line-strong group-hover:bg-brand/50"
+                          )}
+                          style={{ width: `${width}%` }}
+                        />
+                      </span>
+                      <span
+                        className={cn(
+                          "metric w-[47px] text-right text-[6.5px] font-semibold",
+                          metric.id === base.id ? "text-mute" : "text-warning"
+                        )}
+                      >
+                        {metric.id === base.id
+                          ? "baza"
+                          : metric.duration === base.duration
+                            ? "0s"
+                            : `${metric.duration > base.duration ? "+" : "−"}${formatDurationShort(
+                                Math.abs(metric.duration - base.duration)
+                              )}`}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenReport}
+            className="flex w-full items-center justify-between border-t border-line/80 bg-raised/60 px-2.5 py-1.5 text-left"
+          >
+            <span className="flex items-center gap-1 text-[7.5px] font-semibold text-mute">
+              <Timer className="h-2.5 w-2.5" />
+              {metrics.length} autobusów · pełna tabela w raporcie
+            </span>
+            <span className="text-[7.5px] font-extrabold text-brand-ink group-hover:underline">
+              Otwórz →
+            </span>
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -1171,7 +1304,7 @@ export function MobilePlannerSheet({
       <button
         type="button"
         onClick={onToggle}
-        className="w-full shrink-0 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-1.5 text-left"
+        className="w-full shrink-0 select-none px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-1.5 text-left"
       >
         <span className="mx-auto block h-1 w-9 rounded-full bg-line-strong" />
         <span className="mt-2 flex items-center justify-between gap-2">
@@ -1273,7 +1406,7 @@ export function BusStopCard({
     <div
       title={stopDisplayName(stop)}
       className={cn(
-        "w-[336px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] backdrop-blur-xl animate-rise-in dark:bg-surface/93",
+        "pointer-events-auto w-[316px] max-w-[calc(100vw-24px)] select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] backdrop-blur-xl animate-rise-in dark:bg-surface/93",
         className
       )}
     >
@@ -1283,7 +1416,7 @@ export function BusStopCard({
         </span>
         <div className="min-w-0 flex-1">
           <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.16em] text-brand-ink/70">
-            Przystanek autobusowy · {stop.source === "osm" ? "OSM" : "Rozkład GTFS Wałbrzych"}
+            Przystanek autobusowy · {stop.source === "osm" ? "OSM" : "Rozkład Wałbrzych"}
             {stop.ref ? ` · stan. ${stop.ref}` : ""}
           </span>
           <h3 className="mt-0.5 text-[13px] font-extrabold leading-tight tracking-[-0.02em] text-ink">
@@ -1323,23 +1456,9 @@ export function BusStopCard({
           </p>
         )}
 
-        {stop.calls && (
-          <div
-            className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[8px] font-semibold text-ink-soft"
-            title="Liczba zatrzymań autobusów na tym przystanku wg aktualnego rozkładu GTFS"
-          >
-            <span className="text-[7.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
-              Obsługa
-            </span>
-            <span className="metric">dni rob. {formatCalls(stop.calls.weekday)}</span>
-            <span className="metric">sob. {formatCalls(stop.calls.saturday)}</span>
-            <span className="metric">niedz. {formatCalls(stop.calls.sunday)}</span>
-          </div>
-        )}
-
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-line/70 pt-2 text-[8px] text-mute">
           <span className="truncate">
-            {stop.operator ?? "Dane: © OpenStreetMap contributors"}
+            {stop.operator ?? "Rozkład jazdy Wałbrzych (GTFS)"}
           </span>
           <span className="metric shrink-0 font-semibold text-ink-soft">
             {stop.lat.toFixed(5)}, {stop.lon.toFixed(5)}
