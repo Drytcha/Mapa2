@@ -235,7 +235,7 @@ export default function TopBar({
                     <Icon className="h-3.5 w-3.5 text-brand-ink" />
                     {item.id === "kursowki"
                       ? "Kursówki Wałbrzych (GTFS)"
-                      : item.id === "nav"
+                        : item.id === "nav"
                         ? "Instrukcje nawigacji"
                         : item.id === "fleet"
                           ? "Flota i przepisy"

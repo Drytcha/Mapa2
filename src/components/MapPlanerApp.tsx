@@ -326,6 +326,13 @@ function MapPlanerWorkspace() {
     void ensureGtfsSeeded().catch(() => undefined);
   }, []);
 
+  // Deep links: #/walbrzych/brigades/2?date=YYYYMMDD
+  useEffect(() => {
+    if (window.location.hash.includes("/walbrzych/brigades/")) {
+      setKursowkiOpen(true);
+    }
+  }, []);
+
   useEffect(() => {
     if (!contextMenu) return;
     const dismissOutside = (event: PointerEvent) => {
@@ -1758,10 +1765,6 @@ function MapPlanerWorkspace() {
         liveVehicles={liveVehicles}
         onSelectBus={handleSelectBus}
         onLoadTripToPlanner={handleLoadTripToPlanner}
-        onShowShapeOnMap={(shape) => {
-          setKursowkaOverlay(shape);
-          showToast(`Wyświetlono trasę: ${shape.title}`);
-        }}
       />
 
       <StepsDrawer

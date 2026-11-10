@@ -121,6 +121,11 @@ interface ParsedArchiveBase {
   stopsById: Map<string, GtfsStopRecord>;
   services: GtfsServiceRecord[];
   dayTypeServices: Record<string, Set<string>>;
+  /** Exact GTFS calendar: date (YYYYMMDD) -> active service_ids. No "forever" fallback. */
+  serviceIdsByDate: Map<number, Set<string>>;
+  /** feed_info.txt validity window — no timetable outside this range. */
+  feedStartDate: number;
+  feedEndDate: number;
   rawTrips: RawTripDetail[];
   rawTripsById: Map<string, RawTripDetail>;
   rawStopTimesByTrip: Map<string, GtfsStopTimeRecord[]>;
@@ -172,6 +177,15 @@ export interface DutySummary {
   unassigned: boolean;
   availableServices: string[];
   liveBus: LiveBusVehicle | null;
+  /** Human-readable day-type label, e.g. "Dni robocze" or "Tylko GPS". */
+  serviceLabel: string;
+}
+
+export interface DutyCatalogCounts {
+  total: number;
+  withSchedule: number;
+  onGps: number;
+  unassigned: number;
 }
 
 export interface GtfsLineItem extends GtfsRouteRecord {
@@ -181,6 +195,9 @@ export interface GtfsLineItem extends GtfsRouteRecord {
 export interface GtfsLinesPayload {
   feed: GtfsFeedInfo | null;
   todayKey: number;
+  /** feed_info.txt validity window (YYYYMMDD); 0 when the feed does not declare it. */
+  feedFrom: number;
+  feedTo: number;
   defaultServiceId: string;
   feedCoversToday: boolean;
   uniqueDutiesCount: number;
@@ -360,6 +377,8 @@ function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedArchiveB
   const agencyRows = parseCsvRows(readTxt("agency.txt"));
   const defaultAgency = agencyRows[0]?.agency_name || "ZDKiUM / MPK Wałbrzych";
   const feedVersion = feedRows[0]?.feed_version || new Date().toISOString().slice(0, 10);
+  const feedStartDate = Number.parseInt(feedRows[0]?.feed_start_date ?? "", 10) || 0;
+  const feedEndDate = Number.parseInt(feedRows[0]?.feed_end_date ?? "", 10) || 0;
 
   const routesById = new Map<string, GtfsRouteRecord>();
   for (const r of parseCsvRows(readTxt("routes.txt"))) {
@@ -406,6 +425,18 @@ function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedArchiveB
     const set = rawServiceDates.get(cd.service_id) ?? new Set<number>();
     set.add(dateNum);
     rawServiceDates.set(cd.service_id, set);
+  }
+
+  // Reverse index: only services explicitly declared active on THAT date count.
+  // This replaces the old "one representative date per day type" approximation,
+  // which silently applied one day's m_* modifications to every weekday.
+  const serviceIdsByDate = new Map<number, Set<string>>();
+  for (const [serviceId, dates] of rawServiceDates) {
+    for (const dateKey of dates) {
+      const set = serviceIdsByDate.get(dateKey) ?? new Set<string>();
+      set.add(serviceId);
+      serviceIdsByDate.set(dateKey, set);
+    }
   }
 
   const dayTypeDates = {
@@ -611,6 +642,9 @@ function parseArchiveBytes(zipBytes: Uint8Array, source: string): ParsedArchiveB
     stopsById,
     services,
     dayTypeServices,
+    serviceIdsByDate,
+    feedStartDate,
+    feedEndDate,
     rawTrips,
     rawTripsById,
     rawStopTimesByTrip,
@@ -797,14 +831,36 @@ async function fetchArchiveBytes(forceLive: boolean): Promise<{ bytes: Uint8Arra
     // Fall back to bundled snapshot
   }
 
-  const fallbackRes = await fetch(assetUrl("data/walbrzych-gtfs.zip"), { cache: "default" });
-  if (!fallbackRes.ok) {
-    if (cached?.bytes instanceof Uint8Array && cached.bytes.byteLength > 1000) {
-      return { bytes: cached.bytes, source: cached.source };
+  // Bundled snapshot is optional: it may not be included in every deployment.
+  try {
+    const fallbackRes = await fetch(assetUrl("data/walbrzych-gtfs.zip"), { cache: "default" });
+    if (fallbackRes.ok) {
+      const bytes = new Uint8Array(await fallbackRes.arrayBuffer());
+      if (bytes.byteLength > 1000) return { bytes, source: sourceFallback };
     }
-    throw new Error("Brak lokalnego archiwum walbrzych-gtfs.zip i brak połączenia z GTFS.");
+  } catch {
+    /* No bundled archive in this build — retry the live feed instead. */
   }
-  return { bytes: new Uint8Array(await fallbackRes.arrayBuffer()), source: sourceFallback };
+
+  // Retry the official open feed with a longer timeout before giving up.
+  try {
+    const res = await fetch(LIVE_GTFS_URL, {
+      signal: AbortSignal.timeout(15_000),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > 1000) return { bytes, source: sourceLive };
+    }
+  } catch {
+    /* Fall through to the IndexedDB copy. */
+  }
+
+  // A stale cached archive is still better than no timetable at all.
+  if (cached?.bytes instanceof Uint8Array && cached.bytes.byteLength > 1000) {
+    return { bytes: cached.bytes, source: cached.source };
+  }
+  throw new Error("Nie udało się pobrać Wałbrzych GTFS. Spróbuj odświeżyć stronę.");
 }
 
 async function loadAndBuild(forceLive: boolean): Promise<GtfsMemoryStore> {
@@ -880,8 +936,10 @@ export async function getGtfsLines(): Promise<GtfsLinesPayload> {
       version: store.feed.version.split("+")[0],
     },
     todayKey,
+    feedFrom: store.base.feedStartDate,
+    feedTo: store.base.feedEndDate,
     defaultServiceId,
-    feedCoversToday: store.base.services.some((s) => s.datesJson.includes(todayKey)),
+    feedCoversToday: store.base.serviceIdsByDate.has(todayKey),
     uniqueDutiesCount: new Set(
       store.kursowki.filter((d) => d.brigadeNum !== "?").map((d) => d.kursowkaCode)
     ).size,
@@ -917,6 +975,7 @@ export async function getDutyCatalog(
   services: GtfsServiceRecord[];
   route: GtfsRouteRecord | null;
   liveError: string | null;
+  counts: DutyCatalogCounts;
   vehicleNumbers: Record<string, string>;
 }> {
   const store = await ensureGtfsSeeded();
@@ -935,6 +994,10 @@ export async function getDutyCatalog(
       (!routeId || row.routeId === routeId) &&
       (serviceId === "all" || row.serviceId === serviceId)
   );
+
+  const labelOf = (sid: string) =>
+    store.base.services.find((s) => s.serviceId === sid)?.label ??
+    (sid === "live" ? "Tylko GPS" : sid);
 
   let vehicles: LiveBusVehicle[] = [];
   let liveError: string | null = null;
@@ -980,6 +1043,7 @@ export async function getDutyCatalog(
       unassigned: row.brigadeNum === "?",
       availableServices: available.get(row.kursowkaCode) ?? [],
       liveBus: live.get(row.kursowkaCode) ?? null,
+      serviceLabel: labelOf(row.serviceId),
     };
   });
 
@@ -1009,6 +1073,7 @@ export async function getDutyCatalog(
       unassigned: false,
       availableServices: available.get(bus.kursowka) ?? [],
       liveBus: bus,
+      serviceLabel: labelOf(serviceId !== "all" ? serviceId : "live"),
     });
     represented.add(bus.kursowka);
   }
@@ -1027,6 +1092,12 @@ export async function getDutyCatalog(
     services: store.base.services,
     route: routeId ? (store.base.routesById.get(routeId) ?? null) : null,
     liveError,
+    counts: {
+      total: items.length,
+      withSchedule: items.filter((item) => item.hasSchedule).length,
+      onGps: items.filter((item) => item.liveBus).length,
+      unassigned: items.filter((item) => item.unassigned).length,
+    },
     vehicleNumbers: Object.fromEntries(
       vehicles.map((bus) => [bus.vehicleId, formatVehicleNumber(bus.vehicleId)])
     ),
@@ -1041,7 +1112,9 @@ export async function getDutyDetail(options: {
   const store = await ensureGtfsSeeded();
   const id = options.id?.trim() || "";
   const code = normalizeDutyCode(options.code || "");
-  const requestedService = options.serviceId?.trim() || "";
+  const rawService = options.serviceId?.trim() || "";
+  /** "all" means "any day type" — it must never be matched as a concrete calendar. */
+  const requestedService = rawService === "all" ? "" : rawService;
   const catalog = await getDutyCatalog({ serviceId: "all" });
 
   const now = DateTime.now().setZone(ZONE);
@@ -1091,6 +1164,8 @@ export async function getDutyDetail(options: {
           unassigned: false,
           availableServices: [],
           liveBus: null,
+          serviceLabel:
+            catalog.services.find((s) => s.serviceId === service)?.label ?? "Tylko GPS",
         };
       }
     }
@@ -1105,6 +1180,8 @@ export async function getDutyDetail(options: {
         lastArrivalMin: null,
         firstStopName: "",
         lastStopName: "",
+        serviceLabel:
+          catalog.services.find((s) => s.serviceId === requestedService)?.label ?? "Tylko GPS",
       };
     }
   }

@@ -752,6 +752,10 @@ export function SettingsDialog({
               "Pozycje GPS, numery taborowe, kursówki i opóźnienia na żywo z zbiorkom.live. Przewoźnik wynika z numeru taborowego: MZUK 01–20 (wodorowe) i 201–204, ŚKA 3xx–5xx; ZDKiUM został zlikwidowany (1.01.2025) i nie prowadzi pojazdów. Błędne przypisanie można poprawić ręcznie na karcie autobusu (zapisywane w localStorage). Prędkość jest liczona z kolejnych pozycji GPS. Kolor pojazdu oznacza firmę: jasnozielony MZUK, fioletowy ŚKA. Pasek punktualności: minus oznacza opóźnienie (czerwony > 3 min, pomarańczowy do 3 min), plus przyspieszenie (jasnozielony do 1 min, ciemnozielony > 1 min).",
             ],
             [
+              "Kursówki i brygady według daty",
+              "Numery brygad pochodzą z rozkładu pracy kierowców operatora — tych samych otwartych danych, na których opiera się livetransport.eu. Dzięki temu brygady są przypisane poprawnie (np. 2-01 … 2-08, a brygady wieloliniowe jak 8-02 widoczne są pod każdą obsługiwaną linią) i nie powstają numery fikcyjne. Wybrana data jest zawsze weryfikowana z okresem ważności feedu GTFS (feed_info.txt) i dokładnym kalendarzem (calendar_dates.txt). Rozkład brygad jest cache'owany w IndexedDB, więc wczytany dzień działa także offline; dla dat spoza okna źródła aplikacja pokazuje kursy GTFS bez wymyślania numerów.",
+            ],
+            [
               "Przystanki — rozkład Wałbrzych",
               "Lista przystanków pochodzi z rozkładu jazdy: GTFS oraz oficjalnej listy rozklad.walbrzych.eu (m.in. Andrzejówka, Głuszyca, Mieroszów, Sokołowsko). OpenStreetMap uzupełnia dodatkowe przystanki po ręcznym odświeżeniu widoku.",
             ],
