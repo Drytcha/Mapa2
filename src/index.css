@@ -201,9 +201,10 @@ button {
   font-weight: 600;
 }
 .leaflet-tooltip.live-bus-tooltip {
-  max-width: 272px;
+  max-width: 380px;
+  min-width: 268px;
   white-space: normal;
-  padding: 7px 9px 8px;
+  padding: 7px 10px 8px;
   line-height: 1.35;
 }
 .live-bus-tooltip .bus-tooltip-title {
@@ -220,19 +221,26 @@ button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   padding: 1px 0;
   font-size: 9px;
 }
 .live-bus-tooltip .bus-tooltip-key {
+  flex: 0 0 auto;
   color: var(--color-mute);
   font-weight: 700;
+  white-space: nowrap;
 }
 .live-bus-tooltip .bus-tooltip-value {
+  min-width: 0;
   color: var(--color-ink);
   font-family: var(--font-mono);
   font-weight: 800;
   text-align: right;
+  white-space: nowrap;
+}
+.live-bus-tooltip .bus-tooltip-title {
+  white-space: nowrap;
 }
 
 .leaflet-tooltip.stop-name-label {

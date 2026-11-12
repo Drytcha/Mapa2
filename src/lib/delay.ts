@@ -33,7 +33,7 @@ export function describeDelay(delaySeconds: number): string {
   if (rounded === 0) return "Planowo (na czas)";
   const abs = Math.abs(rounded);
   const text = abs >= 60 ? `${Math.floor(abs / 60)} min ${abs % 60} s` : `${abs} s`;
-  return rounded > 0 ? `Opóźnienie ${text}` : `Przyspieszenie ${text}`;
+  return rounded > 0 ? `-${text}` : `+${text}`;
 }
 
 export function formatSpeed(speedKmh: number | null | undefined): string {
