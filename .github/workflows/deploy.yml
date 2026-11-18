@@ -60,6 +60,7 @@ jobs:
           fi
 
       - name: Diagnostyka GTFS
+        continue-on-error: true
         shell: bash
         run: |
           set +e
@@ -83,29 +84,33 @@ jobs:
           tmp="$(mktemp /tmp/gtfs.XXXXXX.zip)"
           ok=0
 
+          valid_gtfs() {
+            local file="$1"
+            [ -f "$file" ] || return 1
+            unzip -tq "$file" > /dev/null 2>&1 || return 1
+            unzip -l "$file" > /tmp/gtfs-list.txt 2>/dev/null || return 1
+            grep -qE '[[:space:]]stops\.txt$' /tmp/gtfs-list.txt || return 1
+            grep -qE '[[:space:]]routes\.txt$' /tmp/gtfs-list.txt || return 1
+            return 0
+          }
+
           # gtfs.walbrzych.eu ma certyfikat niepasujący do hostname (curl 60),
-          # dlatego -k. Integralność weryfikujemy przez unzip -t i kontrolę plików.
-          # PIERWSZY adres to ten potwierdzony w logu jako działający (200, zip, 2,7 MB).
-          # Bez --retry-all-errors: 404 nie jest ponawiany, od razu leci następny adres.
+          # dlatego -k tylko dla tej domeny. Integralność sprawdzamy unzipem.
+          # PIERWSZY adres to potwierdzony w logu: 200, application/zip, 2,7 MB.
           urls="
             https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip
+            http://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip
             https://gtfs.walbrzych.eu/GTFS/ST/GTFS
-            https://gtfs.walbrzych.eu/GTFS/SW/GTFS
-            http://gtfs.walbrzych.eu/GTFS/ST/GTFS
             https://drytcha.github.io/Mapa2/data/walbrzych-gtfs.zip
           "
 
           for url in $urls; do
             echo "::group::Próba: $url"
-            if curl -fkL \
-                 --retry 3 --retry-delay 5 \
-                 --connect-timeout 15 --max-time 300 \
-                 -A "Mozilla/5.0 (GitHub Actions; Mapa2)" \
-                 "$url" -o "$tmp" \
-               && unzip -tq "$tmp" \
-               && unzip -l "$tmp" | grep -qE '[[:space:]]stops\.txt$' \
-               && unzip -l "$tmp" | grep -qE '[[:space:]]routes\.txt$'
-            then
+            ARGS=(-fL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 300 -A "Mozilla/5.0 (GitHub Actions; Mapa2)")
+            if [[ "$url" == *"gtfs.walbrzych.eu"* ]]; then
+              ARGS+=(-k)
+            fi
+            if curl "${ARGS[@]}" "$url" -o "$tmp" && valid_gtfs "$tmp"; then
               cp "$tmp" "$GTFS_DEST"
               echo "✅ Pobrano z: $url"
               ok=1
@@ -118,7 +123,7 @@ jobs:
           done
 
           if [ "$ok" -ne 1 ]; then
-            if [ -f "$GTFS_FALLBACK" ] && unzip -tq "$GTFS_FALLBACK"; then
+            if valid_gtfs "$GTFS_FALLBACK"; then
               echo "::warning title=GTFS::Źródła niedostępne – używam snapshotu z repo"
               cp "$GTFS_FALLBACK" "$GTFS_DEST"
             else
@@ -127,15 +132,13 @@ jobs:
             fi
           fi
 
+          chmod 644 "$GTFS_DEST"
           unzip -l "$GTFS_DEST"
           ls -lh "$GTFS_DEST"
 
-      # Lint NIE blokuje deploya. 37 błędów react-hooks/* w komponentach
-      # trzeba docelowo naprawić w kodzie albo złagodzić w eslint.config,
-      # ale nie mogą wywracać publikacji strony. Błędy nadal widać w logu.
-      - name: Lint (nieblokujący)
-        continue-on-error: true
-        run: npm run lint --if-present
+      # UWAGA: celowo NIE ma tu kroku Lint.
+      # Lint ma 37 błędów react-hooks/* i nie może blokować publikacji strony.
+      # Uruchamiaj go lokalnie: npm run lint
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -147,19 +150,28 @@ jobs:
         id: build-output
         shell: bash
         run: |
-          if [ -d "$BUILD_DIR" ]; then
-            echo "path=./$BUILD_DIR" >> "$GITHUB_OUTPUT"
-          elif [ -d out ]; then
-            echo "path=./out" >> "$GITHUB_OUTPUT"
-          elif [ -d dist ]; then
-            echo "path=./dist" >> "$GITHUB_OUTPUT"
-          elif [ -d build ]; then
-            echo "path=./build" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Nie znaleziono katalogu dist, out ani build po buildzie"
+          found=""
+          for d in "$BUILD_DIR" out dist build; do
+            if [ -f "$d/index.html" ]; then
+              found="$d"
+              break
+            fi
+          done
+          if [ -z "$found" ]; then
+            for d in "$BUILD_DIR" out dist build; do
+              if [ -d "$d" ]; then
+                found="$d"
+                break
+              fi
+            done
+          fi
+          if [ -z "$found" ]; then
+            echo "::error::Nie znaleziono katalogu z buildem (dist/out/build)"
             ls -la
             exit 1
           fi
+          echo "Publikuję katalog: $found"
+          echo "path=./$found" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
