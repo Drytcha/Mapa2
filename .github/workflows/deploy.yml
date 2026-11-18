@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BUILD_DIR: dist
+  BUILD_DIR: out
   NODE_VERSION: "22"
   GTFS_DEST: public/data/walbrzych-gtfs.zip
   GTFS_FALLBACK: data/fallback/walbrzych-gtfs.zip
@@ -136,47 +136,112 @@ jobs:
           unzip -l "$GTFS_DEST"
           ls -lh "$GTFS_DEST"
 
-      # UWAGA: celowo NIE ma tu kroku Lint.
-      # Lint ma 37 błędów react-hooks/* i nie może blokować publikacji strony.
-      # Uruchamiaj go lokalnie: npm run lint
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Build
-        run: npm run build
-
-      - name: Wykryj katalog builda
-        id: build-output
+      # KLUCZOWA ZMIANA: zwykły "next build" tworzy tylko .next,
+      # a GitHub Pages potrzebuje statycznego katalogu out z index.html.
+      # Ten krok (TYLKO na runnerze, repo bez zmian):
+      #  1) odsuwa src/app/api - tras API nie da się wyeksportować statycznie,
+      #  2) dopisuje output:"export", basePath:"/Mapa2" itd. do next.config.*
+      - name: Przygotuj Next.js do GitHub Pages (eksport statyczny)
         shell: bash
         run: |
-          found=""
-          for d in "$BUILD_DIR" out dist build; do
-            if [ -f "$d/index.html" ]; then
-              found="$d"
-              break
-            fi
-          done
-          if [ -z "$found" ]; then
-            for d in "$BUILD_DIR" out dist build; do
-              if [ -d "$d" ]; then
-                found="$d"
-                break
-              fi
-            done
+          set -euo pipefail
+
+          if [ -d src/app/api ]; then
+            echo "::warning title=Next.js::Odsuwam src/app/api na czas eksportu statycznego (Pages nie obsługuje tras API)"
+            rm -rf /tmp/next-api-backup
+            mv src/app/api /tmp/next-api-backup
+            find /tmp/next-api-backup -type f | sort
           fi
-          if [ -z "$found" ]; then
-            echo "::error::Nie znaleziono katalogu z buildem (dist/out/build)"
+
+          cat > /tmp/patch-next-pages.mjs <<'EOF'
+          import fs from "node:fs";
+
+          const candidates = ["next.config.ts", "next.config.mjs", "next.config.js", "next.config.cjs"];
+          const file = candidates.find((f) => fs.existsSync(f));
+
+          if (!file) {
+            fs.writeFileSync(
+              "next.config.mjs",
+              'export default { output: "export", trailingSlash: true, images: { unoptimized: true }, basePath: "/Mapa2" };\n'
+            );
+            console.log("Utworzono nowy next.config.mjs pod GitHub Pages");
+            process.exit(0);
+          }
+
+          let code = fs.readFileSync(file, "utf8");
+          console.log(`--- ${file} (oryginał) ---`);
+          console.log(code);
+
+          const additions = [];
+
+          if (/output\s*:/.test(code)) {
+            code = code.replace(/output\s*:\s*[^,\n}]+/, 'output: "export"');
+            console.log('Wymuszono output: "export"');
+          } else {
+            additions.push('output: "export"');
+          }
+          if (!/trailingSlash\s*:/.test(code)) additions.push("trailingSlash: true");
+          if (!/images\s*:/.test(code)) additions.push("images: { unoptimized: true }");
+          if (!/basePath\s*:/.test(code)) additions.push('basePath: "/Mapa2"');
+
+          if (additions.length > 0) {
+            const patterns = [/=\s*\{/, /export\s+default\s*\{/, /return\s*\{/];
+            let idx = -1;
+            let len = 0;
+            for (const p of patterns) {
+              const m = code.match(p);
+              if (m) { idx = m.index; len = m[0].length; break; }
+            }
+            if (idx === -1) {
+              console.error(`::error::Nie udało się dopisać ustawień Pages do ${file}. Dopisz ręcznie w obiekcie configu: ${additions.join(", ")}`);
+              process.exit(1);
+            }
+            const at = idx + len;
+            code = code.slice(0, at) + "\n    " + additions.join(",\n    ") + "," + code.slice(at);
+          }
+
+          fs.writeFileSync(file, code);
+          console.log(`--- ${file} (po zmianie pod GitHub Pages) ---`);
+          console.log(fs.readFileSync(file, "utf8"));
+          EOF
+
+          node /tmp/patch-next-pages.mjs
+
+      - name: Build
+        env:
+          GITHUB_PAGES: "true"
+        run: npm run build
+
+      - name: Sprawdź wynik builda
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f out/index.html ]; then
+            echo "::error::Brak out/index.html po buildzie - eksport statyczny się nie udał"
             ls -la
+            ls -la out 2>/dev/null || echo "Brak katalogu out"
             exit 1
           fi
-          echo "Publikuję katalog: $found"
-          echo "path=./$found" >> "$GITHUB_OUTPUT"
+          echo "Pliki w out (max 2 poziomy):"
+          find out -maxdepth 2 -type f | sort | head -n 100
+
+          # Next przy eksporcie kopiuje public/ do out/, ale dla pewności:
+          if [ -f public/data/walbrzych-gtfs.zip ] && [ ! -f out/data/walbrzych-gtfs.zip ]; then
+            mkdir -p out/data
+            cp public/data/walbrzych-gtfs.zip out/data/walbrzych-gtfs.zip
+          fi
+          ls -lh out/data/walbrzych-gtfs.zip || echo "::warning::Brak GTFS w out/data"
+
+          # Żeby Pages serwował katalogi z podkreśleniem (_next)
+          touch out/.nojekyll
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ steps.build-output.outputs.path }}
+          path: ./out
 
   deploy:
     name: Deploy
