@@ -2,11 +2,10 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ["main"]
-  workflow_dispatch:
+    branches: [main]
   schedule:
-    # Codzienne odświeżenie danych GTFS o 03:17 UTC, nawet bez commita
-    - cron: "17 3 * * *"
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,118 +13,125 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
+
+env:
+  BUILD_DIR: dist
+  NODE_VERSION: '22'
+  GTFS_DEST: public/data/walbrzych-gtfs.zip
+  GTFS_FALLBACK: data/fallback/walbrzych-gtfs.zip
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Sprawdź package-lock.json
-        id: lockfile
-        shell: bash
-        run: |
-          if [ -f package-lock.json ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
-          node-version: 22
-
-      - name: Uzupełnij package-lock.json (jeśli brakuje)
-        if: steps.lockfile.outputs.exists == 'false'
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Pobierz GTFS Wałbrzych
-        shell: bash
+      # Diagnostyka – nigdy nie wywala builda, tylko raportuje stan źródeł
+      - name: Probe GTFS endpoints
+        continue-on-error: true
         run: |
-          mkdir -p public/data
-          DEST="public/data/walbrzych-gtfs.zip"
-          TMP="/tmp/walbrzych-gtfs.zip"
-          rm -f "$TMP"
-
-          # Kolejno: prawdopodobny nowy adres, stary adres z loga,
-          # a na końcu ostatnia działająca kopia z Twojej opublikowanej strony
-          URLS=(
-            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip"
-            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS"
-            "https://gtfs.walbrzych.eu/GTFS/GTFS.zip"
-            "https://drytcha.github.io/Mapa2/data/walbrzych-gtfs.zip"
-          )
-
-          success=0
-          for url in "${URLS[@]}"; do
-            echo "==> Próba pobrania: $url"
-            if curl -fL \
-                  --retry 3 \
-                  --retry-delay 5 \
-                  --connect-timeout 15 \
-                  --max-time 180 \
-                  -A "Mapa2-GitHub-Actions" \
-                  "$url" -o "$TMP" \
-               && unzip -t "$TMP" > /dev/null \
-               && unzip -l "$TMP" | grep -q "stops.txt" \
-               && unzip -l "$TMP" | grep -q "routes.txt"; then
-              cp "$TMP" "$DEST"
-              success=1
-              echo "Pobrano poprawny GTFS z: $url"
-              break
-            fi
-            echo "::warning::Niedostępny lub nieprawidłowy plik: $url"
-            rm -f "$TMP"
+          set +e
+          for u in \
+            "https://gtfs.walbrzych.eu/" \
+            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS" \
+            "https://gtfs.walbrzych.eu/GTFS/SW/GTFS" \
+            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip" \
+            "http://gtfs.walbrzych.eu/GTFS/ST/GTFS"
+          do
+            printf '%-50s ' "$u"
+            curl -sk -o /dev/null -L -A "Mozilla/5.0" \
+                 --connect-timeout 10 --max-time 60 \
+                 -w '%{http_code} %{content_type} %{size_download}B\n' "$u" \
+              || echo "CONNECTION FAILED"
           done
 
-          if [ "$success" -ne 1 ]; then
-            if [ -f "$DEST" ] && unzip -t "$DEST" > /dev/null; then
-              echo "::warning::Używam pliku GTFS znajdującego się w repozytorium."
+      - name: Download GTFS
+        run: |
+          set -uo pipefail
+          mkdir -p "$(dirname "$GTFS_DEST")"
+          tmp="$(mktemp /tmp/gtfs.XXXXXX.zip)"
+          ok=0
+
+          # UWAGA: gtfs.walbrzych.eu ma certyfikat niepasujący do hostname.
+          # -k jest tu świadomym kompromisem (dane publiczne, walidujemy
+          # integralność przez unzip -t + kontrolę wymaganych plików).
+          urls="
+            https://gtfs.walbrzych.eu/GTFS/ST/GTFS
+            https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip
+            https://gtfs.walbrzych.eu/GTFS/SW/GTFS
+            http://gtfs.walbrzych.eu/GTFS/ST/GTFS
+          "
+
+          for url in $urls; do
+            echo "::group::Próba: $url"
+            if curl -fkL \
+                 --retry 3 --retry-delay 5 --retry-all-errors \
+                 --connect-timeout 15 --max-time 300 \
+                 -A "Mozilla/5.0 (GitHub Actions; Mapa2)" \
+                 "$url" -o "$tmp" \
+               && unzip -tq "$tmp" \
+               && unzip -l "$tmp" | grep -qE '[[:space:]]stops\.txt$' \
+               && unzip -l "$tmp" | grep -qE '[[:space:]]routes\.txt$'
+            then
+              cp "$tmp" "$GTFS_DEST"
+              echo "✅ Pobrano z: $url"
+              ok=1
+              echo "::endgroup::"
+              break
+            fi
+            echo "❌ Nieudane: $url"
+            rm -f "$tmp"; tmp="$(mktemp /tmp/gtfs.XXXXXX.zip)"
+            echo "::endgroup::"
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            if [ -f "$GTFS_FALLBACK" ] && unzip -tq "$GTFS_FALLBACK"; then
+              echo "::warning title=GTFS::Źródła niedostępne – używam snapshotu z repo"
+              cp "$GTFS_FALLBACK" "$GTFS_DEST"
             else
-              echo "::error::Nie udało się pobrać GTFS z żadnego źródła."
+              echo "::error title=GTFS::Brak danych i brak snapshotu w $GTFS_FALLBACK"
               exit 1
             fi
           fi
 
-          ls -lh "$DEST"
-          unzip -l "$DEST"
+          unzip -l "$GTFS_DEST"
+          ls -lh "$GTFS_DEST"
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build --if-present
+        env:
+          NODE_ENV: production
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Build
-        run: npm run build
-
-      - name: Wykryj katalog builda
-        id: build-output
-        shell: bash
+      - name: SPA fallback + .nojekyll
         run: |
-          if [ -d dist ]; then
-            echo "path=./dist" >> "$GITHUB_OUTPUT"
-          elif [ -d out ]; then
-            echo "path=./out" >> "$GITHUB_OUTPUT"
-          elif [ -d build ]; then
-            echo "path=./build" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Nie znaleziono katalogu dist, out ani build po buildzie"
-            ls -la
-            exit 1
-          fi
+          [ -f "$BUILD_DIR/index.html" ] && [ ! -f "$BUILD_DIR/404.html" ] \
+            && cp "$BUILD_DIR/index.html" "$BUILD_DIR/404.html"
+          touch "$BUILD_DIR/.nojekyll"
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ steps.build-output.outputs.path }}
+          path: ${{ env.BUILD_DIR }}
 
   deploy:
-    name: Deploy
     needs: build
     runs-on: ubuntu-latest
     environment:
