@@ -19,8 +19,8 @@ concurrency:
 
 env:
   BUILD_DIR: out
-  NODE_VERSION: "22"
-  GTFS_DEST: public/data/walbrzych-gtfs.zip
+  NODE_VERSION: 22
+  GTFS_DEST: src/assets/walbrzych-gtfs.zip
   GTFS_FALLBACK: data/fallback/walbrzych-gtfs.zip
 
 jobs:
