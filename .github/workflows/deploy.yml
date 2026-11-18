@@ -1,9 +1,15 @@
+
 name: Build MapPlaner and deploy to Pages
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   workflow_dispatch:
+
+  schedule:
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
@@ -12,111 +18,119 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      # `cache: npm` makes actions/setup-node look for a lockfile. Checking for it
-      # first keeps CI working whether or not package-lock.json is committed yet.
-      - name: Detect dependency lockfile
-        id: lockfile
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect package lock
+        id: lock
+        shell: bash
         run: |
           if [ -f package-lock.json ]; then
-            echo "cached=true" >> "$GITHUB_OUTPUT"
-            echo "Using the committed package-lock.json (reproducible npm ci)."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "cached=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::package-lock.json is not committed. CI will resolve one from package.json; commit it to pin dependency versions."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Node.js 22 with npm cache
-        if: ${{ steps.lockfile.outputs.cached == 'true' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Setup Node.js 22
-        if: ${{ steps.lockfile.outputs.cached != 'true' }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # Generated only when the lockfile is missing, so `npm ci` can always run.
-      # `npm ci` also fails loudly when package.json and the lockfile disagree.
-      - name: Resolve lockfile when it is missing
-        if: ${{ steps.lockfile.outputs.cached != 'true' }}
+      - name: Generate package lock if missing
+        if: steps.lock.outputs.exists == 'false'
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci
 
-      - name: Show installed toolchain
+      - name: Download latest Wałbrzych GTFS
+        shell: bash
         run: |
-          node --version
-          npm --version
+          mkdir -p public/data
 
-      - name: Generate route types and typecheck
-        run: |
-          npx next typegen
-          npm exec tsc -- --noEmit --pretty false
+          curl --fail --location \
+            --retry 3 \
+            --retry-delay 5 \
+            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS" \
+            -o public/data/walbrzych-gtfs.zip
+
+          if ! unzip -t public/data/walbrzych-gtfs.zip; then
+            echo "ERROR: Downloaded GTFS archive is invalid"
+            exit 1
+          fi
+
+          echo "GTFS downloaded successfully:"
+          ls -lh public/data/walbrzych-gtfs.zip
+
+      - name: Generate Next.js types
+        run: npx next typegen
+
+      - name: Check TypeScript
+        run: npm exec tsc -- --noEmit --pretty false
 
       - name: Verify server build without database credentials
         run: npm run build
         env:
           DATABASE_URL: ""
 
-      - name: Configure Pages
-        id: pages
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      
       - name: Build static traveler and planner app
+        run: npm run build
         env:
-          GITHUB_PAGES: "true"
           NEXT_PUBLIC_STATIC_EXPORT: "1"
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
           DATABASE_URL: ""
+
+      - name: Verify static export
+        shell: bash
         run: |
-          npm run build
-
-          echo "=== Sprawdzanie wygenerowanych plików ==="
-
           if [ ! -s out/index.html ]; then
-            echo "::error::Brak out/index.html"
+            echo "ERROR: Missing out/index.html"
             exit 1
           fi
 
           if [ -d out/api ]; then
-            echo "::error::Folder out/api nie powinien istnieć"
-            find out/api -maxdepth 3 -type f
+            echo "ERROR: API directory should not exist in static export"
             exit 1
           fi
 
           if [ ! -s out/data/walbrzych-gtfs.zip ]; then
-            echo "::error::Brak pliku out/data/walbrzych-gtfs.zip"
-            echo "Zawartość out:"
-            find out -maxdepth 4 -type f | head -100
-            echo "Zawartość public:"
-            find public -maxdepth 4 -type f | head -100
+            echo "ERROR: Missing out/data/walbrzych-gtfs.zip"
+            echo "Contents of out:"
+            find out -maxdepth 3 -type f | head -100
             exit 1
           fi
 
+          echo "Static export verified successfully."
+
           touch out/.nojekyll
-          echo "=== Wszystkie kontrole zakończone poprawnie ==="
+
+          echo "Output directory:"
+          ls -lah out
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
 
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    needs: build
+
     steps:
-      - name: Deploy static site
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
