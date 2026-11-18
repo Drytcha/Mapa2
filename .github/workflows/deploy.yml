@@ -29,16 +29,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # UWAGA: bez `cache: npm` – repo może nie mieć lockfile'a,
+      # a setup-node wywala się wtedy jeszcze przed instalacją.
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+
+      - name: Cache npm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json', 'package.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            echo "Lockfile znaleziony – npm ci"
+            npm ci
+          else
+            echo "::warning title=npm::Brak package-lock.json – generuję w locie (buildy nie są w pełni powtarzalne)"
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            npm ci
+          fi
 
-      # Diagnostyka – nigdy nie wywala builda, tylko raportuje stan źródeł
       - name: Probe GTFS endpoints
         continue-on-error: true
         run: |
@@ -64,9 +81,8 @@ jobs:
           tmp="$(mktemp /tmp/gtfs.XXXXXX.zip)"
           ok=0
 
-          # UWAGA: gtfs.walbrzych.eu ma certyfikat niepasujący do hostname.
-          # -k jest tu świadomym kompromisem (dane publiczne, walidujemy
-          # integralność przez unzip -t + kontrolę wymaganych plików).
+          # gtfs.walbrzych.eu ma certyfikat niepasujący do hostname (curl 60),
+          # dlatego -k. Integralność weryfikujemy przez unzip -t i kontrolę plików.
           urls="
             https://gtfs.walbrzych.eu/GTFS/ST/GTFS
             https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip
@@ -117,13 +133,24 @@ jobs:
         env:
           NODE_ENV: production
 
+      - name: Verify build output
+        run: |
+          set -euo pipefail
+          if [ ! -d "$BUILD_DIR" ]; then
+            echo "::error title=Build::Katalog '$BUILD_DIR' nie istnieje. Sprawdź BUILD_DIR i skrypt build."
+            ls -la
+            exit 1
+          fi
+          ls -la "$BUILD_DIR"
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: SPA fallback + .nojekyll
         run: |
-          [ -f "$BUILD_DIR/index.html" ] && [ ! -f "$BUILD_DIR/404.html" ] \
-            && cp "$BUILD_DIR/index.html" "$BUILD_DIR/404.html"
+          if [ -f "$BUILD_DIR/index.html" ] && [ ! -f "$BUILD_DIR/404.html" ]; then
+            cp "$BUILD_DIR/index.html" "$BUILD_DIR/404.html"
+          fi
           touch "$BUILD_DIR/.nojekyll"
 
       - name: Upload Pages artifact
