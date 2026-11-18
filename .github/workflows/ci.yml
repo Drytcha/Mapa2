@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Next.js route types
+        run: npx next typegen
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      # Pre-existing react-hooks/set-state-in-effect findings from upstream are
+      # tracked separately; they are not build- or type-breaking.
+      - name: Lint (non-blocking)
+        run: npm run lint
+        continue-on-error: true
+
+      # NOTE: no DATABASE_URL is provided on purpose. The build must not require a
+      # database — src/db/index.ts creates the pool lazily on the first query, so
+      # "Collecting page data" succeeds without it.
+      - name: Build (without DATABASE_URL)
+        run: npm run build
+        env:
+          CI: true
