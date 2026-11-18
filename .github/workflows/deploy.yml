@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BUILD_DIR: out
+  BUILD_DIR: dist
   NODE_VERSION: 22
   GTFS_DEST: src/assets/walbrzych-gtfs.zip
   GTFS_FALLBACK: data/fallback/walbrzych-gtfs.zip
@@ -35,14 +35,12 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # Bez "cache: npm" - w repo nie ma package-lock.json,
-          # z cache ten krok pada błędem "Dependencies lock file is not found".
 
       - name: Cache npm
         uses: actions/cache@v4
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json', 'package.json') }}
           restore-keys: |
             npm-${{ runner.os }}-
 
@@ -97,10 +95,9 @@ jobs:
 
           # gtfs.walbrzych.eu ma certyfikat niepasujący do hostname (curl 60),
           # dlatego -k tylko dla tej domeny. Integralność sprawdzamy unzipem.
-          # WAŻNE: aplikacja potrzebuje paczki "GTFS (full).zip" (tej samej, której
-          # używa src/app/api/transit/gtfs/route.ts). Publiczny "GTFS.zip" NIE zawiera
-          # linii 30 (brygady 30/01 i 30/02 od 1 grudnia) ani linii planistycznych S1-S4,
-          # więc brygady "uciekały" z aplikacji. "full" musi być PIERWSZY na liście;
+          # WAŻNE: aplikacja potrzebuje paczki "GTFS (full).zip" — publiczny
+          # "GTFS.zip" NIE zawiera linii 30 (brygady 30/01 i 30/02 od 1 grudnia)
+          # ani linii planistycznych S1-S4. "full" musi być PIERWSZY na liście;
           # zwykły GTFS.zip to tylko awaryjny zapas (z ostrzeżeniem).
           urls="
             https://gtfs.walbrzych.eu/GTFS/ST/GTFS%20(full).zip
@@ -161,12 +158,9 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      # KLUCZOWY KROK: next.config.ts włącza output:"export" TYLKO przy
-      # NEXT_PUBLIC_STATIC_EXPORT=1, a basePath bierze z NEXT_PUBLIC_BASE_PATH.
-      # Bez tych zmiennych build tworzy same .next i nie powstaje katalog out.
-      # pageExtensions: ["tsx"] z configu samo wyklucza route.ts (API)
-      # z eksportu - nie trzeba odsuwac src/app/api.
-      - name: Build (eksport statyczny pod GitHub Pages)
+      # Vite: build produkcyjny. NEXT_PUBLIC_* zostawione dla zgodności, jeżeli
+      # vite.config.ts czyta base z tych zmiennych. Jeśli nie – są nieszkodliwe.
+      - name: Build (Vite)
         env:
           NEXT_PUBLIC_STATIC_EXPORT: "1"
           NEXT_PUBLIC_BASE_PATH: "/Mapa2"
@@ -177,33 +171,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f out/index.html ]; then
-            echo "::error::Brak out/index.html po buildzie - eksport statyczny się nie udał"
+          if [ ! -f "$BUILD_DIR/index.html" ]; then
+            echo "::error::Brak $BUILD_DIR/index.html po buildzie - eksport statyczny się nie udał"
             ls -la
-            ls -la out 2>/dev/null || echo "Brak katalogu out"
+            ls -la "$BUILD_DIR" 2>/dev/null || echo "Brak katalogu $BUILD_DIR"
             exit 1
           fi
 
-          echo "Pliki w out (max 2 poziomy):"
-          find out -maxdepth 2 -type f | sort | head -n 100
+          echo "Pliki w $BUILD_DIR (max 2 poziomy):"
+          find "$BUILD_DIR" -maxdepth 2 -type f | sort | head -n 100
 
-          # Next przy eksporcie kopiuje public/ do out/, ale dla pewności:
-          if [ -f public/data/walbrzych-gtfs.zip ] && [ ! -f out/data/walbrzych-gtfs.zip ]; then
-            mkdir -p out/data
-            cp public/data/walbrzych-gtfs.zip out/data/walbrzych-gtfs.zip
-          fi
-          ls -lh out/data/walbrzych-gtfs.zip || echo "::warning::Brak GTFS w out/data"
+          # Vite z pluginem singlefile wrzuca cały bundle + GTFS do index.html,
+          # więc nie ma osobnego dist/data/walbrzych-gtfs.zip - nie kopiujemy go.
+          # .nojekyll zostawione na wypadek assetów z podkreśleniem w nazwie.
+          touch "$BUILD_DIR/.nojekyll"
 
-          echo "Ścieżki _next w out/index.html (powinny zaczynać się od /Mapa2):"
-          grep -o '/Mapa2/_next[^"]*' out/index.html | head -n 3 || true
-
-          # Żeby Pages serwował katalogi z podkreśleniem (_next)
-          touch out/.nojekyll
+          echo "Rozmiar $BUILD_DIR/index.html:"
+          ls -lh "$BUILD_DIR/index.html"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ${{ env.BUILD_DIR }}
 
   deploy:
     name: Deploy
