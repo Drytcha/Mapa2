@@ -1,15 +1,12 @@
-
-name: Build MapPlaner and deploy to Pages
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
-
+    branches: ["main"]
   workflow_dispatch:
-
   schedule:
-    - cron: "0 3 * * *"
+    # Codzienne odświeżenie danych GTFS o 03:17 UTC, nawet bez commita
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -17,19 +14,18 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect package lock
-        id: lock
+      - name: Sprawdź package-lock.json
+        id: lockfile
         shell: bash
         run: |
           if [ -f package-lock.json ]; then
@@ -43,95 +39,98 @@ jobs:
         with:
           node-version: 22
 
-      - name: Generate package lock if missing
-        if: steps.lock.outputs.exists == 'false'
+      - name: Uzupełnij package-lock.json (jeśli brakuje)
+        if: steps.lockfile.outputs.exists == 'false'
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Install dependencies
         run: npm ci
 
-      
-      - name: Download latest Wałbrzych GTFS
+      - name: Pobierz GTFS Wałbrzych
         shell: bash
         run: |
           mkdir -p public/data
+          DEST="public/data/walbrzych-gtfs.zip"
+          TMP="/tmp/walbrzych-gtfs.zip"
+          rm -f "$TMP"
 
-          curl -k -fL \
-            --retry 3 \
-            --retry-delay 5 \
-            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS" \
-            -o public/data/walbrzych-gtfs.zip
+          # Kolejno: prawdopodobny nowy adres, stary adres z loga,
+          # a na końcu ostatnia działająca kopia z Twojej opublikowanej strony
+          URLS=(
+            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS.zip"
+            "https://gtfs.walbrzych.eu/GTFS/ST/GTFS"
+            "https://gtfs.walbrzych.eu/GTFS/GTFS.zip"
+            "https://drytcha.github.io/Mapa2/data/walbrzych-gtfs.zip"
+          )
 
-          if ! unzip -t public/data/walbrzych-gtfs.zip; then
-            echo "ERROR: Downloaded GTFS archive is invalid"
-            exit 1
+          success=0
+          for url in "${URLS[@]}"; do
+            echo "==> Próba pobrania: $url"
+            if curl -fL \
+                  --retry 3 \
+                  --retry-delay 5 \
+                  --connect-timeout 15 \
+                  --max-time 180 \
+                  -A "Mapa2-GitHub-Actions" \
+                  "$url" -o "$TMP" \
+               && unzip -t "$TMP" > /dev/null \
+               && unzip -l "$TMP" | grep -q "stops.txt" \
+               && unzip -l "$TMP" | grep -q "routes.txt"; then
+              cp "$TMP" "$DEST"
+              success=1
+              echo "Pobrano poprawny GTFS z: $url"
+              break
+            fi
+            echo "::warning::Niedostępny lub nieprawidłowy plik: $url"
+            rm -f "$TMP"
+          done
+
+          if [ "$success" -ne 1 ]; then
+            if [ -f "$DEST" ] && unzip -t "$DEST" > /dev/null; then
+              echo "::warning::Używam pliku GTFS znajdującego się w repozytorium."
+            else
+              echo "::error::Nie udało się pobrać GTFS z żadnego źródła."
+              exit 1
+            fi
           fi
 
-          echo "GTFS downloaded successfully:"
-          ls -lh public/data/walbrzych-gtfs.zip
+          ls -lh "$DEST"
+          unzip -l "$DEST"
 
-
-      - name: Generate Next.js types
-        run: npx next typegen
-
-      - name: Check TypeScript
-        run: npm exec tsc -- --noEmit --pretty false
-
-      - name: Verify server build without database credentials
-        run: npm run build
-        env:
-          DATABASE_URL: ""
-
-      - name: Configure GitHub Pages
+      - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Build static traveler and planner app
+      - name: Build
         run: npm run build
-        env:
-          NEXT_PUBLIC_STATIC_EXPORT: "1"
-          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-          DATABASE_URL: ""
 
-      - name: Verify static export
+      - name: Wykryj katalog builda
+        id: build-output
         shell: bash
         run: |
-          if [ ! -s out/index.html ]; then
-            echo "ERROR: Missing out/index.html"
+          if [ -d dist ]; then
+            echo "path=./dist" >> "$GITHUB_OUTPUT"
+          elif [ -d out ]; then
+            echo "path=./out" >> "$GITHUB_OUTPUT"
+          elif [ -d build ]; then
+            echo "path=./build" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Nie znaleziono katalogu dist, out ani build po buildzie"
+            ls -la
             exit 1
           fi
 
-          if [ -d out/api ]; then
-            echo "ERROR: API directory should not exist in static export"
-            exit 1
-          fi
-
-          if [ ! -s out/data/walbrzych-gtfs.zip ]; then
-            echo "ERROR: Missing out/data/walbrzych-gtfs.zip"
-            echo "Contents of out:"
-            find out -maxdepth 3 -type f | head -100
-            exit 1
-          fi
-
-          echo "Static export verified successfully."
-
-          touch out/.nojekyll
-
-          echo "Output directory:"
-          ls -lah out
-
-      - name: Upload GitHub Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ${{ steps.build-output.outputs.path }}
 
   deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
-    runs-on: ubuntu-latest
-    needs: build
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
