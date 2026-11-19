@@ -52,3 +52,20 @@ Ta kopia działa jako statyczna strona (`dist/index.html`), bez Next.js/PostgreS
 
 Narzędzia diagnostyczne: `npx tsx scripts/check-brigades.ts <zip> 20261201 30`
 oraz `npx tsx scripts/check-course.ts <zip> [online]`.
+
+## Widoczność przystanków
+
+- Przystanki z rozkładu są wyświetlane bez czekania na opcjonalne dane o wiatach
+  z OpenStreetMap; błąd lub limit czasu tego źródła nie usuwa znaczników.
+- Podczas ładowania GTFS i w przypadku jego niedostępności mapa pokazuje lokalną
+  migawkę przystanków. Jest ona oznaczona jako potencjalnie nieaktualna; po
+  wczytaniu GTFS zostaje zastąpiona aktualnymi danymi.
+- Znaczniki są większe, kontrastowe i dostępne z klawiatury. Odświeżenie bieżącego
+  widoku nie usuwa przystanków z pozostałego obszaru. Zapisany tryb „przy trasie”
+  pokazuje wszystkie przystanki, dopóki trasa nie została wyznaczona.
+- Paczka GTFS w `src/assets/` jest dostarczana przez workflow wdrożenia; lokalny
+  build działa również bez niej, korzystając z dostępnych źródeł zapasowych.
+
+Testy: `npm run test:stops` oraz `npm run test:stops:e2e` (dla testu przeglądarkowego
+potrzebny jest Chromium, np. `npx playwright-core install chromium`, lub ścieżka
+w zmiennej `CHROMIUM_PATH`).

@@ -85,6 +85,9 @@ import {
 import {
   fetchBusStops,
   filterStops,
+  findRefreshedBusStop,
+  getSnapshotBusStops,
+  mergeRefreshedBusStops,
   stopDisplayName,
   WALBRZYCH_BOUNDS,
   WALBRZYCH_CENTER,
@@ -268,7 +271,7 @@ function MapPlanerWorkspace() {
   const [resolvedKey, setResolvedKey] = useState("");
 
   // Bus stops
-  const [busStops, setBusStops] = useState<BusStop[]>([]);
+  const [busStops, setBusStops] = useState<BusStop[]>(() => getSnapshotBusStops());
   const [busLoading, setBusLoading] = useState(false);
   const [busError, setBusError] = useState("");
   const [busQuery, setBusQuery] = useState("");
@@ -287,7 +290,6 @@ function MapPlanerWorkspace() {
       setVisibility((current) => ({ ...current, [key]: !current[key] })),
     []
   );
-  const stopDisplay = !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
   const showLiveBuses = visibility.liveBuses;
   const showTrafficSignals = visibility.trafficSignals;
   const showTurnarounds = visibility.turnarounds;
@@ -594,6 +596,9 @@ function MapPlanerWorkspace() {
   // clear or a routing failure. Travelers never see a planned route.
   const activeRoute =
     isPlanner && route.engine === "osrm" && route.coords.length >= 2 ? route : EMPTY_ROUTE;
+  // A saved "near route" preference must not blank a fresh map with no route.
+  const stopDisplay =
+    visibility.stops === "route" && activeRoute.coords.length < 2 ? "all" : visibility.stops;
 
   // Detect traffic signals whenever route geometry updates
   useEffect(() => {
@@ -712,6 +717,7 @@ function MapPlanerWorkspace() {
     if (stopDisplay === "route") return visibleStops.filter((stop) => nearRouteIds.has(stop.id));
     return visibleStops;
   }, [stopDisplay, visibleStops, nearRouteIds]);
+  const showingSnapshotStops = busStops.some((stop) => stop.source === "snapshot");
   const selectedStopInRoute = Boolean(
     isPlanner &&
       selectedStop &&
@@ -936,7 +942,12 @@ function MapPlanerWorkspace() {
     setNavPlaying((current) => !current);
   }, [navActive, startNavigation]);
 
-  const loadBusStops = useCallback(async (bounds: Bounds, scope: string, force = false) => {
+  const loadBusStops = useCallback(async (
+    bounds: Bounds,
+    scope: string,
+    force = false,
+    preserveOutside = false
+  ) => {
     busAbortRef.current?.abort();
     const controller = new AbortController();
     busAbortRef.current = controller;
@@ -950,16 +961,24 @@ function MapPlanerWorkspace() {
         onProgress: setBusSeconds,
       });
       if (controller.signal.aborted) return;
-      setBusStops(stops);
-      setBusScope(scope);
       if (!stops.length) {
         setBusError("Brak przystanków obsługiwanych przez autobusy i kursówki w tym obszarze.");
+        // Keep the saved snapshot if the entire timetable has no usable stops.
+        if (!preserveOutside) return;
       }
+      setBusStops((current) =>
+        preserveOutside ? mergeRefreshedBusStops(current, stops, bounds) : stops
+      );
+      if (!preserveOutside) {
+        setSelectedStop((current) => current ? findRefreshedBusStop(current, stops) : null);
+      }
+      setBusScope(scope);
     } catch (error) {
       if (controller.signal.aborted) return;
-      if (error instanceof DOMException && error.name === "AbortError") return;
       setBusError(
-        error instanceof Error ? error.message : "Nie udało się pobrać przystanków."
+        error instanceof Error && error.name !== "AbortError"
+          ? error.message
+          : "Nie udało się pobrać przystanków. Spróbuj ponownie."
       );
     } finally {
       if (!controller.signal.aborted) setBusLoading(false);
@@ -969,7 +988,9 @@ function MapPlanerWorkspace() {
   useEffect(() => {
     void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice");
     const offGtfs = onRuntimeEvent("gtfs:updated", () => {
-      void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice", true);
+      // The event has already invalidated the caches. Do not block initial stops
+      // on the optional Overpass request for shelter information.
+      void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice");
     });
     return () => {
       offGtfs();
@@ -981,7 +1002,7 @@ function MapPlanerWorkspace() {
     const bounds = mapRef.current?.getBounds();
     if (!bounds) return;
     setSelectedStop(null);
-    void loadBusStops(bounds, "Bieżący widok mapy", true);
+    void loadBusStops(bounds, "Wałbrzych i okolice + bieżący widok", true, true);
   }, [loadBusStops]);
 
   const selectBusStop = useCallback((stop: BusStop, center: boolean) => {
@@ -2256,6 +2277,27 @@ function MapPlanerWorkspace() {
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
             <div className="pointer-events-none absolute left-3 top-5 flex max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+              {stopDisplay !== "off" && (showingSnapshotStops || busError) && (
+                <div
+                  role="status"
+                  data-testid="stop-data-status"
+                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold leading-snug text-ink shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl"
+                >
+                  {busError || (busLoading
+                    ? "Pokazuję zapisaną migawkę przystanków. Wczytuję aktualny rozkład…"
+                    : "Przystanki pochodzą z zapisanej migawki i mogą być nieaktualne.")}
+                  {busError && showingSnapshotStops && " Przystanki z migawki mogą być nieaktualne."}
+                  {busError && (
+                    <button
+                      type="button"
+                      onClick={() => void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice")}
+                      className="ml-1.5 font-extrabold text-brand-ink underline underline-offset-2"
+                    >
+                      Ponów
+                    </button>
+                  )}
+                </div>
+              )}
               {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
                 <ShapeOverlayControl title={kursowkaOverlay.title} onClear={() => setKursowkaOverlay(null)} />
               )}
@@ -2426,12 +2468,13 @@ function MapPlanerWorkspace() {
                 }
                 busCount={mapStops.length}
                 isPlanner={isPlanner}
-                visibility={visibility}
+                visibility={{ ...visibility, stops: stopDisplay }}
                 onVisibilityChange={(patch) => {
-                  updateVisibility(patch);
-                  if (patch.stops === "route" && !routeReady) {
+                  if (patch.stops === "route" && activeRoute.coords.length < 2) {
                     showToast("Wyznacz trasę, aby pokazać przystanki przy niej.");
+                    return;
                   }
+                  updateVisibility(patch);
                 }}
                 busLoading={busLoading}
                 onRefreshBusStops={refreshBusStops}

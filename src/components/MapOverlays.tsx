@@ -2092,7 +2092,11 @@ export function BusStopCard({
         <div className="min-w-0 flex-1">
           <span className="block text-[7px] font-extrabold uppercase tracking-[0.14em] text-brand-ink/70">
             Przystanek autobusowy ·{" "}
-            {stop.source === "osm" ? "OSM" : "Rozkład Wałbrzych"}
+            {stop.source === "osm"
+              ? "OSM"
+              : stop.source === "snapshot"
+                ? "Migawka · dane mogą być nieaktualne"
+                : "Rozkład Wałbrzych"}
             {stop.ref ? ` · stan. ${stop.ref}` : ""}
           </span>
           <h3 className="mt-0.5 text-[12px] font-extrabold leading-tight tracking-[-0.02em] text-ink">
