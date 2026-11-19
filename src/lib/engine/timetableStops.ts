@@ -3,6 +3,7 @@ import { distanceCoords } from "@/lib/core/spatial";
 import { dedupeLines, foldStopKey } from "@/lib/core/text";
 import type { BusStop } from "@/lib/types";
 import { ensureGtfsSeeded } from "./gtfsStore";
+import { boardableStopInfo } from "./boardableStops";
 
 export interface TimetableStopsResult {
   stops: BusStop[];
@@ -43,12 +44,26 @@ export async function getTimetableStops(force = false): Promise<TimetableStopsRe
   return runDeduped(force ? "timetableStops:force" : "timetableStops:default", async () => {
     const store = await ensureGtfsSeeded();
     const stops: BusStop[] = [];
+    const destinationsByStopId = new Map<string, string>();
+    // Use the entire feed validity window, not just today: a weekend or seasonal
+    // departure is still a departure. Mirror the GTFS parser's calendar filter.
+    const activeServices = new Set<string>();
+    for (const [date, serviceIds] of store.base.serviceIdsByDate) {
+      if (store.base.feedStartDate > 0 && date < store.base.feedStartDate) continue;
+      if (store.base.feedEndDate > 0 && date > store.base.feedEndDate) continue;
+      for (const id of serviceIds) activeServices.add(id);
+    }
+    const routeNames = new Map([...store.base.routesById].map(([id, route]) => [id, route.shortName]));
 
     for (const g of store.base.stops) {
       if (!store.base.activeStopIds.has(g.id)) continue;
-      if (!store.stopTimesByStopId.get(g.id)?.length) continue;
-      const lines = store.base.linesByStopId.get(g.id);
-      if (!lines || lines.size === 0) continue;
+      const { lines, destination } = boardableStopInfo(
+        store.stopTimesByStopId.get(g.id) ?? [],
+        activeServices.size ? activeServices : null,
+        routeNames
+      );
+      if (!lines.size) continue;
+      if (destination) destinationsByStopId.set(g.id, destination);
 
       stops.push({
         id: `tt-${g.id}`,
@@ -78,7 +93,7 @@ export async function getTimetableStops(force = false): Promise<TimetableStopsRe
         list.some((o) => o !== s && distanceCoords(s.lat, s.lon, o.lat, o.lon) <= 300)
       );
       for (const s of close) {
-        const dest = s.gtfsId ? store.base.topDestByStopId.get(s.gtfsId) : undefined;
+        const dest = s.gtfsId ? destinationsByStopId.get(s.gtfsId) : undefined;
         if (dest && foldStopKey(dest) !== foldStopKey(s.name)) {
           s.towards = tidyStopName(dest);
         }
