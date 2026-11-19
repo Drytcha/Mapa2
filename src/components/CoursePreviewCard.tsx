@@ -32,12 +32,7 @@ export default function CoursePreviewCard({
   const [collapsed, setCollapsed] = useState(false);
   const operator = OPERATOR_STYLES[course.operatorKey];
   const dateLabel = `${course.dateId.slice(6, 8)}.${course.dateId.slice(4, 6)}.${course.dateId.slice(0, 4)}`;
-  const distance =
-    course.distanceMeters > 0
-      ? `${(course.distanceMeters / 1000).toLocaleString("pl-PL", {
-          maximumFractionDigits: 1,
-        })} km`
-      : null;
+
 
   return (
     <section
@@ -95,7 +90,6 @@ export default function CoursePreviewCard({
           </span>
           <span>·</span>
           <span>{course.stops.length} przystanków</span>
-          {distance && <span>· {distance}</span>}
           {course.dutyCode && (
             <span className="rounded bg-brand-soft px-1.5 py-0.5 text-[8px] font-bold text-brand-ink">
               Brygada {course.dutyCode}

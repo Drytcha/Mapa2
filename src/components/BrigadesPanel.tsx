@@ -636,15 +636,15 @@ export default function BrigadesPanel({
 
   const listColumns = showTechnicalNotes
     ? "grid-cols-[48px_36px_26px_minmax(0,1fr)_52px_46px]"
-    : "grid-cols-[48px_36px_26px_minmax(0,1fr)_54px]";
+    : "grid-cols-[48px_36px_26px_minmax(0,1fr)]";
 
   const tripColumns = showTechnicalNotes
     ? canLoadToPlanner
       ? "grid-cols-[28px_74px_1fr_1fr] sm:grid-cols-[28px_74px_minmax(0,1fr)_44px_44px_42px_54px]"
       : "grid-cols-[28px_74px_1fr_1fr] sm:grid-cols-[28px_74px_minmax(0,1fr)_46px_46px_42px]"
     : onPreviewCourse
-      ? "grid-cols-[28px_74px_1fr_1fr_68px] sm:grid-cols-[28px_74px_minmax(0,1fr)_48px_42px_68px]"
-      : "grid-cols-[28px_74px_1fr_1fr] sm:grid-cols-[28px_74px_minmax(0,1fr)_48px_42px]";
+      ? "grid-cols-[28px_74px_1fr_68px] sm:grid-cols-[28px_74px_minmax(0,1fr)_48px_68px]"
+      : "grid-cols-[28px_74px_1fr] sm:grid-cols-[28px_74px_minmax(0,1fr)_48px]";
 
   const feedRange = (value: number) =>
     String(value).replace(/^(\d{4})(\d{2})(\d{2})$/, "$3.$2.$1");
@@ -1095,8 +1095,8 @@ export default function BrigadesPanel({
             <span>Bryg.</span>
             <span>Firma</span>
             <span className="text-right">Kurs</span>
-            <span>Godziny / Linie</span>
-            <span className="text-right">Praca</span>
+            <span>{showTechnicalNotes ? "Godziny / Linie" : "Linie"}</span>
+            {showTechnicalNotes && <span className="text-right">Praca</span>}
             {showTechnicalNotes && <span className="text-right">Km</span>}
           </div>
 
@@ -1161,7 +1161,7 @@ export default function BrigadesPanel({
                           : `Brygada ${displayDuty(item.number)} (${item.operatorName})`
                       } · ${
                         uniqueItemLines.length > 1 ? `linie ${lines}` : `linia ${lines}`
-                      } · ${formatKilometresExact(m.revenueMeters)}${
+                      }${showTechnicalNotes ? ` · ${formatKilometresExact(m.revenueMeters)}` : ""}${
                         gps ? ` · GPS wóz #${gps.vehicleId}` : ""
                       }`}
                       onClick={() => {
@@ -1196,20 +1196,20 @@ export default function BrigadesPanel({
                       </span>
 
                       <span className="min-w-0">
-                        <span className="metric flex items-center gap-1 truncate text-[9px] font-semibold text-ink-soft">
-                          <span className="truncate">
-                            {item.workSpans.join(", ")}
+                        {showTechnicalNotes && (
+                          <span className="metric flex items-center gap-1 truncate text-[9px] font-semibold text-ink-soft">
+                            <span className="truncate">{item.workSpans.join(", ")}</span>
+                            {isSplit && (
+                              <span
+                                title="Brygada przerywana (szczytowa)"
+                                className="shrink-0 rounded bg-warning/18 px-1 text-[6.5px] font-extrabold text-warning"
+                              >
+                                B
+                              </span>
+                            )}
                           </span>
-                          {isSplit && (
-                            <span
-                              title="Brygada przerywana (szczytowa)"
-                              className="shrink-0 rounded bg-warning/18 px-1 text-[6.5px] font-extrabold text-warning"
-                            >
-                              B
-                            </span>
-                          )}
-                        </span>
-                        {showSecondaryLines && (
+                        )}
+                        {(!showTechnicalNotes || showSecondaryLines) && (
                           <span className="block truncate text-[7.5px] text-mute">
                             {uniqueItemLines.length > 1
                               ? `linie: ${lines}`
@@ -1218,9 +1218,11 @@ export default function BrigadesPanel({
                         )}
                       </span>
 
-                      <span className="metric text-right text-[8.5px] font-semibold text-ink">
-                        {shortHours(m.workBlockMinutes)}
-                      </span>
+                      {showTechnicalNotes && (
+                        <span className="metric text-right text-[8.5px] font-semibold text-ink">
+                          {shortHours(m.workBlockMinutes)}
+                        </span>
+                      )}
 
                       {showTechnicalNotes && (
                         <span className="metric text-right text-[8.5px] font-bold text-brand-ink">
@@ -1288,8 +1290,8 @@ export default function BrigadesPanel({
             <div className="grid flex-1 place-items-center px-4 py-10 text-center text-[10px] leading-relaxed text-mute">
               <span>
                 <BusFront className="mx-auto mb-1.5 h-5 w-5" />
-                Wybierz brygadę z listy, aby zobaczyć jej kursy, firmę oraz
-                rozliczenie kilometrów i godzin.
+                Wybierz brygadę z listy, aby zobaczyć jej kursy i firmę.
+                {showTechnicalNotes && " Dostępne jest też rozliczenie kilometrów i godzin."}
               </span>
             </div>
           ) : (
@@ -1370,20 +1372,28 @@ export default function BrigadesPanel({
                   <span className="font-semibold text-ink-soft">
                     {detail.length} kursów
                   </span>
-                  <span>·</span>
-                  <span className="metric font-semibold text-ink-soft">
-                    {selectedWorkSpans.join(", ")}
-                  </span>
+                  {showTechnicalNotes && (
+                    <>
+                      <span>·</span>
+                      <span className="metric font-semibold text-ink-soft">
+                        {selectedWorkSpans.join(", ")}
+                      </span>
+                    </>
+                  )}
                   <span>·</span>
                   <span>{formatBrigadeDate(dateId)}</span>
-                  <span>·</span>
-                  <span className="metric font-bold text-brand-ink">
-                    {formatKilometresExact(selectedMetrics.revenueMeters)}
-                  </span>
-                  <span>·</span>
-                  <span className="metric font-bold text-ink">
-                    {formatServiceHours(selectedMetrics.workBlockMinutes)} pracy
-                  </span>
+                  {showTechnicalNotes && (
+                    <>
+                      <span>·</span>
+                      <span className="metric font-bold text-brand-ink">
+                        {formatKilometresExact(selectedMetrics.revenueMeters)}
+                      </span>
+                      <span>·</span>
+                      <span className="metric font-bold text-ink">
+                        {formatServiceHours(selectedMetrics.workBlockMinutes)} pracy
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -1542,7 +1552,7 @@ export default function BrigadesPanel({
                 <span className="hidden sm:block">Trasa (od → do)</span>
                 <span className="text-right">Czas</span>
                 {showTechnicalNotes && <span className="text-right">Km</span>}
-                <span className="text-right">Postój</span>
+                {showTechnicalNotes && <span className="text-right">Postój</span>}
                 {showTechnicalNotes && canLoadToPlanner && (
                   <span className="hidden text-right sm:block">Planer</span>
                 )}
@@ -1653,16 +1663,18 @@ export default function BrigadesPanel({
                             : "—"}
                         </span>
                       )}
-                      <span
-                        className={cn(
-                          "metric text-right text-[9px]",
-                          breakMinutes !== null && breakMinutes > 90
-                            ? "font-bold text-warning"
-                            : "text-mute"
-                        )}
-                      >
-                        {breakMinutes === null ? "" : minutesLabel(breakMinutes)}
-                      </span>
+                      {showTechnicalNotes && (
+                        <span
+                          className={cn(
+                            "metric text-right text-[9px]",
+                            breakMinutes !== null && breakMinutes > 90
+                              ? "font-bold text-warning"
+                              : "text-mute"
+                          )}
+                        >
+                          {breakMinutes === null ? "" : minutesLabel(breakMinutes)}
+                        </span>
+                      )}
                       {showTechnicalNotes && canLoadToPlanner && (
                         <span className="hidden justify-end sm:flex">
                           <button

@@ -806,7 +806,7 @@ export function SettingsDialog({
             ],
             [
               "Profile użytkowników",
-              "Planista ma dostęp do pełnego planera (trasy A→B, PDF, raporty, flota, brygady). Podróżny dostaje mapę, przystanki z rozkładem, GPS autobusów i katalog kursówek — bez wyznaczania i pobierania tras. Wybór profilu jest zapamiętywany w przeglądarce.",
+              "Planista ma dostęp do pełnego planera (trasy A→B, PDF, raporty, flota, brygady). Użytkownik dostaje mapę, przystanki z rozkładem, GPS autobusów i katalog kursówek — bez wyznaczania i pobierania tras. Wybór profilu jest zapamiętywany w przeglądarce.",
             ],
             [
               "Planer podróży (pasażer)",
@@ -1418,7 +1418,7 @@ export function PlanistLoginDialog({
           </button>
         </div>
         <p className="mt-3 text-center text-[8.5px] leading-relaxed text-mute">
-          Bez logowania aplikacja działa jako Podróżny: mapa, przystanki, GPS i
+          Bez logowania dostępny jest widok użytkownika: mapa, przystanki, GPS i
           rozkład.
         </p>
       </form>
