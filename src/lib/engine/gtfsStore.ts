@@ -895,12 +895,11 @@ function buildDutyIndex(
   for (const detail of base.rawTrips) {
     const tripStopTimes = base.rawStopTimesByTrip.get(detail.rawTripId) ?? [];
     if (!tripStopTimes.length) continue;
-    const lastSeq = tripStopTimes[tripStopTimes.length - 1].stopSequence;
     const kursowkaId = detail.kursowkaCode
       ? `${detail.routeId}|${detail.serviceId}|${detail.kursowkaCode}`
       : "";
     const brigadeSource = detail.kursowkaCode ? "gtfs" : "none";
-    for (const st of tripStopTimes) {
+    for (const [index, st] of tripStopTimes.entries()) {
       let arr = stopTimesByStopId.get(st.stopId);
       if (!arr) {
         arr = [];
@@ -908,7 +907,7 @@ function buildDutyIndex(
       }
       arr.push({
         tripId: detail.rawTripId,
-        canBoard: st.pickupType !== 1 && st.stopSequence !== lastSeq,
+        canBoard: st.pickupType !== 1 && index < tripStopTimes.length - 1,
         rawTripId: detail.rawTripId,
         rawServiceId: detail.serviceId,
         departureMinutes: st.departureMinutes,

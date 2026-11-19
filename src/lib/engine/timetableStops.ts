@@ -80,6 +80,24 @@ export async function getTimetableStops(force = false): Promise<TimetableStopsRe
       });
     }
 
+    // Some malformed feeds contain no usable boarding information at all. In that
+    // case keep the known timetable stops instead of blanking the entire map.
+    if (!stops.length) {
+      for (const g of store.base.stops) {
+        if (!store.base.activeStopIds.has(g.id)) continue;
+        const lines = store.base.linesByStopId.get(g.id);
+        if (!lines?.size) continue;
+        stops.push({
+          id: `tt-${g.id}`, gtfsId: g.id, name: tidyStopName(g.name),
+          lat: g.lat, lon: g.lon, lines: dedupeLines(lines), shelter: false,
+          operator: "Rozkład jazdy Wałbrzych", kind: "bus_stop", source: "timetable",
+          ref: g.platformCode || undefined,
+        });
+        const dest = store.base.topDestByStopId.get(g.id);
+        if (dest) destinationsByStopId.set(g.id, dest);
+      }
+    }
+
     const groups = new Map<string, BusStop[]>();
     for (const s of stops) {
       const key = foldStopKey(s.name);

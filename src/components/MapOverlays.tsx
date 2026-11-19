@@ -1024,7 +1024,7 @@ export function MapControls({
     stopOptions.push({ id: "route", icon: Route, label: "Przy trasie" });
   // "Przy trasie" needs a planned route, which only the planner has.
   const stopsValue: StopDisplayMode =
-    !isPlanner && visibility.stops === "route" ? "off" : visibility.stops;
+    !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
 
   return (
     <div

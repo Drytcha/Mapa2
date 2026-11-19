@@ -22,8 +22,8 @@ export const WALBRZYCH_BOUNDS: Bounds = {
 export const WALBRZYCH_CENTER: [number, number] = [50.7714, 16.2843];
 export const WALBRZYCH_ZOOM = 14;
 
-const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6."];
-const CACHE_PREFIX = "mapplaner.stops.v7.";
+const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6.", "mapplaner.stops.v7."];
+const CACHE_PREFIX = "mapplaner.stops.v8.";
 const CACHE_TTL = 12 * 60 * 60_000;
 const memoryCache = new LruTtlCache<string, BusStop[]>(24, CACHE_TTL);
 let legacyPurged = false;
@@ -243,9 +243,9 @@ export function stopDisplayName(stop: BusStop): string {
 function readCache(key: string): BusStop[] | null {
   purgeLegacyStopCache();
   const hit = memoryCache.get(key);
-  if (hit) return hit;
+  if (hit?.length) return hit;
   const parsed = readStorageJson<{ at: number; stops: BusStop[] }>(key);
-  if (!parsed?.at || Date.now() - parsed.at > CACHE_TTL || !Array.isArray(parsed.stops)) {
+  if (!parsed?.at || Date.now() - parsed.at > CACHE_TTL || !Array.isArray(parsed.stops) || !parsed.stops.length) {
     return null;
   }
   memoryCache.set(key, parsed.stops, parsed.at);
