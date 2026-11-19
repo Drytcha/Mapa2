@@ -2,7 +2,7 @@
 export type StopDisplayMode = "all" | "route" | "off";
 
 export interface VisibilitySettings {
-  /** Bus stops on the map are hidden by default. */
+  /** Bus stops are shown by default and can be hidden by the user. */
   stops: StopDisplayMode;
   liveBuses: boolean;
   /** Optional identifiers; direction, line, speed and delay are always shown. */
@@ -14,10 +14,11 @@ export interface VisibilitySettings {
 
 export type VisibilityToggleKey = Exclude<keyof VisibilitySettings, "stops">;
 
-export const VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v1";
+export const VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v2";
+const LEGACY_VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v1";
 
 export const DEFAULT_VISIBILITY: VisibilitySettings = {
-  stops: "off",
+  stops: "all",
   liveBuses: true,
   busKursowka: false,
   busVehicleNumber: false,
@@ -47,7 +48,14 @@ export function restoreVisibility(value: unknown): VisibilitySettings {
 import { readStorageJson, writeStorageJson } from "./core/time";
 
 export function loadVisibility(): VisibilitySettings {
-  return restoreVisibility(readStorageJson(VISIBILITY_STORAGE_KEY));
+  const current = readStorageJson(VISIBILITY_STORAGE_KEY);
+  if (current) return restoreVisibility(current);
+  const previous = readStorageJson(LEGACY_VISIBILITY_STORAGE_KEY);
+  if (!previous) return { ...DEFAULT_VISIBILITY };
+  // The old default was hidden. Reset it once on upgrade; subsequent choices persist.
+  const migrated = restoreVisibility(previous);
+  if (migrated.stops === "off") migrated.stops = "all";
+  return migrated;
 }
 
 export function saveVisibility(settings: VisibilitySettings): void {

@@ -287,7 +287,7 @@ function MapPlanerWorkspace() {
       setVisibility((current) => ({ ...current, [key]: !current[key] })),
     []
   );
-  const stopDisplay = visibility.stops;
+  const stopDisplay = !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
   const showLiveBuses = visibility.liveBuses;
   const showTrafficSignals = visibility.trafficSignals;
   const showTurnarounds = visibility.turnarounds;
