@@ -27,6 +27,7 @@ import {
   NavigationHud,
   PickBanner,
   QuickComparison,
+  ShapeOverlayControl,
 } from "./MapOverlays";
 import {
   FleetDialog,
@@ -440,6 +441,9 @@ function MapPlanerWorkspace() {
   }>({});
   const [kursowkaReturnDateId, setKursowkaReturnDateId] = useState<string | null>(null);
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
+  // Reject previews started before a profile switch, even if they finish later.
+  const overlayEpochRef = useRef(0);
+  const overlayEpoch = overlayEpochRef.current;
 
   // Route editing & dialogs
   const [addMode, setAddMode] = useState(false);
@@ -889,6 +893,7 @@ function MapPlanerWorkspace() {
 
   const handleRoleChange = (next: AppRole) => {
     if (next === role) return;
+    overlayEpochRef.current += 1;
     stopNavigation();
     setAddMode(false);
     setPickTarget(null);
@@ -896,7 +901,8 @@ function MapPlanerWorkspace() {
     setSelectedStop(null);
     setSelectedLiveBus(null);
     setKursowkiOpen(false);
-    setKursowkaOverlay((current) => (current?.course ? null : current));
+    setLinesOpen(false);
+    setKursowkaOverlay(null);
     // The information window is available only to a logged-in planner.
     setSettingsOpen(false);
     setRole(next);
@@ -1820,8 +1826,10 @@ function MapPlanerWorkspace() {
   }, []);
 
   const handlePreviewCourse = useCallback(async (tripId: string, dateId: string): Promise<boolean> => {
+    const epoch = overlayEpochRef.current;
     try {
       const course = await getCoursePreview(tripId, dateId);
+      if (epoch !== overlayEpochRef.current) return false;
       if (!course) {
         showToast("Ten kurs nie jest dostępny w rozkładzie na wybrany dzień.");
         return false;
@@ -1842,7 +1850,9 @@ function MapPlanerWorkspace() {
       showToast(`Pokazuję przebieg kursu linii ${course.routeShort} i ${course.stops.length} przystanków.`);
       return true;
     } catch {
-      showToast("Nie udało się wyświetlić przebiegu kursu. Spróbuj ponownie.");
+      if (epoch === overlayEpochRef.current) {
+        showToast("Nie udało się wyświetlić przebiegu kursu. Spróbuj ponownie.");
+      }
       return false;
     }
   }, [showToast]);
@@ -2246,6 +2256,9 @@ function MapPlanerWorkspace() {
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
             <div className="pointer-events-none absolute left-3 top-5 flex max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+              {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
+                <ShapeOverlayControl title={kursowkaOverlay.title} onClear={() => setKursowkaOverlay(null)} />
+              )}
               {addMode ? (
                 <MapDrawingBanner
                   count={assignedCount}
@@ -2285,8 +2298,6 @@ function MapPlanerWorkspace() {
                       turnaroundCount={turnaroundSpots.length}
                       showTurnarounds={showTurnarounds}
                       onToggleTurnarounds={() => toggleVisibility("turnarounds")}
-                      kursowkaOverlayTitle={kursowkaOverlay?.course ? null : kursowkaOverlay?.title ?? null}
-                    onClearKursowkaOverlay={() => setKursowkaOverlay(null)}
                     onSelectBus={handleSelectBus}
                   />
                   {!isPlanner && kursowkaOverlay?.course && (
@@ -2611,6 +2622,7 @@ function MapPlanerWorkspace() {
             liveVehicles={liveVehicles}
             onSelectBus={handleSelectBus}
             onShowShapeOverlay={(overlay) => {
+              if (overlayEpoch !== overlayEpochRef.current) return;
               setKursowkaOverlay(overlay);
               showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
             }}
@@ -2629,6 +2641,7 @@ function MapPlanerWorkspace() {
             isPlanner={isPlanner}
             onClose={() => setLinesOpen(false)}
             onShowShapeOverlay={(overlay) => {
+              if (overlayEpoch !== overlayEpochRef.current) return;
               setKursowkaOverlay(overlay);
               showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
             }}
