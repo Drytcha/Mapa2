@@ -41,6 +41,7 @@ export interface KursowkaShapeOverlay {
   title: string;
   color: string;
   polylines: [number, number][][];
+  unresolvedGaps?: number;
   stops: Array<{ name: string; lat: number; lon: number }>;
   /** Present only when previewing one scheduled course, not a whole brigade. */
   course?: CoursePreview;
@@ -316,11 +317,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const fitOverlayMap = () => {
     const map = mapRef.current;
     const overlay = overlayRef.current;
-    if (!map || !overlay?.polylines.length) {
+    if (!map || !overlay) {
       fitBounds();
       return;
     }
-    const allCoords = overlay.polylines.flat();
+    const allCoords: [number, number][] = [...overlay.polylines.flat(), ...overlay.stops.map((stop): [number, number] => [stop.lat, stop.lon])];
     if (allCoords.length < 2) return;
     const width = map.getSize().x;
     map.fitBounds(L.latLngBounds(allCoords), {
@@ -467,9 +468,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const config = TILES[mapStyle];
     const base = L.tileLayer(config.base, {
       attribution: config.attribution,
-      maxZoom: config.maxZoom,
+      maxZoom: 19,
       maxNativeZoom: config.maxZoom,
-      detectRetina: true,
+      detectRetina: false,
       crossOrigin: true,
       className: mapStyle === "dark" ? "basemap-layer basemap-layer--dark" : "basemap-layer",
     });
@@ -477,9 +478,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const layers = [base];
     if (config.labels) {
       const labels = L.tileLayer(config.labels, {
-        maxZoom: config.maxZoom,
+        maxZoom: 19,
         maxNativeZoom: config.maxZoom,
-        detectRetina: true,
+        detectRetina: false,
         crossOrigin: true,
         pane: "labels",
         className: "basemap-labels",
@@ -630,11 +631,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const group = kursowkaGroupRef.current;
     if (!map || !group) return;
     group.clearLayers();
-    if (!kursowkaOverlay || !kursowkaOverlay.polylines.length) return;
+    if (!kursowkaOverlay) return;
 
-    // The course line is ALWAYS continuous. Dashes made brigade previews and course
-    // data look like a broken route, so they are gone. Only a stop-chain course
-    // (no street geometry at all) is drawn a bit lighter to mark it as approximate.
+    // Stop-chain routing is approximate; unresolved gaps are intentionally omitted.
     const lineColor = kursowkaOverlay.color || "#0d4f3b";
     const casingWeight = kursowkaOverlay.course ? 9 : 8;
     const lineWeight = kursowkaOverlay.course ? 5 : 4.5;

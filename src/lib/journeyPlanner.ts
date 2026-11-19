@@ -1318,8 +1318,8 @@ export async function journeyToRepairedMapGeometry(
       repaired.push(leg);
       continue;
     }
-    // The repaired shape is one continuous line, so the bus leg is never split.
-    const { polylines } = await repairShapeGaps(leg.path, signal, 4);
+    // Unresolved gaps are omitted rather than drawn as misleading straight lines.
+    const { polylines } = await repairShapeGaps(leg.path, signal);
     for (const path of polylines) repaired.push({ ...leg, path });
   }
   return { legs: repaired, markers };
