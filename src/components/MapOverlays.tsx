@@ -258,8 +258,6 @@ export function LiveFleetControl({
   turnaroundCount,
   showTurnarounds,
   onToggleTurnarounds,
-  kursowkaOverlayTitle,
-  onClearKursowkaOverlay,
   onSelectBus,
   isPlanner = false,
 }: {
@@ -279,8 +277,6 @@ export function LiveFleetControl({
   turnaroundCount: number;
   showTurnarounds: boolean;
   onToggleTurnarounds: () => void;
-  kursowkaOverlayTitle: string | null;
-  onClearKursowkaOverlay: () => void;
   onSelectBus: (bus: LiveBusVehicle) => void;
 }) {
   const [legendExpanded, setLegendExpanded] = useState(false);
@@ -444,20 +440,26 @@ export function LiveFleetControl({
         </button>
       )}
 
-      {kursowkaOverlayTitle && (
-        <div className="pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
-          <BusFront className="h-3 w-3" />
-          <span>{kursowkaOverlayTitle}</span>
-          <button
-            type="button"
-            onClick={onClearKursowkaOverlay}
-            aria-label="Ukryj podgląd kursówki"
-            className="grid h-4 w-4 place-items-center rounded hover:bg-surface"
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        </div>
-      )}
+
+    </div>
+  );
+}
+
+/** Always available while an overlay is displayed, including route editing modes. */
+export function ShapeOverlayControl({ title, onClear }: { title: string; onClear: () => void }) {
+  return (
+    <div className="pointer-events-auto flex max-w-full items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 py-1.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
+      <BusFront className="h-3 w-3 shrink-0" />
+      <span className="min-w-0 break-words">{title}</span>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label="Ukryj przebieg z mapy"
+        title="Ukryj przebieg z mapy"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded hover:bg-surface"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
