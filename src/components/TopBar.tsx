@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BusFront,
-  Check,
   ChevronDown,
   FileDown,
   FileSpreadsheet,
@@ -15,7 +14,6 @@ import {
   Settings2,
   Sun,
   Truck,
-  User,
   Waypoints,
   X,
 } from "lucide-react";
@@ -100,6 +98,15 @@ export default function TopBar({
   const visibleNav = NAV.filter(
     (item) => isPlanner || item.id === "kursowki" || item.id === "lines"
   );
+
+  // A direct link opens the existing planner login without advertising it in the user UI.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("planista") !== "1") return;
+    url.searchParams.delete("planista");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    if (!isPlanner) setLoginOpen(true);
+  }, [isPlanner]);
 
   useEffect(() => {
     if (!roleMenuOpen) return;
@@ -243,99 +250,37 @@ export default function TopBar({
 
         <span className="mx-0.5 hidden h-5 w-px bg-line sm:block" />
 
-        <div className="relative flex items-center" ref={roleMenuRef}>
-          <button
-            type="button"
-            onClick={() => setRoleMenuOpen((current) => !current)}
-            aria-haspopup="menu"
-            aria-expanded={roleMenuOpen}
-            title="Wybór profilu: Planista / Podróżny"
-            className="flex items-center gap-2 rounded-[10px] border border-line bg-raised p-[3px] pr-1.5 transition-colors hover:border-line-strong"
-          >
-            <span
-              className={cn(
-                "grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[7px]",
-                isPlanner ? "bg-brand text-on-brand" : "bg-sky-600 text-white"
-              )}
+        {isPlanner && (
+          <div className="relative flex items-center" ref={roleMenuRef}>
+            <button
+              type="button"
+              onClick={() => setRoleMenuOpen((current) => !current)}
+              aria-haspopup="menu"
+              aria-expanded={roleMenuOpen}
+              title="Profil planisty"
+              className="flex items-center gap-2 rounded-[10px] border border-line bg-raised p-[3px] pr-1.5 transition-colors hover:border-line-strong"
             >
-              {isPlanner ? <Ruler className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
-            </span>
-            <span className="hidden text-left leading-none 2xl:block">
-              <span className="block text-[9.5px] font-extrabold text-ink">
-                {isPlanner ? "Planista" : "Podróżny"}
+              <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[7px] bg-brand text-on-brand">
+                <Ruler className="h-3.5 w-3.5" />
               </span>
-              <span className="mt-0.5 block text-[7.5px] font-semibold text-mute">
-                {isPlanner ? "Pełny planer tras" : "Mapa, GPS i rozkład"}
+              <span className="hidden text-left leading-none 2xl:block">
+                <span className="block text-[9.5px] font-extrabold text-ink">Planista</span>
+                <span className="mt-0.5 block text-[7.5px] font-semibold text-mute">Pełny planer tras</span>
               </span>
-            </span>
-            <ChevronDown className="hidden h-3 w-3 text-mute 2xl:block" />
-          </button>
-          {roleMenuOpen && (
-            <div
-              role="menu"
-              aria-label="Profil użytkownika"
-              className="absolute right-0 top-[calc(100%+6px)] z-[1100] w-[252px] overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-[0_20px_55px_rgba(0,0,0,0.24)] animate-fade-in"
-            >
-              <div className="px-2 py-1.5 text-[7.5px] font-extrabold uppercase tracking-[0.16em] text-mute">
-                Profil użytkownika
-              </div>
-              {(
-                [
-                  {
-                    id: "planner" as const,
-                    label: "Planista",
-                    desc:
-                      role === "planner"
-                        ? "Zalogowany — pełny planer tras"
-                        : "Wymaga logowania (login i hasło)",
-                    Icon: Ruler,
-                  },
-                  {
-                    id: "traveler" as const,
-                    label: "Podróżny",
-                    desc: "Mapa, przystanki, GPS autobusów, rozkład i wybór startu/celu prawym na mapie",
-                    Icon: User,
-                  },
-                ]
-              ).map(({ id, label, desc, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={role === id}
-                  onClick={() => {
-                    setRoleMenuOpen(false);
-                    if (id === "planner" && role !== "planner") {
-                      setLoginOpen(true);
-                    } else {
-                      onRoleChange(id);
-                    }
-                  }}
-                  className={cn(
-                    "flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors",
-                    role === id ? "bg-brand-soft" : "hover:bg-raised"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid h-7 w-7 shrink-0 place-items-center rounded-md",
-                      role === id ? "bg-brand text-on-brand" : "bg-raised text-ink-soft"
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5 text-[10px] font-extrabold text-ink">
-                      {label}
-                      {role === id && <Check className="h-3 w-3 text-brand-ink" />}
-                    </span>
-                    <span className="mt-0.5 block text-[8.5px] leading-snug text-mute">{desc}</span>
-                  </span>
+              <ChevronDown className="hidden h-3 w-3 text-mute 2xl:block" />
+            </button>
+            {roleMenuOpen && (
+              <div role="menu" aria-label="Profil planisty" className="absolute right-0 top-[calc(100%+6px)] z-[1100] w-[200px] rounded-xl border border-line bg-surface p-1 shadow-[0_20px_55px_rgba(0,0,0,0.24)]">
+                <button type="button" role="menuitem" onClick={() => {
+                  setRoleMenuOpen(false);
+                  onRoleChange("traveler");
+                }} className="w-full rounded-lg px-3 py-2 text-left text-[10px] font-bold text-ink hover:bg-raised">
+                  Wyloguj · widok użytkownika
                 </button>
-              ))}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
         <PlanistLoginDialog
           open={loginOpen}
           onClose={() => setLoginOpen(false)}

@@ -909,7 +909,7 @@ function MapPlanerWorkspace() {
     showToast(
       next === "planner"
         ? "Zalogowano jako Planista: pełny planer tras, PDF, raporty i flota."
-        : "Wylogowano. Profil Podróżnego: mapa, GPS, rozkład oraz wybór startu i celu prawym na mapie."
+        : "Wylogowano. Widok użytkownika: mapa, GPS, rozkład oraz wybór startu i celu prawym na mapie."
     );
   };
 

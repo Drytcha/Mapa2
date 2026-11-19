@@ -431,7 +431,7 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
                                 {variant.firstStop} → {variant.lastStop}
                               </span>
                               <span className="block text-[8px] font-semibold text-mute">
-                                {variant.stopCount} przystanków · {kilometres(variant.lengthMeters)} ·{" "}
+                                {variant.stopCount} przystanków · {isPlanner && `${kilometres(variant.lengthMeters)} · `}
                                 {variant.refCount > 0
                                   ? `${variant.refCount} ${tripsNoun(variant.refCount)} w dzień roboczy`
                                   : `${variant.tripCount} ${tripsNoun(variant.tripCount)} (poza dniami roboczymi)`}
