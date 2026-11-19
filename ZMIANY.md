@@ -66,6 +66,33 @@ oraz `npx tsx scripts/check-course.ts <zip> [online]`.
 - Paczka GTFS w `src/assets/` jest dostarczana przez workflow wdrożenia; lokalny
   build działa również bez niej, korzystając z dostępnych źródeł zapasowych.
 
+## Wybór przystanku i rozkład
+
+- Automatyczny pierwszy odczyt GPS nie przenosi już mapy poza sieć przystanków
+  Wałbrzycha. Przycisk lokalizacji nadal pozwala świadomie wycentrować mapę na
+  użytkowniku; ręczne przesunięcie lub wybranie przystanku zatrzymuje śledzenie.
+- Przycisk **Przystanki** pozwala wyszukać nazwę lub linię, wybrać stanowisko
+  i wrócić do niego na mapie. Gdy warstwa jest ukryta, można ją przywrócić.
+- Rozkład statyczny jest pokazywany bez oczekiwania na GPS, który uzupełnia go
+  później. Jeśli GTFS jest niedostępny, zbyt długo się ładuje lub nie obejmuje
+  wybranej daty, aplikacja próbuje pobrać oznaczony rozkład awaryjny z
+  zbiorkom.live. Ten rozkład nie obsługuje podglądu przebiegu kursu. Gdy GTFS
+  nie obejmuje całego dnia, a źródło awaryjne jest niedostępne, znane kursy po
+  północy z poprzedniego dnia obsługi są oznaczane jako niepełny rozkład.
+- Dopasowanie stanowiska między źródłami wymaga zgodnej nazwy i położenia;
+  niejednoznaczne dopasowanie nie pokazuje rozkładu sąsiedniego przystanku.
+  Zmiana przystanku lub daty unieważnia wcześniejsze odpowiedzi.
+- Karta przystanku ma dostępne przyciski również na wąskim ekranie, a w razie
+  braku danych pokazuje komunikat zamiast pozornie pustego rozkładu.
+
 Testy: `npm run test:stops` oraz `npm run test:stops:e2e` (dla testu przeglądarkowego
 potrzebny jest Chromium, np. `npx playwright-core install chromium`, lub ścieżka
-w zmiennej `CHROMIUM_PATH`).
+w zmiennej `CHROMIUM_PATH`). `npm run test:stops:build` sprawdza również osadzoną
+paczkę w produkcyjnym, jednoplikowym buildzie pod ścieżką `/Mapa2/`. Testy
+przeglądarkowe używają syntetycznej paczki GTFS oraz zapisanych odpowiedzi API,
+a nie weryfikują bieżącej dostępności API ani CORS.
+
+Mając prawdziwą paczkę, można dodatkowo uruchomić
+`REAL_GTFS_ZIP=src/assets/walbrzych-gtfs.zip npm run test:stops:real`. Test sprawdza
+widoczny i klikalny przystanek oraz godzinę odjazdu względem plików CSV paczki na
+ekranie komputera i telefonu. Paczka musi obejmować bieżący dzień.

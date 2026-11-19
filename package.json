@@ -7,8 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts",
-    "test:stops:e2e": "node scripts/test-stop-map.mjs"
+    "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts && tsx scripts/test-schedule-fallback.ts",
+    "test:stops:e2e": "node scripts/test-stop-map.mjs",
+    "test:stops:build": "node scripts/test-stop-production.mjs",
+    "test:stops:real": "tsx scripts/test-stop-real.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",

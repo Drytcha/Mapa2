@@ -1113,6 +1113,7 @@ async function fetchArchiveBytes(
   // Fast initial load: bundled official gtfs.walbrzych.eu archive
   try {
     const bundledRes = await fetch(assetUrl("data/walbrzych-gtfs.zip"), {
+      signal: AbortSignal.timeout(8_000),
       cache: "default",
     });
     if (bundledRes.ok) {
@@ -1608,6 +1609,8 @@ export async function getStopDepartures(options: {
   /** Exclusive end of a timetable window; with no limit, return every departure. */
   toMs?: number;
   limit?: number;
+  /** Return the scheduled times without waiting for the optional GPS services. */
+  includeLive?: boolean;
 }): Promise<{
   matched: {
     id: string;
@@ -1618,6 +1621,8 @@ export async function getStopDepartures(options: {
     distanceMeters: number;
   } | null;
   departures: StopDepartureItem[];
+  /** The requested day is outside the feed's explicitly declared validity. */
+  outsideFeedValidity?: boolean;
 }> {
   const store = await ensureGtfsSeeded();
   const { lat, lon } = options;
@@ -1634,46 +1639,46 @@ export async function getStopDepartures(options: {
     : Date.now();
   const toTime = boundedWindow ? options.toMs! : Infinity;
   const fromDate = new Date(fromTime);
+  const requestedDate = Number(DateTime.fromJSDate(fromDate, { zone: ZONE }).toFormat("yyyyLLdd"));
+  const outsideFeedValidity =
+    (store.base.feedStartDate > 0 && requestedDate < store.base.feedStartDate) ||
+    (store.base.feedEndDate > 0 && requestedDate > store.base.feedEndDate);
 
   const targetNorm = options.name ? normalizeStopName(options.name) : "";
   let matched = options.stopId
     ? (store.base.stopsById.get(options.stopId) ?? null)
     : null;
-  let bestDist = matched
-    ? distanceMeters(lat, lon, matched.lat, matched.lon)
-    : 180;
+  let bestDist = matched ? distanceMeters(lat, lon, matched.lat, matched.lon) : Infinity;
 
   const candidateStops = getActiveStopsForBase(store.base);
 
-  if (!matched) {
-    for (const s of candidateStops) {
-      const dist = distanceMeters(lat, lon, s.lat, s.lon);
-      if (dist > bestDist) continue;
-      if (targetNorm) {
-        const comp =
-          s.normalizedName === targetNorm ||
-          s.normalizedName.includes(targetNorm) ||
-          targetNorm.includes(s.normalizedName);
-        if (!comp) continue;
-      }
-      bestDist = dist;
-      matched = s;
+  if (!matched && targetNorm) {
+    // Snapshot/OSM stops have no GTFS ID. Match both the complete name and
+    // location; falling back to a different nearby stop can show the timetable
+    // of the opposite platform or even another street.
+    const candidates = candidateStops
+      .filter((stop) => stop.normalizedName === targetNorm)
+      .map((stop) => ({ stop, distance: distanceMeters(lat, lon, stop.lat, stop.lon) }))
+      .filter(({ distance }) => distance < 50)
+      .sort((a, b) => a.distance - b.distance);
+    if (candidates[0] && (!candidates[1] || candidates[1].distance - candidates[0].distance >= 3)) {
+      matched = candidates[0].stop;
+      bestDist = candidates[0].distance;
     }
-  }
-
-  if (!matched) {
+  } else if (!matched && !targetNorm) {
+    // Coordinate-only requests can still ask for the nearest stop.
     bestDist = 95;
-    for (const s of candidateStops) {
-      const dist = distanceMeters(lat, lon, s.lat, s.lon);
-      if (dist < bestDist) {
-        bestDist = dist;
-        matched = s;
+    for (const stop of candidateStops) {
+      const distance = distanceMeters(lat, lon, stop.lat, stop.lon);
+      if (distance < bestDist) {
+        bestDist = distance;
+        matched = stop;
       }
     }
   }
 
   if (!matched) {
-    return { matched: null, departures: [] };
+    return { matched: null, departures: [], outsideFeedValidity };
   }
 
   const stopTimesRows = store.stopTimesByStopId.get(matched.id) ?? [];
@@ -1694,7 +1699,7 @@ export async function getStopDepartures(options: {
     nowMs >= fromTime - 2 * 3600_000 && nowMs <= toTime + 30 * 60_000;
 
   let liveStopMatches: LiveStopDepartureMatch[] = [];
-  if (windowIncludesLiveNow) {
+  if (options.includeLive !== false && windowIncludesLiveNow) {
     const [liveFleet, stopMatches] = await Promise.all([
       (async () => {
         try {
@@ -1737,6 +1742,10 @@ export async function getStopDepartures(options: {
     const serviceDay = baseDt.plus({ days: dayOffset }).startOf("day");
     const dateStr = serviceDay.toFormat("yyyyLLdd");
     const dateKey = Number(dateStr);
+    if (
+      (store.base.feedStartDate > 0 && dateKey < store.base.feedStartDate) ||
+      (store.base.feedEndDate > 0 && dateKey > store.base.feedEndDate)
+    ) continue;
     const activeServices = store.base.serviceIdsByDate.get(dateKey);
     if (!activeServices?.size) continue;
 
@@ -1839,6 +1848,7 @@ export async function getStopDepartures(options: {
       distanceMeters: Math.round(bestDist),
     },
     departures: results.slice(0, limit),
+    outsideFeedValidity,
   };
 }
 

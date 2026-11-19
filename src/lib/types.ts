@@ -241,6 +241,8 @@ export interface LiveTrafficSummary {
 
 export interface StopDepartureItem {
   tripId: string;
+  /** Some fallback sources provide departure times but no GTFS trip identifier. */
+  canPreviewCourse?: boolean;
   /** GTFS service day (YYYYMMDD), which may differ from the calendar day after midnight. */
   serviceDateId: string;
   kursowkaId: string;

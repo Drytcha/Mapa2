@@ -68,17 +68,14 @@ export function findRefreshedBusStop(selected: BusStop, refreshed: BusStop[]): B
   if (selected.source !== "snapshot") return null;
 
   const name = foldStopKey(selected.name);
-  let best: BusStop | null = null;
-  let bestDistance = 50;
-  for (const stop of refreshed) {
-    if (foldStopKey(stop.name) !== name) continue;
-    const distance = distanceCoords(selected.lat, selected.lon, stop.lat, stop.lon);
-    if (distance < bestDistance) {
-      best = stop;
-      bestDistance = distance;
-    }
-  }
-  return best;
+  const candidates = refreshed
+    .filter((stop) => name && foldStopKey(stop.name) === name)
+    .map((stop) => ({ stop, distance: distanceCoords(selected.lat, selected.lon, stop.lat, stop.lon) }))
+    .filter(({ distance }) => distance < 50)
+    .sort((a, b) => a.distance - b.distance);
+  // Do not silently replace a selected platform with an indistinguishable one.
+  if (candidates[1] && candidates[1].distance - candidates[0].distance < 3) return null;
+  return candidates[0]?.stop ?? null;
 }
 
 const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6.", "mapplaner.stops.v7."];

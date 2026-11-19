@@ -2081,7 +2081,7 @@ export function BusStopCard({
   return (
     <div
       className={cn(
-        "pointer-events-auto w-[352px] max-w-[calc(100vw-20px)] select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] backdrop-blur-xl animate-rise-in dark:bg-surface/93",
+        "pointer-events-auto flex min-h-0 w-[352px] max-w-[calc(100vw-72px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] backdrop-blur-xl animate-rise-in dark:bg-surface/93",
         className,
       )}
     >
@@ -2121,7 +2121,7 @@ export function BusStopCard({
         </button>
       </div>
 
-      <div className="scroll-area max-h-[72vh] overflow-y-auto px-2.5 pb-2 pt-2">
+      <div className="scroll-area min-h-0 max-h-[72vh] flex-1 overflow-y-auto px-2.5 pb-2 pt-2">
         {isPlanner && (
           <>
             {stop.lines.length > 0 ? (
