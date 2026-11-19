@@ -2308,23 +2308,38 @@ export async function getBrigadeShapeOverlay(
   title: string;
   color: string;
   polylines: [number, number][][];
+  unresolvedGaps: number;
   stops: Array<{ name: string; lat: number; lon: number }>;
 } | null> {
   if (!tripIds.length) return null;
   const store = await ensureGtfsSeeded();
   const seenShapes = new Set<string>();
-  const polylines: [number, number][][] = [];
+  const polylines: Array<{ path: [number, number][]; stopChain: boolean }> = [];
+  const seenStopChains = new Set<string>();
   const stopMap = new Map<string, { name: string; lat: number; lon: number }>();
 
   for (const tripId of tripIds) {
     const trip = store.base.rawTripsById.get(tripId);
     if (!trip) continue;
-    if (trip.shapeId && !seenShapes.has(trip.shapeId)) {
-      seenShapes.add(trip.shapeId);
-      const pts = store.base.shapesById.get(trip.shapeId);
-      if (pts && pts.length >= 2) polylines.push(pts);
-    }
+    const pts = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : undefined;
     const sts = store.base.rawStopTimesByTrip.get(tripId) ?? [];
+    if (pts && pts.length >= 2 && trip.shapeId) {
+      if (!seenShapes.has(trip.shapeId)) {
+        seenShapes.add(trip.shapeId);
+        polylines.push({ path: pts, stopChain: false });
+      }
+    } else {
+      const key = JSON.stringify(sts.map((st) => st.stopId));
+      if (!seenStopChains.has(key)) {
+        seenStopChains.add(key);
+        const path: [number, number][] = [];
+        for (const st of sts) {
+          const stop = store.base.stopsById.get(st.stopId);
+          if (stop) path.push([stop.lat, stop.lon]);
+        }
+        if (path.length >= 2) polylines.push({ path, stopChain: true });
+      }
+    }
     for (const st of sts) {
       if (stopMap.has(st.stopId)) continue;
       const stop = store.base.stopsById.get(st.stopId);
@@ -2338,26 +2353,17 @@ export async function getBrigadeShapeOverlay(
     }
   }
 
-  if (!polylines.length && stopMap.size >= 2) {
-    return {
-      title,
-      color,
-      polylines: [[...stopMap.values()].map((s) => [s.lat, s.lon])],
-      stops: [...stopMap.values()],
-    };
-  }
   if (!polylines.length) return null;
 
-  // Improve long segments of each variant with road geometry. Every variant stays
-  // one continuous line even when routing is unavailable (see shapeRepair.ts).
   const repaired = await Promise.all(
-    polylines.map((line) => repairShapeGaps(line, undefined, 8))
+    polylines.map(({ path, stopChain }) => repairShapeGaps(path, undefined, stopChain))
   );
 
   return {
     title,
     color,
     polylines: repaired.flatMap((r) => r.polylines),
+    unresolvedGaps: repaired.reduce((sum, r) => sum + r.gapsTotal - r.gapsRepaired, 0),
     stops: [...stopMap.values()],
   };
 }
@@ -2390,9 +2396,10 @@ export interface CoursePreview {
   distanceMeters: number;
   /** Raw GTFS geometry (or stop chain when `approximate`). */
   path: [number, number][];
-  /** Drawable line: one continuous run (long segments use road geometry when routing answered). */
+  /** Road geometry and verified GTFS runs; unresolved gaps are omitted. */
   polylines: [number, number][][];
   approximate: boolean;
+  unresolvedGaps: number;
   stops: CoursePreviewStop[];
 }
 
@@ -2444,8 +2451,8 @@ export async function getCoursePreview(
       ? trip.operatorKey
       : resolveDutyOperator(trip.serviceId, trip.kursowkaCode);
   const lengths = await getTripLengthMap();
-  // Stop-chain fallbacks are straight lines by nature; only real shapes are gap-repaired.
-  const polylines = approximate ? [path] : (await repairShapeGaps(path, undefined, 12)).polylines;
+  const repaired = await repairShapeGaps(path, undefined, approximate);
+  const polylines = repaired.polylines;
 
   return {
     tripId,
@@ -2464,6 +2471,7 @@ export async function getCoursePreview(
     path,
     polylines,
     approximate,
+    unresolvedGaps: repaired.gapsTotal - repaired.gapsRepaired,
     stops,
   };
 }

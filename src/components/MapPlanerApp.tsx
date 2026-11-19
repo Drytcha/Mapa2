@@ -2612,7 +2612,7 @@ function MapPlanerWorkspace() {
             onSelectBus={handleSelectBus}
             onShowShapeOverlay={(overlay) => {
               setKursowkaOverlay(overlay);
-              showToast(`Wyświetlono przebieg: ${overlay.title}.`);
+              showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
             }}
             onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
             onLoadTripToPlanner={handleLoadTripToPlanner}
@@ -2630,7 +2630,7 @@ function MapPlanerWorkspace() {
             onClose={() => setLinesOpen(false)}
             onShowShapeOverlay={(overlay) => {
               setKursowkaOverlay(overlay);
-              showToast(`Wyświetlono przebieg: ${overlay.title}.`);
+              showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
             }}
           />
         </Suspense>

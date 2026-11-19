@@ -1,15 +1,5 @@
-/**
- * The official Wałbrzych GTFS shapes are dense (median 18 m per point) but contain
- * long segments. Most of them are simply straight roads between two corners
- * (typical for simplified shapes), and a few are real holes where the geometry is
- * missing and the road curves. This module finds long segments and, where OSRM can
- * answer in time, replaces them with road geometry.
- *
- * Contract: the result is ALWAYS one continuous line per shape. A segment that
- * cannot be routed (OSRM offline, rate-limited, over the request budget or the
- * time budget) is crossed by its straight chord instead of being left open — a
- * course line must never look broken or dashed.
- */
+/** Repair suspicious GTFS chords with road geometry. Unresolved gaps are not
+ * drawn as straight lines: doing so would falsely suggest a road exists there. */
 
 import { distanceCoords } from "../core/spatial";
 import { LruTtlCache, runDeduped } from "../core/runtimeHub";
@@ -19,20 +9,9 @@ import { idbGetKv, idbSetKv } from "./storage";
 
 type LatLng = [number, number];
 
-/**
- * A segment at least this long is a candidate for road-geometry repair.
- *
- * Measured on the official feed (513 shapes, ~350k segments): the median segment
- * is 18 m and the 99th percentile is 168 m. An earlier "relative" rule (a segment
- * >= 120 m and 3x longer than its neighbours) flagged 2955 "gaps" in 483 of the 513
- * shapes, 56% of them shorter than 250 m. Routing them exhausted the per-preview
- * request budget and the rest were left open, so course lines looked broken.
- * Probing OSRM showed that ~90% of the remaining 250 m+ segments are straight road
- * (OSRM distance / chord = 1.00), which is why the chord is a safe fallback.
- */
-const HARD_GAP_M = 250;
-/** Wall-clock limit for road routing of one shape; late answers only warm the cache. */
-const DEFAULT_BUDGET_MS = 6_000;
+// Shorter gaps can also cut across bends; stop-only paths need every leg routed.
+const HARD_GAP_M = 120;
+const DEFAULT_BUDGET_MS = 15_000;
 const CACHE_PREFIX = "shapeGap.v1.";
 const CACHE_TTL_MS = 30 * 24 * 3600_000;
 const memory = new LruTtlCache<string, LatLng[] | null>(400, CACHE_TTL_MS);
@@ -47,7 +26,7 @@ function gapKey(a: LatLng, b: LatLng): string {
 }
 
 /** Splits `path` into runs at long segments. Runs and gaps alternate. */
-export function splitShapeAtGaps(path: LatLng[]): { runs: LatLng[][]; gaps: Array<[LatLng, LatLng]> } {
+export function splitShapeAtGaps(path: LatLng[], minGapMeters = HARD_GAP_M): { runs: LatLng[][]; gaps: Array<[LatLng, LatLng]> } {
   if (path.length < 2) return { runs: path.length ? [path] : [], gaps: [] };
   // runs[k] ends at gaps[k][0] and runs[k+1] starts at gaps[k][1]. A run may be a
   // single point when two gaps are adjacent; it is kept so the alternation stays intact.
@@ -57,7 +36,7 @@ export function splitShapeAtGaps(path: LatLng[]): { runs: LatLng[][]; gaps: Arra
   for (let i = 0; i < path.length - 1; i += 1) {
     const next = path[i + 1];
     const length = distanceCoords(path[i][0], path[i][1], next[0], next[1]);
-    if (length >= HARD_GAP_M) {
+    if (length >= minGapMeters) {
       runs.push(current);
       gaps.push([path[i], next]);
       current = [next];
@@ -109,72 +88,63 @@ async function routeGap(a: LatLng, b: LatLng, signal?: AbortSignal): Promise<Lat
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       result = null;
     }
-    memory.set(key, result);
-    // Only cache successes persistently; a transient failure should be retried later.
-    if (result) void idbSetKv(key, { at: Date.now(), path: result });
+    // Failures (including timeouts) must be retryable immediately.
+    if (result) {
+      memory.set(key, result);
+      void idbSetKv(key, { at: Date.now(), path: result });
+    }
     return result;
   });
 }
 
 export interface RepairedShape {
-  /**
-   * One continuous line per shape (empty for a degenerate shape). Long segments are
-   * replaced by road geometry when OSRM answered in time, otherwise they stay as the
-   * straight chord already present in the shape.
-   */
   polylines: LatLng[][];
   gapsTotal: number;
   gapsRepaired: number;
 }
 
-/**
- * Improves long segments of a shape with road geometry. Routes the longest
- * segments first, at most `maxRouted` of them, and never waits longer than
- * `budgetMs`, so a preview appears quickly even when the routing server is slow.
- */
+/** Route every candidate, within a bounded preview time. Unresolved gaps stay open. */
 export async function repairShapeGaps(
   path: LatLng[],
   signal?: AbortSignal,
-  maxRouted = 6,
+  stopChain = false,
   budgetMs = DEFAULT_BUDGET_MS
 ): Promise<RepairedShape> {
-  const { runs, gaps } = splitShapeAtGaps(path);
+  const { runs, gaps } = splitShapeAtGaps(path, stopChain ? 0 : HARD_GAP_M);
   if (!gaps.length) {
     return { polylines: path.length >= 2 ? [path] : [], gapsTotal: 0, gapsRepaired: 0 };
   }
 
-  const order = gaps
-    .map((gap, index) => ({ gap, index, len: distanceCoords(gap[0][0], gap[0][1], gap[1][0], gap[1][1]) }))
-    .sort((x, y) => y.len - x.len)
-    .slice(0, maxRouted);
-
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
   const fills = new Map<number, LatLng[]>();
-  const jobs = order.map(async ({ gap, index }) => {
-    const fill = await routeGap(gap[0], gap[1], signal);
-    if (fill) fills.set(index, fill);
+  const jobs = gaps.map(async (gap, index) => {
+    const fill = await routeGap(gap[0], gap[1], controller.signal);
+    if (fill && !controller.signal.aborted) fills.set(index, fill);
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
     Promise.allSettled(jobs),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, budgetMs);
-    }),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, budgetMs); }),
   ]);
   if (timer !== undefined) clearTimeout(timer);
+  controller.abort();
+  signal?.removeEventListener("abort", abort);
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-  // Snapshot: answers that arrive after the budget must not change a drawn line.
-  const done = new Map(fills);
-  const line: LatLng[] = [];
-  runs.forEach((run, k) => {
-    line.push(...run);
-    const fill = done.get(k);
-    if (fill) line.push(...fill);
-  });
-
-  return {
-    polylines: line.length >= 2 ? [line] : [],
-    gapsTotal: gaps.length,
-    gapsRepaired: done.size,
-  };
+  const polylines: LatLng[][] = [];
+  let line = [...runs[0]];
+  for (let i = 0; i < gaps.length; i += 1) {
+    const fill = fills.get(i);
+    if (fill) {
+      line.push(...fill, ...runs[i + 1]);
+    } else {
+      if (line.length >= 2) polylines.push(line);
+      line = [...runs[i + 1]];
+    }
+  }
+  if (line.length >= 2) polylines.push(line);
+  return { polylines, gapsTotal: gaps.length, gapsRepaired: fills.size };
 }

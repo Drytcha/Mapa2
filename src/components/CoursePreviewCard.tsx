@@ -104,7 +104,12 @@ export default function CoursePreviewCard({
         </div>
         {course.approximate && (
           <p className="mt-1 text-[8px] leading-snug text-warning">
-            Przebieg orientacyjny według przystanków — brak geometrii ulic dla tego kursu.
+            Przebieg orientacyjny wyznaczony według kolejnych przystanków — brak geometrii GTFS.
+          </p>
+        )}
+        {course.unresolvedGaps > 0 && (
+          <p className="mt-1 text-[8px] leading-snug text-warning">
+            Nie udało się wyznaczyć {course.unresolvedGaps} odcinków po drogach. Pominięto je na mapie; spróbuj ponownie.
           </p>
         )}
 
