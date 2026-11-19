@@ -22,30 +22,35 @@ export const WALBRZYCH_BOUNDS: Bounds = {
 export const WALBRZYCH_CENTER: [number, number] = [50.7714, 16.2843];
 export const WALBRZYCH_ZOOM = 14;
 
-const LEGACY_CACHE_PREFIX = "mapplaner.stops.v5.";
-const CACHE_PREFIX = "mapplaner.stops.v6.";
+const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6."];
+const CACHE_PREFIX = "mapplaner.stops.v7.";
 const CACHE_TTL = 12 * 60 * 60_000;
 const memoryCache = new LruTtlCache<string, BusStop[]>(24, CACHE_TTL);
 let legacyPurged = false;
 
 onRuntimeEvent("gtfs:updated", () => {
   memoryCache.clear();
+  removeStoredStopCaches([CACHE_PREFIX]);
 });
+
+function removeStoredStopCaches(prefixes: string[]) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && prefixes.some((prefix) => key.startsWith(prefix))) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* Storage optional */
+  }
+}
 
 function purgeLegacyStopCache() {
   if (legacyPurged) return;
   legacyPurged = true;
-  try {
-    if (typeof localStorage === "undefined") return;
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(LEGACY_CACHE_PREFIX)) toRemove.push(k);
-    }
-    for (const k of toRemove) localStorage.removeItem(k);
-  } catch {
-    /* Storage optional */
-  }
+  removeStoredStopCaches(LEGACY_CACHE_PREFIXES);
 }
 
 type StopKind = "platform" | "bus_stop" | "stop_position";
