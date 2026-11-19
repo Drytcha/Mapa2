@@ -135,7 +135,7 @@ interface MapViewProps {
 
 const vehicleSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.6 3.9 21l8.1-4.7 8.1 4.7L12 2.6Z" fill="currentColor"/></svg>`;
 
-const busGlyph = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 17V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v11"/><path d="M4 11h16"/><path d="M4 17h16"/><circle cx="7.5" cy="19.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="16.5" cy="19.5" r="1.2" fill="currentColor" stroke="none"/></svg>`;
+const busGlyph = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 17V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v11"/><path d="M4 11h16"/><path d="M4 17h16"/><circle cx="7.5" cy="19.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="16.5" cy="19.5" r="1.2" fill="currentColor" stroke="none"/></svg>`;
 
 function computeStopVisualState(
   stop: BusStop,
@@ -159,8 +159,8 @@ function createStopDivIcon(id: string, state: string): L.DivIcon {
     }${state.includes("used") ? " bus-stop--used" : ""}${
       state.includes("osm") ? " bus-stop--osm" : ""
     }" data-stop-id="${escapeHtml(id)}" aria-hidden="true">${busGlyph}</span>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
   });
 }
 
@@ -254,12 +254,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const mapClickRef = useRef(onMapClick);
   const contextMenuRef = useRef(onMapContextMenu);
   const stopClickRef = useRef(onBusStopClick);
+  const stopVisualRef = useRef({ selectedStopId, nearRouteIds, usedStopKeys });
   const liveBusClickRef = useRef(onLiveBusClick);
   const routeRef = useRef(route);
   const overlayRef = useRef(kursowkaOverlay);
   useEffect(() => {
     pickModeRef.current = pickMode;
     stopClickRef.current = onBusStopClick;
+    stopVisualRef.current = { selectedStopId, nearRouteIds, usedStopKeys };
     liveBusClickRef.current = onLiveBusClick;
     lineClickRef.current = onLineClick;
     dragRef.current = onMarkerDrag;
@@ -1126,7 +1128,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       const showNames = map.getZoom() >= 16;
       const area = map.getBounds().pad(0.05);
       stopMarkersRef.current.forEach((marker) => {
-        if (showNames && area.contains(marker.getLatLng())) marker.openTooltip();
+        const inView = area.contains(marker.getLatLng());
+        marker.getElement()?.setAttribute("tabindex", inView ? "0" : "-1");
+        if (showNames && inView) marker.openTooltip();
         else marker.closeTooltip();
       });
     };
@@ -1135,17 +1139,19 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       if (cancelled) return;
       const slice = busStops.slice(chunk * CHUNK_SIZE, chunk * CHUNK_SIZE + CHUNK_SIZE);
       for (const stop of slice) {
-        const state = computeStopVisualState(stop, selectedStopId, nearRouteIds, usedStopKeys);
+        const visual = stopVisualRef.current;
+        const state = computeStopVisualState(stop, visual.selectedStopId, visual.nearRouteIds, visual.usedStopKeys);
         const marker = L.marker([stop.lat, stop.lon], {
           icon: createStopDivIcon(stop.id, state),
           pane: "stops",
-          title: stop.name,
-          keyboard: false,
+          title: `Przystanek ${stopDisplayName(stop)}`,
+          keyboard: true,
           riseOnHover: true,
+          zIndexOffset: state.includes("on") ? 900 : state.includes("used") ? 400 : 0,
         });
         marker.bindTooltip(escapeHtml(stopDisplayName(stop)), {
           direction: "right",
-          offset: [12, 0],
+          offset: [14, 0],
           className: "stop-name-label",
           opacity: 1,
         });
@@ -1153,10 +1159,18 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           L.DomEvent.stopPropagation(event.originalEvent);
           stopClickRef.current?.(stop);
         });
+        marker.on("keydown", (event: L.LeafletKeyboardEvent) => {
+          const key = event.originalEvent;
+          if ((key.key === "Enter" || key.key === " ") && !key.repeat) {
+            L.DomEvent.stop(key);
+            stopClickRef.current?.(stop);
+          }
+        });
         marker.on("contextmenu", (event: L.LeafletMouseEvent) => {
           dispatchContextMenu(event, stop.lat, stop.lon, stop);
         });
         marker.addTo(group);
+        marker.getElement()?.setAttribute("aria-label", `Przystanek ${stopDisplayName(stop)}`);
         stopMarkersRef.current.set(stop.id, marker);
         stopStateRef.current.set(stop.id, state);
       }

@@ -1,9 +1,10 @@
 import { queryOverpass } from "./core/overpass";
 import { LruTtlCache, onRuntimeEvent, runDeduped } from "./core/runtimeHub";
 import { coordKey, distanceCoords, isInsideBounds, type GeoBounds } from "./core/spatial";
-import { foldPolish } from "./core/text";
+import { dedupeLines, foldPolish, foldStopKey } from "./core/text";
 import { readStorageJson, writeStorageJson } from "./core/time";
-import { getTimetableStops } from "./engine/timetableStops";
+import { loadOfficialStops } from "./engine/officialStops";
+import { getTimetableStops, tidyStopName } from "./engine/timetableStops";
 import type { BusStop } from "./types";
 
 export type Bounds = GeoBounds;
@@ -21,6 +22,64 @@ export const WALBRZYCH_BOUNDS: Bounds = {
 
 export const WALBRZYCH_CENTER: [number, number] = [50.7714, 16.2843];
 export const WALBRZYCH_ZOOM = 14;
+
+/** Known stops are available immediately, even while the current GTFS is loading. */
+export function getSnapshotBusStops(bounds: Bounds = WALBRZYCH_BOUNDS): BusStop[] {
+  return loadOfficialStops().stops
+    .filter(
+      (stop) =>
+        stop.lines.length > 0 &&
+        Number.isFinite(stop.lat) &&
+        Number.isFinite(stop.lon) &&
+        isInsideBounds(stop.lat, stop.lon, bounds)
+    )
+    .map((stop) => ({
+      id: `snapshot-${stop.id}`,
+      name: tidyStopName(stop.name),
+      lat: stop.lat,
+      lon: stop.lon,
+      lines: dedupeLines(stop.lines),
+      shelter: false,
+      operator: "Migawka rozkładu jazdy Wałbrzych",
+      kind: "bus_stop" as const,
+      source: "snapshot" as const,
+    }));
+}
+
+/** A viewport refresh must not discard stops in the rest of the network. */
+export function mergeRefreshedBusStops(
+  current: BusStop[],
+  refreshed: BusStop[],
+  bounds: Bounds
+): BusStop[] {
+  const stops = new Map(
+    current
+      .filter((stop) => !isInsideBounds(stop.lat, stop.lon, bounds))
+      .map((stop) => [stop.id, stop])
+  );
+  for (const stop of refreshed) stops.set(stop.id, stop);
+  return [...stops.values()].sort((a, b) => a.name.localeCompare(b.name, "pl"));
+}
+
+/** Keep a selected snapshot stop selected when its GTFS equivalent arrives. */
+export function findRefreshedBusStop(selected: BusStop, refreshed: BusStop[]): BusStop | null {
+  const sameId = refreshed.find((stop) => stop.id === selected.id);
+  if (sameId) return sameId;
+  if (selected.source !== "snapshot") return null;
+
+  const name = foldStopKey(selected.name);
+  let best: BusStop | null = null;
+  let bestDistance = 50;
+  for (const stop of refreshed) {
+    if (foldStopKey(stop.name) !== name) continue;
+    const distance = distanceCoords(selected.lat, selected.lon, stop.lat, stop.lon);
+    if (distance < bestDistance) {
+      best = stop;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
 
 const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6.", "mapplaner.stops.v7."];
 const CACHE_PREFIX = "mapplaner.stops.v8.";
@@ -234,7 +293,7 @@ export function stopDisplayName(stop: BusStop): string {
   else if (stop.side) display = `${stop.name} · strona ${stop.side}`;
   else if (stop.towards) display = `${stop.name} · do ${stop.towards}`;
   else if (stop.direction) display = `${stop.name} · kier. ${stop.direction}`;
-  else if (stop.source === "timetable") display = stop.name;
+  else if (stop.source === "timetable" || stop.source === "snapshot") display = stop.name;
   else display = `${stop.name} · ${coordKey(stop.lat, stop.lon, 4).replace(",", ", ")}`;
   displayNameCache.set(stop, display);
   return display;
@@ -273,7 +332,7 @@ function elementsToStops(elements: OverpassElement[], bounds?: Bounds): BusStop[
   return mergeStopCandidates(candidates);
 }
 
-/** Stops of the Wałbrzych timetable (GTFS + official rozklad.walbrzych.eu snapshot). */
+/** Stops from the current Wałbrzych GTFS timetable. */
 export async function fetchTimetableStops(
   signal?: AbortSignal,
   force = false
@@ -285,8 +344,8 @@ export async function fetchTimetableStops(
 }
 
 /**
- * Timetable stops are authoritative. OpenStreetMap stops are matched to them (<= 40 m with
- * the same name, or <= 14 m) and only add attributes; OSM-only stops are kept as "osm".
+ * Timetable stops are authoritative. OpenStreetMap shelters are matched to them
+ * (<= 40 m with the same name, or <= 14 m) and only add shelter information.
  */
 export function mergeTimetableWithOsm(timetable: BusStop[], osm: BusStop[]): BusStop[] {
   const result = timetable
@@ -360,10 +419,14 @@ out tags center;`;
         force: true,
       });
       elements = res.elements;
+    } catch {
+      // Shelter information is optional. A timeout must not hide timetable stops.
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     } finally {
       if (ticker) clearInterval(ticker);
     }
 
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (!elements) {
       writeCache(key, timetable);
       return timetable;

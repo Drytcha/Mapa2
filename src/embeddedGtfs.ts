@@ -9,7 +9,14 @@
  * żądanie na paczkę zapakowaną w bundle, więc działa to także wtedy, gdy serwowany
  * jest sam plik index.html (bez katalogu `data/`).
  */
-import embeddedGtfsUrl from "./assets/walbrzych-gtfs.zip?url";
+// The deployment workflow supplies this archive. A local checkout may not have it;
+// in that case the regular GTFS fallback and the saved stop snapshot still work.
+const embeddedArchives = import.meta.glob<string>("./assets/walbrzych-gtfs.zip", {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
+const embeddedGtfsUrl = embeddedArchives["./assets/walbrzych-gtfs.zip"];
 
 const GTFS_REQUEST = /(^|\/)data\/walbrzych-gtfs\.zip(\?|#|$)/;
 
@@ -20,10 +27,10 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 export function installEmbeddedGtfs(): void {
-  if (typeof window === "undefined" || typeof window.fetch !== "function") return;
+  if (!embeddedGtfsUrl || typeof window === "undefined" || typeof window.fetch !== "function") return;
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) =>
     GTFS_REQUEST.test(requestUrl(input))
-      ? nativeFetch(embeddedGtfsUrl)
+      ? nativeFetch(embeddedGtfsUrl, init)
       : nativeFetch(input, init);
 }

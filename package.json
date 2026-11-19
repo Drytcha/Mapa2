@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts",
+    "test:stops:e2e": "node scripts/test-stop-map.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
@@ -27,7 +29,9 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
+    "playwright-core": "^1.65.1",
     "tailwindcss": "4.1.17",
+    "tsx": "^4.23.15",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vite-plugin-singlefile": "2.3.0"

@@ -1068,6 +1068,12 @@ async function refreshOperatorRosterFromServer(force: boolean): Promise<void> {
   }
 }
 
+// A missing static asset can be served as the SPA's HTML with HTTP 200.
+function isZipArchive(bytes: Uint8Array): boolean {
+  return bytes.byteLength > 1000 && bytes[0] === 0x50 && bytes[1] === 0x4b &&
+    bytes[2] === 0x03 && bytes[3] === 0x04;
+}
+
 async function fetchArchiveBytes(
   forceLive: boolean,
 ): Promise<{ bytes: Uint8Array; source: string }> {
@@ -1085,8 +1091,10 @@ async function fetchArchiveBytes(
       );
     }
     const headerSource = res.headers.get("X-Gtfs-Source");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (!isZipArchive(bytes)) throw new Error("Pobrany rozkład GTFS nie jest poprawnym archiwum ZIP.");
     return {
-      bytes: new Uint8Array(await res.arrayBuffer()),
+      bytes,
       source: headerSource ? decodeURIComponent(headerSource) : (STATIC_PAGES ? "api.zbiorkom.live (Wałbrzych GTFS)" : sourceOfficial),
     };
   }
@@ -1096,7 +1104,7 @@ async function fetchArchiveBytes(
     cached &&
     cached.version === DUTY_SCHEMA_VERSION &&
     cached.bytes instanceof Uint8Array &&
-    cached.bytes.byteLength > 1000 &&
+    isZipArchive(cached.bytes) &&
     Date.now() - cached.cachedAt < ARCHIVE_MAX_AGE_MS
   ) {
     return { bytes: cached.bytes, source: cached.source };
@@ -1109,7 +1117,7 @@ async function fetchArchiveBytes(
     });
     if (bundledRes.ok) {
       const bytes = new Uint8Array(await bundledRes.arrayBuffer());
-      if (bytes.byteLength > 1000) {
+      if (isZipArchive(bytes)) {
         void refreshOperatorRosterFromServer(false);
         return { bytes, source: sourceOfficial };
       }
@@ -1126,7 +1134,7 @@ async function fetchArchiveBytes(
       });
       if (res.ok) {
         const bytes = new Uint8Array(await res.arrayBuffer());
-        if (bytes.byteLength > 1000) {
+        if (isZipArchive(bytes)) {
           const headerSource = res.headers.get("X-Gtfs-Source");
           return {
             bytes,
@@ -1146,7 +1154,7 @@ async function fetchArchiveBytes(
     });
     if (res.ok) {
       const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.byteLength > 1000) {
+      if (isZipArchive(bytes)) {
         return { bytes, source: "api.zbiorkom.live (Wałbrzych GTFS)" };
       }
     }
@@ -1154,7 +1162,7 @@ async function fetchArchiveBytes(
     /* Fall through to stale IndexedDB archive */
   }
 
-  if (cached?.bytes instanceof Uint8Array && cached.bytes.byteLength > 1000) {
+  if (cached?.bytes instanceof Uint8Array && isZipArchive(cached.bytes)) {
     return { bytes: cached.bytes, source: cached.source };
   }
   throw new Error(

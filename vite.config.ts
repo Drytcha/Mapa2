@@ -17,6 +17,10 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH
 // https://vite.dev/config/
 export default defineConfig({
   base: basePath,
+  server: {
+    host: "0.0.0.0",
+    allowedHosts: [".e2b.app"],
+  },
   plugins: [react(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {

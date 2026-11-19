@@ -87,8 +87,8 @@ export interface BusStop {
   merged?: number;
   /** GTFS stop id used to read departures / kursówki for this stop. */
   gtfsId?: string;
-  /** Where the stop comes from: Wałbrzych timetable (GTFS + rozklad.walbrzych.eu) or OpenStreetMap only. */
-  source?: "timetable" | "osm";
+  /** GTFS timetable, saved official snapshot, or an OpenStreetMap-only stop. */
+  source?: "timetable" | "snapshot" | "osm";
 }
 
 export interface RouteStep {
