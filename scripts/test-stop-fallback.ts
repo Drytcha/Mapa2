@@ -9,6 +9,7 @@ import {
   WALBRZYCH_BOUNDS,
 } from "../src/lib/busStops";
 import type { BusStop } from "../src/lib/types";
+import { ensureGtfsSeeded, getStopDepartures } from "../src/lib/engine/gtfsStore";
 
 const files: Record<string, string> = {
   "feed_info.txt": "feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date\nTest,https://example.com,pl,20260101,20261231\n",
@@ -61,6 +62,19 @@ const b = stops.find((stop) => stop.gtfsId === "b")!;
 assert.equal(findRefreshedBusStop(snapshotStop, stops), a);
 assert.equal(findRefreshedBusStop(snapshotStop, [{ ...a, lat: a.lat + 0.01 }]), null);
 assert.equal(findRefreshedBusStop(snapshotStop, [{ ...a, name: "Inny" }]), null);
+assert.equal(findRefreshedBusStop(snapshotStop, [a, { ...a, id: "tt-other" }]), null);
+
+// Never present the closest unrelated or ambiguous platform as this stop's
+// timetable; a real GTFS ID remains authoritative.
+const store = await ensureGtfsSeeded();
+const gtfsA = store.base.stopsById.get("a")!;
+const duplicate = { ...gtfsA, id: "duplicate" };
+store.base.stops.push(duplicate);
+store.base.activeStopIds.add(duplicate.id);
+const window = { lat: a.lat, lon: a.lon, fromMs: Date.parse("2026-11-19T00:00:00+01:00"), toMs: Date.parse("2026-11-20T00:00:00+01:00"), includeLive: false };
+assert.equal((await getStopDepartures({ ...window, name: "Inna ulica" })).matched, null);
+assert.equal((await getStopDepartures({ ...window, name: a.name })).matched, null);
+assert.equal((await getStopDepartures({ ...window, name: a.name, stopId: "a" })).matched?.id, "a");
 
 const viewport = { south: 50.76, west: 16.28, north: 50.77, east: 16.29 };
 const updated: BusStop = { ...a, shelter: true };

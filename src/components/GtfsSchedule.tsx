@@ -16,6 +16,7 @@ import type { BusStop, StopDepartureItem } from "@/lib/types";
 import { cn } from "@/utils/cn";
 import { describeDelay, formatDelay, formatVehicleNumber } from "@/lib/delay";
 import { getStopDepartures } from "@/lib/engine/gtfsStore";
+import { getFallbackStopDepartures } from "@/lib/engine/stopScheduleFallback";
 import {
   groupDeparturesByLine,
   type DepartureLineGroup,
@@ -25,6 +26,7 @@ export type { StopDepartureItem };
 const ZONE = WARSAW_ZONE;
 const today = () => DateTime.now().setZone(ZONE).toISODate()!;
 const clock = formatWarsawClock;
+const EMPTY_DEPARTURES: StopDepartureItem[] = [];
 
 interface Props {
   stop: BusStop;
@@ -105,7 +107,7 @@ function LineDepartures({
                     onClick={() => setSelected(key === selected ? null : key)}
                     data-testid="compact-departure"
                     className={cn(
-                      "relative min-h-[22px] rounded px-0.5 text-center font-mono text-[9.5px] font-semibold tabular-nums leading-[22px] transition-colors focus-visible:outline-2 focus-visible:outline-brand",
+                      "relative min-h-[26px] rounded px-0.5 text-center font-mono text-[11px] font-semibold tabular-nums leading-[26px] transition-colors focus-visible:outline-2 focus-visible:outline-brand",
                       key === selected
                         ? "bg-brand text-on-brand"
                         : "hover:bg-brand-soft hover:text-brand-ink",
@@ -228,7 +230,7 @@ function LineDepartures({
               Przewoźnik: {detail.departure.operatorName}
             </p>
           ) : null}
-          {onPreviewCourse && (
+          {onPreviewCourse && detail.departure.canPreviewCourse !== false && (
             <button
               type="button"
               data-testid="preview-departure-course"
@@ -295,6 +297,7 @@ export default function GtfsSchedule({
   const [departures, setDepartures] = useState<StopDepartureItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [source, setSource] = useState<"gtfs" | "gtfs-partial" | "fallback">("gtfs");
   const [date, setDate] = useState(today);
   const [upcomingOnly, setUpcomingOnly] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -313,43 +316,107 @@ export default function GtfsSchedule({
 
   useEffect(() => {
     let cancelled = false;
+    let primaryWins = false;
+    const fallbackController = new AbortController();
     const start = DateTime.fromISO(date, { zone: ZONE }).startOf("day");
     if (!start.isValid) return;
     const key = `${stop.id}|${date}`;
-    if (loadedKey.current !== key) {
-      setDepartures([]);
-      setMatched(null);
-    }
-    setLoading(true);
-    setError("");
-    void getStopDepartures({
+    const options = {
       lat: stop.lat,
       lon: stop.lon,
       name: stop.name,
       stopId: stop.gtfsId,
       fromMs: start.toMillis(),
       toMs: start.plus({ days: 1 }).toMillis(),
-    })
-      .then((result) => {
+    };
+    if (loadedKey.current !== key) {
+      setDepartures([]);
+      setMatched(null);
+      setSource("gtfs");
+    }
+    setLoading(true);
+    setError("");
+
+    type Result = Awaited<ReturnType<typeof getStopDepartures>>;
+    const show = (result: Result, nextSource: "gtfs" | "gtfs-partial" | "fallback") => {
+      if (cancelled) return;
+      loadedKey.current = key;
+      setMatched(result.matched);
+      setDepartures(result.departures);
+      setSource(nextSource);
+      setError("");
+      setNow(Date.now());
+      setLoading(false);
+    };
+    const fail = (message: string) => {
+      if (cancelled) return;
+      loadedKey.current = key;
+      setMatched(null);
+      setDepartures([]);
+      setSource("gtfs");
+      setError(message);
+      setLoading(false);
+    };
+
+    let fallback: Promise<Result | null> | null = null;
+    const startFallback = () => {
+      if (!fallback) {
+        fallback = getFallbackStopDepartures(stop, options.fromMs, options.toMs, fallbackController.signal)
+          .then((result) => {
+            if (!primaryWins) show(result, "fallback");
+            return result;
+          })
+          .catch(() => null);
+      }
+      return fallback;
+    };
+    // If the archive is slow, the independent stop API can show real departures
+    // while GTFS loads. A successful GTFS result always takes precedence.
+    const fallbackTimer = window.setTimeout(() => void startFallback(), 1_000);
+    void (async () => {
+      try {
+        const result = await getStopDepartures({ ...options, includeLive: false });
         if (cancelled) return;
-        loadedKey.current = key;
-        setMatched(result.matched);
-        setDepartures(result.departures);
-        setNow(Date.now());
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Nie udało się odczytać rozkładu.",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        window.clearTimeout(fallbackTimer);
+        if (!result.matched || result.outsideFeedValidity) {
+          if (!(await startFallback()) && !cancelled) {
+            if (result.outsideFeedValidity) {
+              // A valid previous service day can still have trips after midnight.
+              // Preserve them, but never present them as a complete day's timetable.
+              if (result.matched && result.departures.length) show(result, "gtfs-partial");
+              else fail("Rozkład GTFS nie obejmuje wybranego dnia. Rozkład awaryjny też jest niedostępny.");
+            } else {
+              show(result, "gtfs");
+            }
+          }
+          return;
+        }
+        primaryWins = true;
+        fallbackController.abort();
+        show(result, "gtfs");
+
+        // Enrich already-visible scheduled times in the background; a slow or
+        // unavailable GPS endpoint must never hold the timetable hostage.
+        if (date === today()) {
+          void getStopDepartures({ ...options, includeLive: true })
+            .then((live) => {
+              if (!cancelled && primaryWins) show(live, "gtfs");
+            })
+            .catch(() => undefined);
+        }
+      } catch (cause: unknown) {
+        if (cancelled) return;
+        window.clearTimeout(fallbackTimer);
+        if (!(await startFallback()) && !cancelled) {
+          const message = cause instanceof Error ? cause.message : "Nie udało się odczytać rozkładu.";
+          fail(`${message} Rozkład awaryjny też jest niedostępny.`);
+        }
+      }
+    })();
     return () => {
       cancelled = true;
+      window.clearTimeout(fallbackTimer);
+      fallbackController.abort();
     };
   }, [stop.id, stop.lat, stop.lon, stop.name, stop.gtfsId, date, retry]);
 
@@ -360,12 +427,19 @@ export default function GtfsSchedule({
     });
   }, [date]);
 
+  // Effects run after render: never paint the previous stop/day's departures
+  // beneath a newly selected heading while the next request is starting.
+  const isCurrent = loadedKey.current === `${stop.id}|${date}`;
+  const shownDepartures = isCurrent ? departures : EMPTY_DEPARTURES;
+  const shownMatched = isCurrent ? matched : null;
+  const shownError = isCurrent ? error : "";
+  const shownLoading = loading || !isCurrent;
   const groups = useMemo(() => {
     const source = hidePlannerOnlyLines
-      ? departures.filter((d) => !isPlannerOnlyLine(d.routeShort))
-      : departures;
+      ? shownDepartures.filter((d) => !isPlannerOnlyLine(d.routeShort))
+      : shownDepartures;
     return groupDeparturesByLine(source);
-  }, [departures, hidePlannerOnlyLines]);
+  }, [shownDepartures, hidePlannerOnlyLines]);
   const shown = activeFilter
     ? groups.filter((g) => g.line === activeFilter)
     : groups;
@@ -386,7 +460,7 @@ export default function GtfsSchedule({
     <section
       className={cn("mt-2 border-t border-line pt-2", className)}
       data-testid="gtfs-schedule"
-      aria-busy={loading}
+      aria-busy={shownLoading}
     >
       <div className="flex items-center justify-between gap-1">
         <h4 className="flex items-center gap-1 text-[10px] font-extrabold text-ink">
@@ -399,9 +473,19 @@ export default function GtfsSchedule({
           aria-label="Odśwież rozkład"
           className="grid h-6 w-6 place-items-center rounded text-mute hover:bg-raised hover:text-ink"
         >
-          <RefreshCw className={cn("h-2.5 w-2.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("h-2.5 w-2.5", shownLoading && "animate-spin")} />
         </button>
       </div>
+      {source === "fallback" && shownMatched && (
+        <p role="status" className="mt-1 text-[9px] leading-snug text-mute">
+          Rozkład awaryjny: zbiorkom.live. Podgląd przebiegu kursu jest niedostępny.
+        </p>
+      )}
+      {source === "gtfs-partial" && shownMatched && (
+        <p role="status" className="mt-1 text-[9px] leading-snug text-warning">
+          Rozkład GTFS nie obejmuje całego dnia. Pokazano tylko znane kursy z poprzedniego dnia obsługi; rozkład awaryjny jest niedostępny.
+        </p>
+      )}
       <div className="mt-1 flex items-center justify-between gap-1">
         <div className="flex min-w-0 items-center">
           <button
@@ -477,10 +561,10 @@ export default function GtfsSchedule({
         >
           Od teraz
         </button>
-        {onAddDeparture && matched && (
+        {onAddDeparture && shownMatched && (
           <button
             type="button"
-            onClick={() => onAddDeparture(matched)}
+            onClick={() => onAddDeparture(shownMatched)}
             aria-label="Ustaw przystanek jako metę"
             className="ml-auto pb-1 text-brand-ink"
           >
@@ -488,7 +572,7 @@ export default function GtfsSchedule({
           </button>
         )}
       </div>
-      {loading && !departures.length && (
+      {shownLoading && !shownDepartures.length && (
         <p
           role="status"
           className="flex items-center gap-2 py-4 text-[11px] text-mute"
@@ -497,9 +581,9 @@ export default function GtfsSchedule({
           Wczytywanie rozkładu...
         </p>
       )}
-      {error && (
+      {shownError && (
         <div role="alert" className="py-3 text-[10px] text-warning">
-          {error}
+          {shownError}
           <button
             type="button"
             className="ml-1 font-bold underline"
@@ -509,17 +593,17 @@ export default function GtfsSchedule({
           </button>
         </div>
       )}
-      {!loading && !error && !matched && (
+      {!shownLoading && !shownError && !shownMatched && (
         <p className="py-3 text-[10px] text-mute">
-          Brak tego przystanku w rozkładzie GTFS.
+          Nie udało się jednoznacznie dopasować tego przystanku do rozkładu.
         </p>
       )}
-      {!loading && !error && matched && !shown.length && (
+      {!shownLoading && !shownError && shownMatched && !shown.length && (
         <p className="py-3 text-[10px] text-mute">
           Brak odjazdów{activeFilter ? ` linii ${activeFilter}` : ""} tego dnia.
         </p>
       )}
-      {!error && (
+      {!shownError && (
         <div className="scroll-area mt-1 max-h-[400px] overflow-y-auto pr-1">
           {shown.map((group) => (
             <LineDepartures
@@ -533,10 +617,10 @@ export default function GtfsSchedule({
           ))}
         </div>
       )}
-      {matched && (
+      {shownMatched && (
         <p className="mt-1.5 text-[7px] leading-snug text-mute">
           Litery = kierunki odchyleń; kierunek główny bez litery. Kliknij
-          godzinę po szczegóły{onPreviewCourse ? " i przebieg kursu na mapie" : ""}. Czas polski.
+          godzinę po szczegóły{onPreviewCourse && source !== "fallback" ? " i przebieg kursu na mapie" : ""}. Czas polski.
         </p>
       )}
     </section>

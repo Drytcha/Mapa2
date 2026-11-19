@@ -1,0 +1,20 @@
+{
+  "note": "Fragment odpowiedzi api6-open z 19.11.2026; tylko fixture testowa, nie bieżący rozkład.",
+  "stops": [
+    ["pilsudskiego-plac-tuwima-a8ncm", "walbrzych", "Piłsudskiego - Plac Tuwima", "", [16.28661, 50.76697], [3], 89, "Piłsudskiego - Plac Konstytucji 3 Maja", [], []],
+    ["mickiewicza-plac-tuwima-a5y43", "walbrzych", "Mickiewicza - Plac Tuwima", "", [16.28453, 50.76508], [3], 194, "Mickiewicza - Książęca", [], []]
+  ],
+  "departuresByStop": {
+    "pilsudskiego-plac-tuwima-a8ncm": [
+      {"trip":{"route":{"id":"5","name":"5","agency":"default","type":3,"color":"#a5208c"},"headsign":"Bystrzycka - Końcowy"},"scheduledDeparture":1795059000000,"delay":0,"isRealtime":false,"isCancelled":false},
+      {"trip":{"route":{"id":"20","name":"20","agency":"default","type":3,"color":"#0059ce"},"headsign":"Struga - Końcowy"},"scheduledDeparture":1795059600000,"delay":0,"isRealtime":false,"isCancelled":false},
+      {"trip":{"route":{"id":"15","name":"15","agency":"default","type":3,"color":"#7b45ad"},"headsign":"Mieroszowska -Glinik Nowy"},"scheduledDeparture":1795060860000,"delay":0,"isRealtime":false,"isCancelled":false},
+      {"trip":{"route":{"id":"5","name":"5","agency":"default","type":3,"color":"#a5208c"},"headsign":"Bystrzycka - Końcowy"},"scheduledDeparture":1795145400000,"delay":0,"isRealtime":false,"isCancelled":false}
+    ],
+    "mickiewicza-plac-tuwima-a5y43": [
+      {"trip":{"route":{"id":"11","name":"11","agency":"default","type":3,"color":"#a5346b"},"headsign":"Strzegomska -Kozice"},"scheduledDeparture":1795056840000,"delay":0,"isRealtime":false,"isCancelled":false},
+      {"trip":{"route":{"id":"11","name":"11","agency":"default","type":3,"color":"#a5346b"},"headsign":"Strzegomska -Kozice"},"scheduledDeparture":1795059180000,"delay":0,"isRealtime":false,"isCancelled":false},
+      {"trip":{"route":{"id":"12","name":"12","agency":"default","type":3,"color":"#944d00"},"headsign":"Wałbrzyska - Glinik Stary (Końcowy)"},"scheduledDeparture":1795059240000,"delay":0,"isRealtime":false,"isCancelled":false}
+    ]
+  }
+}

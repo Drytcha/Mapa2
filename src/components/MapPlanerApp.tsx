@@ -14,6 +14,7 @@ import { Route as RouteIcon } from "lucide-react";
 import type { KursowkaShapeOverlay, MapHandle } from "./MapView";
 import TopBar from "./TopBar";
 import UserLocationHud from "./UserLocationHud";
+import StopFinder from "./StopFinder";
 import { useUserLocation } from "@/lib/useUserLocation";
 import {
   BusStopCard,
@@ -970,7 +971,13 @@ function MapPlanerWorkspace() {
         preserveOutside ? mergeRefreshedBusStops(current, stops, bounds) : stops
       );
       if (!preserveOutside) {
-        setSelectedStop((current) => current ? findRefreshedBusStop(current, stops) : null);
+        setSelectedStop((current) => {
+          if (!current) return null;
+          const refreshed = findRefreshedBusStop(current, stops);
+          // A selected snapshot may not exist in the newly loaded archive.
+          // Keep its card open so the independent timetable can still answer.
+          return refreshed ?? (current.source === "snapshot" ? current : null);
+        });
       }
       setBusScope(scope);
     } catch (error) {
@@ -1001,15 +1008,30 @@ function MapPlanerWorkspace() {
   const refreshBusStops = useCallback(() => {
     const bounds = mapRef.current?.getBounds();
     if (!bounds) return;
+    // The bus button should not silently refresh an invisible layer.
+    if (visibility.stops === "off") updateVisibility({ stops: "all" });
     setSelectedStop(null);
     void loadBusStops(bounds, "Wałbrzych i okolice + bieżący widok", true, true);
-  }, [loadBusStops]);
+  }, [loadBusStops, updateVisibility, visibility.stops]);
 
   const selectBusStop = useCallback((stop: BusStop, center: boolean) => {
+    // A late first GPS fix must not move the map away from the selected stop.
+    userPannedRef.current = true;
+    setFollowUser(false);
     setSelectedLiveBus(null);
     setSelectedStop((current) => (current?.id === stop.id ? null : stop));
     if (center) mapRef.current?.centerOn(stop.lat, stop.lon, 16);
   }, []);
+
+  const selectStopFromFinder = useCallback((stop: BusStop) => {
+    userPannedRef.current = true;
+    setFollowUser(false);
+    setSelectedLiveBus(null);
+    setSelectedStop(stop);
+    setBusQuery("");
+    updateVisibility({ stops: "all" });
+    mapRef.current?.centerOn(stop.lat, stop.lon, 16);
+  }, [updateVisibility]);
 
   const addBusStop = useCallback(
     (stop: BusStop, role: "via" | "start" | "end" = "via") => {
@@ -1110,14 +1132,19 @@ function MapPlanerWorkspace() {
     );
   }, [busStops, route, routeReady, showToast, stopNavigation]);
 
-  // Pierwszy odczyt GPS centruje mapę — chyba że użytkownik zdążył sam ją przesunąć.
+  // Do not automatically abandon Wałbrzych when GPS is far from its stops.
+  // Explicitly pressing the location button still works anywhere in the world.
   useEffect(() => {
     if (!userLocation || autoCenteredRef.current) return;
     autoCenteredRef.current = true;
-    if (userPannedRef.current) return;
+    if (userPannedRef.current || followUser) return;
+    const nearAStop = busStops.some((stop) =>
+      haversine([userLocation.lat, userLocation.lon], [stop.lat, stop.lon]) <= 350
+    );
+    if (!nearAStop) return;
     setFollowUser(true);
     setCenterUserNonce((value) => value + 1);
-  }, [userLocation]);
+  }, [userLocation, busStops, followUser]);
 
   const centerOnMe = useCallback(() => {
     if (locationStatus === "unavailable") {
@@ -2276,7 +2303,26 @@ function MapPlanerWorkspace() {
           </Suspense>
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
-            <div className="pointer-events-none absolute left-3 top-5 flex max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+            <div className="pointer-events-none absolute left-3 top-5 flex max-h-[calc(100%-100px)] max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+              {stopDisplay === "off" && (
+                <div
+                  role="status"
+                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold text-ink shadow-lg"
+                >
+                  Przystanki są ukryte. {" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateVisibility({ stops: "all" });
+                      setBusQuery("");
+                      centerWalbrzych();
+                    }}
+                    className="font-extrabold text-brand-ink underline underline-offset-2"
+                  >
+                    Pokaż przystanki
+                  </button>
+                </div>
+              )}
               {stopDisplay !== "off" && (showingSnapshotStops || busError) && (
                 <div
                   role="status"
@@ -2323,81 +2369,83 @@ function MapPlanerWorkspace() {
                   onCancel={() => setPickTarget(null)}
                 />
               ) : (
-                <div className="pointer-events-none flex flex-col items-start gap-2">
-                  <LiveFleetControl
-                    isPlanner={isPlanner}
-                    showLiveBuses={showLiveBuses}
-                    onToggleLiveBuses={() => toggleVisibility("liveBuses")}
-                    operatorFilter={operatorFilter}
-                    onOperatorFilter={setOperatorFilter}
-                    liveVehicles={liveVehicles}
-                    liveTraffic={liveTraffic}
-                    liveLoading={liveLoading}
-                    onRefreshLive={() => void fetchLiveBuses(true)}
+                <div className="pointer-events-none flex min-h-0 flex-col items-start gap-2">
+                  <div className={selectedStop ? "hidden sm:contents" : "contents"}>
+                    <LiveFleetControl
+                      isPlanner={isPlanner}
+                      showLiveBuses={showLiveBuses}
+                      onToggleLiveBuses={() => toggleVisibility("liveBuses")}
+                      operatorFilter={operatorFilter}
+                      onOperatorFilter={setOperatorFilter}
+                      liveVehicles={liveVehicles}
+                      liveTraffic={liveTraffic}
+                      liveLoading={liveLoading}
+                      onRefreshLive={() => void fetchLiveBuses(true)}
                       signalCount={trafficSignals.length}
                       showTrafficSignals={showTrafficSignals}
                       onToggleTrafficSignals={() => toggleVisibility("trafficSignals")}
                       turnaroundCount={turnaroundSpots.length}
                       showTurnarounds={showTurnarounds}
                       onToggleTurnarounds={() => toggleVisibility("turnarounds")}
-                    onSelectBus={handleSelectBus}
-                  />
-                  {!isPlanner && kursowkaOverlay?.course && (
-                    <Suspense fallback={null}>
-                      <CoursePreviewCard
-                        key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
-                        course={kursowkaOverlay.course}
-                        onClose={() => setKursowkaOverlay(null)}
-                        onFit={() => mapRef.current?.fitOverlay()}
-                        onBack={() => {
-                          setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
-                          setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
-                          setKursowkiOpen(true);
-                        }}
-                        onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
-                      />
-                    </Suspense>
-                  )}
-                  {!isPlanner && tripOpen && (
-                    <Suspense fallback={null}>
-                    <TripPlannerPanel
-                      buses={liveVehicles}
-                      origin={tripOrigin}
-                      destination={tripDest}
-                      onOriginChange={updateTripOrigin}
-                      onDestinationChange={updateTripDest}
-                      onSwap={handleSwapTripPoints}
-                      onClearAll={handleClearTripPoints}
-                      savedPlaces={savedPlaces}
-                      onDeleteSavedPlace={handleDeleteSavedPlace}
-                      lastSavedTrip={lastSavedTrip}
-                      onRestoreLastTrip={handleRestoreLastTrip}
-                      pickTarget={tripPick}
-                      onPickTargetChange={setTripPick}
                       onSelectBus={handleSelectBus}
-                      onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
-                      onPreview={setTripPreview}
-                      onRefresh={() => setTripNonce((value) => value + 1)}
-                      onClose={() => {
-                        setTripOpen(false);
-                        setTripPick(null);
-                      }}
-                      refreshNonce={tripNonce}
                     />
-                    </Suspense>
-                  )}
-                  {isPlanner && (
-                    <MapRouteCard
-                      route={activeRoute}
-                      waypoints={waypoints}
-                      metrics={metrics}
-                      vehicle={vehicle}
-                      brigade={brigade}
-                      mapStyle={mapStyle}
-                      routeReady={routeReady}
-                      turnaroundCount={turnaroundSpots.length}
-                    />
-                  )}
+                    {!isPlanner && kursowkaOverlay?.course && (
+                      <Suspense fallback={null}>
+                        <CoursePreviewCard
+                          key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
+                          course={kursowkaOverlay.course}
+                          onClose={() => setKursowkaOverlay(null)}
+                          onFit={() => mapRef.current?.fitOverlay()}
+                          onBack={() => {
+                            setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
+                            setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
+                            setKursowkiOpen(true);
+                          }}
+                          onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
+                        />
+                      </Suspense>
+                    )}
+                    {!isPlanner && tripOpen && (
+                      <Suspense fallback={null}>
+                        <TripPlannerPanel
+                          buses={liveVehicles}
+                          origin={tripOrigin}
+                          destination={tripDest}
+                          onOriginChange={updateTripOrigin}
+                          onDestinationChange={updateTripDest}
+                          onSwap={handleSwapTripPoints}
+                          onClearAll={handleClearTripPoints}
+                          savedPlaces={savedPlaces}
+                          onDeleteSavedPlace={handleDeleteSavedPlace}
+                          lastSavedTrip={lastSavedTrip}
+                          onRestoreLastTrip={handleRestoreLastTrip}
+                          pickTarget={tripPick}
+                          onPickTargetChange={setTripPick}
+                          onSelectBus={handleSelectBus}
+                          onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
+                          onPreview={setTripPreview}
+                          onRefresh={() => setTripNonce((value) => value + 1)}
+                          onClose={() => {
+                            setTripOpen(false);
+                            setTripPick(null);
+                          }}
+                          refreshNonce={tripNonce}
+                        />
+                      </Suspense>
+                    )}
+                    {isPlanner && (
+                      <MapRouteCard
+                        route={activeRoute}
+                        waypoints={waypoints}
+                        metrics={metrics}
+                        vehicle={vehicle}
+                        brigade={brigade}
+                        mapStyle={mapStyle}
+                        routeReady={routeReady}
+                        turnaroundCount={turnaroundSpots.length}
+                      />
+                    )}
+                  </div>
                   {selectedStop && (
                     <BusStopCard
                       stop={selectedStop}
@@ -2578,35 +2626,38 @@ function MapPlanerWorkspace() {
             </div>
           </div>
 
-          {!isPlanner && (
-            <button
-              type="button"
-              onClick={() => {
-                setTripOpen((open) => !open);
-                if (tripOpen) setTripPick(null);
-              }}
-              aria-expanded={tripOpen}
-              title="Planer podróży — możesz też kliknąć prawym przyciskiem na mapie, aby ustawić start lub cel"
-              className={`pointer-events-auto absolute bottom-10 left-3 z-[600] flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[9px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] backdrop-blur transition-all hover:opacity-90 active:scale-[0.98] ${
-                tripOpen
-                  ? "border-line-strong bg-surface text-ink"
-                  : "border-brand-deep/20 bg-brand text-on-brand"
-              }`}
-            >
-              <RouteIcon className="h-3.5 w-3.5" strokeWidth={2.4} />
-              {tripOpen ? "Zamknij planer" : "Planer podróży"}
-              {!tripOpen && (tripOrigin || tripDest) && (
-                <span className="ml-0.5 inline-flex items-center gap-0.5" aria-hidden="true">
-                  {tripOrigin && (
-                    <span className="h-2 w-2 rounded-full border border-white bg-[#0891b2]" />
-                  )}
-                  {tripDest && (
-                    <span className="h-2 w-2 rounded-full border border-white bg-[#e11d48]" />
-                  )}
-                </span>
-              )}
-            </button>
-          )}
+          <div className={`pointer-events-none absolute bottom-10 left-3 flex items-end gap-1.5 ${selectedStop ? "z-[490]" : "z-[600]"}`}>
+            <StopFinder stops={busStops} isPlanner={isPlanner} onSelect={selectStopFromFinder} />
+            {!isPlanner && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTripOpen((open) => !open);
+                  if (tripOpen) setTripPick(null);
+                }}
+                aria-expanded={tripOpen}
+                title="Planer podróży — możesz też kliknąć prawym przyciskiem na mapie, aby ustawić start lub cel"
+                className={`pointer-events-auto flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-2 text-[9px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] backdrop-blur transition-all hover:opacity-90 active:scale-[0.98] ${
+                  tripOpen
+                    ? "border-line-strong bg-surface text-ink"
+                    : "border-brand-deep/20 bg-brand text-on-brand"
+                }`}
+              >
+                <RouteIcon className="h-3.5 w-3.5" strokeWidth={2.4} />
+                {tripOpen ? "Zamknij planer" : "Planer podróży"}
+                {!tripOpen && (tripOrigin || tripDest) && (
+                  <span className="ml-0.5 inline-flex items-center gap-0.5" aria-hidden="true">
+                    {tripOrigin && (
+                      <span className="h-2 w-2 rounded-full border border-white bg-[#0891b2]" />
+                    )}
+                    {tripDest && (
+                      <span className="h-2 w-2 rounded-full border border-white bg-[#e11d48]" />
+                    )}
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
 
           {contextMenu && (
             <div className="pointer-events-none absolute inset-0 z-[1200]">
