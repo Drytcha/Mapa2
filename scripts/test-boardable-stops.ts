@@ -43,9 +43,9 @@ if (process.env.NO_BOARDABLE !== "1") {
 const mapStops = await fetchBusStops(WALBRZYCH_BOUNDS);
 assert.deepEqual(mapStops.map((s) => s.gtfsId).sort(), expected);
 assert.equal(storage.getItem(`mapplaner.stops.v7.${boundsKey}`), null);
-assert.ok(storage.getItem(`mapplaner.stops.v8.${boundsKey}`));
+assert.ok(storage.getItem(`mapplaner.stops.v9.${boundsKey}`));
 emitRuntimeEvent("gtfs:updated", { version: "test" });
-assert.equal(storage.getItem(`mapplaner.stops.v8.${boundsKey}`), null);
+assert.equal(storage.getItem(`mapplaner.stops.v9.${boundsKey}`), null);
 const store = await ensureGtfsSeeded();
 assert.equal(store.base.rawStopTimesByTrip.get("t2")?.at(-1)?.stopId, "e"); // terminal retained in trip data
 const expired = await getStopDepartures({

@@ -89,6 +89,8 @@ globalThis.fetch = async (input) => String(input).includes("walbrzych-gtfs.zip")
   : new Response("", { status: 404 });
 const { stops } = await getTimetableStops();
 const byId = new Map(stops.filter((stop) => stop.gtfsId).map((stop) => [stop.gtfsId!, stop]));
+const allIds = stops.flatMap((stop) => stop.gtfsIds ?? (stop.gtfsId ? [stop.gtfsId] : []));
+assert.equal(new Set(allIds).size, allIds.length, "Each GTFS stop may belong to only one visible platform.");
 assert.ok(byId.size, "No boardable stops found in the supplied GTFS archive.");
 const start = DateTime.now().setZone("Europe/Warsaw").startOf("day");
 const fromMs = start.toMillis();
@@ -100,6 +102,14 @@ try {
   const address = server.httpServer?.address();
   if (!address || typeof address === "string") throw new Error("Vite did not start on a TCP port.");
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  // Verify every merged platform against independent per-ID timetable queries.
+  for (const stop of stops.filter((entry) => (entry.gtfsIds?.length ?? 0) > 1)) {
+    const options = { lat: stop.lat, lon: stop.lon, name: stop.name, fromMs, toMs, includeLive: false };
+    const merged = await getStopDepartures({ ...options, stopIds: stop.gtfsIds });
+    const parts = await Promise.all(stop.gtfsIds!.map((stopId) => getStopDepartures({ ...options, stopId })));
+    const keys = (rows: typeof merged.departures) => [...new Set(rows.map((d) => `${d.tripId}|${d.serviceDateId}|${d.atMs}`))].sort();
+    assert.deepEqual(keys(merged.departures), keys(parts.flatMap((part) => part.departures)), `Incomplete timetable: ${stop.name}`);
+  }
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
     headless: true,
@@ -140,14 +150,14 @@ try {
     for (const stopId of onScreen) {
       const stop = byId.get(stopId);
       if (!stop) continue;
-      const schedule = await getStopDepartures({ lat: stop.lat, lon: stop.lon, name: stop.name, stopId, fromMs, toMs, includeLive: false });
+      const schedule = await getStopDepartures({ lat: stop.lat, lon: stop.lon, name: stop.name, stopId, stopIds: stop.gtfsIds, fromMs, toMs, includeLive: false });
       const departure = schedule.departures.find((item) => !isPlannerOnlyLine(item.routeShort));
       if (departure) { selected = { stopId, departure }; break; }
     }
     assert.ok(selected, `No visible stop has passenger departures on ${start.toISODate()}; check the GTFS validity.`);
     const trip = trips.get(selected.departure.tripId);
     assert.ok(trip && isActive(trip.service_id, selected.departure.serviceDateId), "The departure's service day must be active in the supplied CSV calendar.");
-    assert.ok(rawContainsDeparture(selected.departure.tripId, selected.stopId, selected.departure.clock), "The displayed departure must exist in the actual stop_times.txt.");
+    assert.ok((byId.get(selected.stopId)?.gtfsIds ?? [selected.stopId]).some((id) => rawContainsDeparture(selected!.departure.tripId, id, selected!.departure.clock)), "The displayed departure must exist in the actual stop_times.txt.");
     const stop = page.locator(`[data-stop-id=${JSON.stringify(`tt-${selected.stopId}`)}]`);
     await stop.click({ timeout: 10_000 });
     await page.getByRole("heading", { name: byId.get(selected.stopId)!.name, exact: true }).waitFor({ timeout: 15_000 });

@@ -1018,6 +1018,7 @@ export default function TripPlannerPanel({
                               lon: place.lon,
                               label: place.label,
                               stopId: place.stopId,
+                              stopIds: place.stopIds,
                             })
                           }
                           className="shrink-0 rounded bg-cyan-600/14 px-1.5 py-0.5 text-[7.5px] font-extrabold text-cyan-700 transition-colors hover:bg-cyan-600/25 dark:text-cyan-300"
@@ -1032,6 +1033,7 @@ export default function TripPlannerPanel({
                               lon: place.lon,
                               label: place.label,
                               stopId: place.stopId,
+                              stopIds: place.stopIds,
                             })
                           }
                           className="shrink-0 rounded bg-rose-600/14 px-1.5 py-0.5 text-[7.5px] font-extrabold text-rose-700 transition-colors hover:bg-rose-600/25 dark:text-rose-300"

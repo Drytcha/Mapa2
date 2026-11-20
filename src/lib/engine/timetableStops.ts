@@ -4,6 +4,8 @@ import { dedupeLines, foldStopKey } from "@/lib/core/text";
 import type { BusStop } from "@/lib/types";
 import { ensureGtfsSeeded } from "./gtfsStore";
 import { boardableStopInfo } from "./boardableStops";
+import { OFFICIAL_STOPS_BY_ID, loadOfficialStops } from "./officialStops";
+import { mergeTimetableStops, type StopVector } from "./mergeTimetableStops";
 
 export interface TimetableStopsResult {
   stops: BusStop[];
@@ -98,8 +100,67 @@ export async function getTimetableStops(force = false): Promise<TimetableStopsRe
       }
     }
 
+    // Derive approach bearings from real trip sequences, not final headsigns:
+    // routes can branch after the same physical platform.
+    const vectors = new Map<string, StopVector[]>();
+    for (const [tripId, times] of store.base.rawStopTimesByTrip) {
+      const trip = store.base.rawTripsById.get(tripId);
+      if (!trip || (activeServices.size && !activeServices.has(trip.serviceId))) continue;
+      for (let i = 0; i < times.length - 1; i++) {
+        if (times[i].pickupType === 1) continue;
+        const current = store.base.stopsById.get(times[i].stopId);
+        if (!current) continue;
+        let other = null;
+        let incoming = true;
+        for (let j = i - 1; j >= 0; j--) {
+          const candidate = store.base.stopsById.get(times[j].stopId);
+          if (candidate && distanceCoords(current.lat, current.lon, candidate.lat, candidate.lon) >= 40) { other = candidate; break; }
+        }
+        if (!other) {
+          incoming = false;
+          for (let j = i + 1; j < times.length; j++) {
+            const candidate = store.base.stopsById.get(times[j].stopId);
+            if (candidate && distanceCoords(current.lat, current.lon, candidate.lat, candidate.lon) >= 40) { other = candidate; break; }
+          }
+        }
+        if (!other) continue;
+        const dx = (current.lon - other.lon) * Math.cos(current.lat * Math.PI / 180) * (incoming ? 1 : -1);
+        const dy = (current.lat - other.lat) * (incoming ? 1 : -1);
+        const length = Math.hypot(dx, dy);
+        const list = vectors.get(current.id) ?? [];
+        // Avoid repeated vectors for the many trips sharing a pattern.
+        const vector: StopVector = [dx / length, dy / length];
+        if (!list.some((v) => v[0] * vector[0] + v[1] * vector[1] > 0.999)) list.push(vector);
+        vectors.set(current.id, list);
+      }
+    }
+    const officialByName = new Map<string, ReturnType<typeof loadOfficialStops>["stops"]>();
+    for (const official of loadOfficialStops().stops) {
+      const key = foldStopKey(official.name);
+      const list = officialByName.get(key) ?? [];
+      list.push(official);
+      officialByName.set(key, list);
+    }
+    const evidence = new Map(stops.map((s) => {
+      const official = s.gtfsId ? OFFICIAL_STOPS_BY_ID.get(s.gtfsId) : undefined;
+      const gtfs = s.gtfsId ? store.base.stopsById.get(s.gtfsId) : undefined;
+      const name = foldStopKey(s.name);
+      let symbol = official && foldStopKey(official.name) === name &&
+        distanceCoords(official.lat, official.lon, s.lat, s.lon) <= 25 ? official.symbol : undefined;
+      if (!symbol) {
+        // IDs may differ across feeds. Use the local snapshot only when all
+        // very close same-name records agree on the physical symbol.
+        const symbols = new Set((officialByName.get(name) ?? [])
+          .filter((item) => distanceCoords(item.lat, item.lon, s.lat, s.lon) <= 8)
+          .map((item) => item.symbol).filter(Boolean));
+        if (symbols.size === 1) symbol = [...symbols][0];
+      }
+      return [s.id, { symbol, code: gtfs?.code || s.ref, vectors: vectors.get(s.gtfsId ?? "") }] as const;
+    }));
+    const mergedStops = mergeTimetableStops(stops, evidence);
+
     const groups = new Map<string, BusStop[]>();
-    for (const s of stops) {
+    for (const s of mergedStops) {
       const key = foldStopKey(s.name);
       const list = groups.get(key);
       if (list) list.push(s);
@@ -111,18 +172,20 @@ export async function getTimetableStops(force = false): Promise<TimetableStopsRe
         list.some((o) => o !== s && distanceCoords(s.lat, s.lon, o.lat, o.lon) <= 300)
       );
       for (const s of close) {
-        const dest = s.gtfsId ? destinationsByStopId.get(s.gtfsId) : undefined;
+        const destinations = [...new Set((s.gtfsIds ?? (s.gtfsId ? [s.gtfsId] : []))
+          .map((id) => destinationsByStopId.get(id)).filter((value): value is string => !!value))];
+        const dest = destinations.length === 1 ? destinations[0] : undefined;
         if (dest && foldStopKey(dest) !== foldStopKey(s.name)) {
           s.towards = tidyStopName(dest);
         }
       }
     }
 
-    stops.sort((a, b) => a.name.localeCompare(b.name, "pl"));
+    mergedStops.sort((a, b) => a.name.localeCompare(b.name, "pl"));
     const value: TimetableStopsResult = {
-      stops,
+      stops: mergedStops,
       meta: {
-        total: stops.length,
+        total: mergedStops.length,
         fromGtfs: stops.length,
         officialOnly: 0,
         officialSource: store.feed.source,
