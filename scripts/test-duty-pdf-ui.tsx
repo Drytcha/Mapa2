@@ -1,0 +1,16 @@
+import React from "react";
+import assert from "node:assert/strict";
+import { renderToStaticMarkup } from "react-dom/server";
+import BrigadesPanel from "../src/components/BrigadesPanel";
+
+const props = { routes: [], liveVehicles: [], onSelectBus: () => {}, onLoadTripToPlanner: () => {} };
+const planner = renderToStaticMarkup(<BrigadesPanel {...props} showTechnicalNotes />);
+assert.match(planner, /Rozkład PDF/);
+assert.match(planner, /Wybrana kursówka/);
+assert.match(planner, /Wybrana linia/);
+assert.match(planner, /Firma: MZUK/);
+assert.match(planner, /Firma: ŚKA/);
+assert.match(planner, /Pobierz PDF/);
+const traveler = renderToStaticMarkup(<BrigadesPanel {...props} showTechnicalNotes={false} />);
+assert.doesNotMatch(traveler, /Rozkład PDF|Pobierz PDF/);
+console.log("duty PDF planner-only UI tests passed");
