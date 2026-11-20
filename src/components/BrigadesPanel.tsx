@@ -33,6 +33,7 @@ import {
   BRIGADE_ZONE,
   buildBrigadesCsv,
   computeWorkSpans,
+  describeServiceIds,
   formatBrigadeClock,
   formatBrigadeDate,
   getActiveDates,
@@ -45,10 +46,12 @@ import {
   type BrigadeTripView,
 } from "@/lib/engine/brigades";
 import {
+  ensureGtfsSeeded,
   getBrigadeShapeOverlay,
   getTripStopWaypoints,
   type GtfsLineItem,
 } from "@/lib/engine/gtfsStore";
+import { closestTimetableDate, timetableBlockForDate, timetableDayChoices, type TimetableDayChoices, type TimetableDayKind } from "@/lib/engine/dutyPdfDays";
 import { OPERATOR_STYLES } from "@/lib/transit";
 import {
   MAX_WAYPOINTS,
@@ -165,9 +168,27 @@ export default function BrigadesPanel({
   const [listLimit, setListLimit] = useState(100);
   const [reload, setReload] = useState(0);
   const [pdfScope, setPdfScope] = useState<"duty" | "line" | "mzuk" | "ska" | "other">("duty");
+  const [pdfDayKind, setPdfDayKind] = useState<"current" | TimetableDayKind>("current");
+  const [pdfPickedDate, setPdfPickedDate] = useState("");
+  const [pdfDates, setPdfDates] = useState<TimetableDayChoices | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
   const originalHash = useRef<string | null>(null);
+  const pdfDateChoices = pdfDayKind === "current" ? [] : pdfDates?.[pdfDayKind] ?? [];
+  const pdfExportDate = pdfDayKind === "current" ? dateId :
+    pdfDateChoices.some((choice) => choice.dateId === pdfPickedDate) ? pdfPickedDate : closestTimetableDate(pdfDateChoices, dateId);
+
+  useEffect(() => {
+    if (!showTechnicalNotes) return;
+    let cancelled = false;
+    setPdfDates(null);
+    void ensureGtfsSeeded().then(({ base }) => {
+      if (!cancelled) setPdfDates(timetableDayChoices(base.serviceIdsByDate, base.feedStartDate, base.feedEndDate));
+    }).catch(() => {
+      if (!cancelled) setPdfDates({ weekday: [], saturday: [], sunday: [] });
+    });
+    return () => { cancelled = true; };
+  }, [showTechnicalNotes, reload]);
 
   useEffect(() => {
     originalHash.current = window.location.hash || "";
@@ -633,17 +654,19 @@ export default function BrigadesPanel({
     setPdfError("");
     if (pdfScope === "duty" && !selected) { setPdfError("Wybierz kursówkę z listy."); return; }
     if (pdfScope === "line" && lineId === "all") { setPdfError("Wybierz konkretną linię w pasku linii."); return; }
+    if (!pdfExportDate) { setPdfError("Brak dat tego rodzaju dnia w aktualnym GTFS."); return; }
     setPdfBusy(true);
     try {
       const { collectTimetablePdfData, createTimetablePdf, timetablePdfFilename } = await import("@/lib/engine/dutyTimetablePdf");
+      const targetBlockId = selected ? timetableBlockForDate(selected, dateId, pdfExportDate) : undefined;
       const scope = pdfScope === "duty"
-        ? { kind: "duty" as const, blockId: selected!.blockId }
+        ? { kind: "duty" as const, blockId: targetBlockId! }
         : pdfScope === "line"
           ? { kind: "line" as const, line: lineId }
           : { kind: "company" as const, company: pdfScope };
-      const data = await collectTimetablePdfData(routes, dateId, scope);
+      const data = await collectTimetablePdfData(routes, pdfExportDate, scope);
       const doc = await createTimetablePdf(data);
-      doc.save(timetablePdfFilename(dateId, scope));
+      doc.save(timetablePdfFilename(pdfExportDate, scope));
     } catch (cause) {
       setPdfError(cause instanceof Error ? cause.message : "Nie udało się przygotować PDF.");
     } finally {
@@ -926,11 +949,25 @@ export default function BrigadesPanel({
             <option value="ska">Firma: ŚKA · wszystkie linie</option>
             <option value="other">Firma: inna / nieprzypisana</option>
           </select>
-          <button type="button" onClick={() => void handleExportTimetablePdf()} disabled={pdfBusy || loading || !result || resultKey !== `${lineId}|${dateId}` || (pdfScope === "duty" && !selected) || (pdfScope === "line" && lineId === "all")} className="flex h-7 items-center gap-1 rounded-md bg-brand px-2.5 text-[10px] font-extrabold text-on-brand hover:opacity-90 disabled:opacity-40">
+          <label htmlFor="duty-pdf-day" className="text-[10px] font-extrabold text-ink">Rodzaj dnia</label>
+          <select id="duty-pdf-day" value={pdfDayKind} onChange={(event) => { setPdfDayKind(event.target.value as "current" | TimetableDayKind); setPdfPickedDate(""); setPdfError(""); }} className="h-7 max-w-full rounded-md border border-line bg-surface px-2 text-[10px] font-semibold text-ink">
+            <option value="current">Dzień wybrany w widoku</option>
+            <option value="weekday">Roboczy</option>
+            <option value="saturday">Sobota</option>
+            <option value="sunday">Niedziela / święto</option>
+          </select>
+          {pdfDayKind !== "current" && <>
+            <label htmlFor="duty-pdf-date" className="text-[10px] font-extrabold text-ink">Data PDF</label>
+            <select id="duty-pdf-date" value={pdfExportDate} onChange={(event) => { setPdfPickedDate(event.target.value); setPdfError(""); }} disabled={!pdfDateChoices.length} className="h-7 max-w-full rounded-md border border-line bg-surface px-2 text-[10px] font-semibold text-ink">
+              {!pdfDateChoices.length && <option value="">{pdfDates ? "Brak dat w GTFS" : "Ładowanie dat…"}</option>}
+              {pdfDateChoices.map((choice) => <option key={choice.dateId} value={choice.dateId}>{formatBrigadeDate(choice.dateId)} · {describeServiceIds(choice.serviceIds)}</option>)}
+            </select>
+          </>}
+          <button type="button" onClick={() => void handleExportTimetablePdf()} disabled={pdfBusy || loading || !result || resultKey !== `${lineId}|${dateId}` || !pdfExportDate || (pdfScope === "duty" && !selected) || (pdfScope === "line" && lineId === "all")} className="flex h-7 items-center gap-1 rounded-md bg-brand px-2.5 text-[10px] font-extrabold text-on-brand hover:opacity-90 disabled:opacity-40">
             {pdfBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
             {pdfBusy ? "Przygotowuję PDF…" : "Pobierz PDF"}
           </button>
-          <span className="text-[9px] text-mute">Wybrany dzień · 1 kursówka na stronę, 1 kurs w wierszu; do 4 wybranych przystanków pośrednich. Firma wg katalogu; wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
+          <span className="text-[9px] text-mute">PDF obejmuje wybraną datę i obowiązujące dla niej warianty GTFS. 1 kursówka na stronę; do 4 przystanków pośrednich. WY/PRZ/ZJ oznaczone ~ wynikają z reguł i nie mają potwierdzonych godzin ani zajezdni. Firma wg katalogu; wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
           {pdfError && <span role="alert" className="w-full text-[10px] font-semibold text-warning">{pdfError}</span>}
         </div>
       )}
