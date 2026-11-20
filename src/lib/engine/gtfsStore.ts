@@ -694,7 +694,7 @@ function parseArchiveBytes(
       rawTripId: t.trip_id,
       routeId: t.route_id,
       routeShort,
-      technicalCode: technicalTripCode(routeShort, t.trip_short_name || "", t.trip_headsign || ""),
+      technicalCode: technicalTripCode(routeShort, t.trip_short_name || "", t.trip_headsign || "", route?.longName || ""),
       serviceId: t.service_id,
       rawBrigade,
       kursowkaCode: verifiedKursowka,
