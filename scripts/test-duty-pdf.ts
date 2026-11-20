@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
-import { collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, timetablePdfFilename } from "../src/lib/engine/dutyTimetablePdf";
+import { collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, selectTimetableCheckpoints, timetablePdfSheets, timetablePdfFilename } from "../src/lib/engine/dutyTimetablePdf";
 import { getGtfsLines } from "../src/lib/engine/gtfsStore";
 import { summariseBrigade } from "../src/lib/brigadeMetrics";
 import type { BrigadeItem, BrigadeTripView } from "../src/lib/engine/brigades";
@@ -43,7 +43,31 @@ assert.equal(data.duties[0].trips[1].stops.length, 90);
 assert.equal(data.duties[0].trips[1].stops[89].name, "Przystanek 89 Zażółć gęślą jaźń");
 assert.ok(data.duties[0].trips[1].stops.some((s) => s.departure >= 1440));
 const pdf = await createTimetablePdf(data);
-assert.ok(pdf.getNumberOfPages() >= 2, "long duty must paginate rather than truncate");
+assert.equal(pdf.getNumberOfPages(), 1, "one complete duty always occupies one page, even with 90 stops");
+await assert.rejects(createTimetablePdf({ ...data, duties: [{ ...data.duties[0], trips: [{ ...data.duties[0].trips[0], stops: [] }] }] }), /Brak przystanków/);
+const checkpoints = selectTimetableCheckpoints(data.duties[0].trips[1].stops);
+assert.equal(checkpoints.length, 4);
+assert.equal(checkpoints[0].name, data.duties[0].trips[1].stops[1].name);
+assert.equal(checkpoints[3].name, data.duties[0].trips[1].stops[88].name);
+assert.deepEqual(selectTimetableCheckpoints(data.duties[0].trips[1].stops.slice(0, 4)), data.duties[0].trips[1].stops.slice(1, 3));
+assert.deepEqual(selectTimetableCheckpoints(data.duties[0].trips[1].stops.slice(0, 2)), []);
+const dense = { ...data, duties: [{ ...data.duties[0], trips: Array.from({ length: 80 }, (_, i) => ({ ...data.duties[0].trips[i % 2], trip: { ...data.duties[0].trips[i % 2].trip, id: `dense-${i}` } })) }] };
+const densePdf = await createTimetablePdf({ ...dense, notice: "Brak kursówki testowej" });
+if (process.env.DUTY_PDF_TEST_DENSE_OUTPUT) {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(process.env.DUTY_PDF_TEST_DENSE_OUTPUT, Buffer.from(densePdf.output("arraybuffer")));
+}
+assert.equal(densePdf.getNumberOfPages(), 1, "dense duty and warning must not create another page");
+const pages = densePdf.internal.pages as unknown as string[][];
+// 4 duty summary boxes + 6 shaded header cells (each background and border)
+// + 13 bordered cells for every trip. No extra course rows are emitted.
+assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 4 + 12 + 13 * 80);
+const multi = await createTimetablePdf({ ...data, duties: [data.duties[0], data.duties[0]] });
+assert.equal(multi.getNumberOfPages(), 2, "each of two duties occupies exactly one page");
+const loose = { ...dense.duties[0], item: { ...dense.duties[0].item, unassigned: true } };
+const looseSheets = timetablePdfSheets([loose]);
+assert.deepEqual(looseSheets.map((sheet) => sheet.duty.trips.length), [32, 32, 16]);
+assert.equal((await createTimetablePdf({ ...data, duties: [loose] })).getNumberOfPages(), 3, "unassigned runs are labelled batches, not one fictitious duty");
 assert.ok(pdf.output("arraybuffer").byteLength > 5000);
 if (process.env.DUTY_PDF_TEST_OUTPUT) {
   const { writeFile } = await import("node:fs/promises");
@@ -51,4 +75,4 @@ if (process.env.DUTY_PDF_TEST_OUTPUT) {
 }
 await assert.rejects(collectTimetablePdfData(routes, "20261119", { kind: "line", line: "404" }), /Brak kursów/);
 await assert.rejects(collectTimetablePdfData(routes, "20270101", { kind: "line", line: "8" }));
-console.log("duty PDF selection, complete stop data, dates and pagination tests passed");
+console.log("duty PDF selection, one-page duties and one-row trips tests passed");

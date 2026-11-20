@@ -930,7 +930,7 @@ export default function BrigadesPanel({
             {pdfBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
             {pdfBusy ? "Przygotowuję PDF…" : "Pobierz PDF"}
           </button>
-          <span className="text-[9px] text-mute">Wybrany dzień · pełne kursówki; firma według przypisania w katalogu. Wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
+          <span className="text-[9px] text-mute">Wybrany dzień · 1 kursówka na stronę, 1 kurs w wierszu; do 4 wybranych przystanków pośrednich. Firma wg katalogu; wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
           {pdfError && <span role="alert" className="w-full text-[10px] font-semibold text-warning">{pdfError}</span>}
         </div>
       )}
