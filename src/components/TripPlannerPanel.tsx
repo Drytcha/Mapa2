@@ -740,7 +740,7 @@ export default function TripPlannerPanel({
   );
 
   return (
-    <div className="pointer-events-auto flex max-h-[min(640px,calc(100dvh-280px))] w-[332px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] backdrop-blur-xl animate-rise-in dark:bg-surface/93">
+    <div className="pointer-events-auto flex max-h-[min(640px,calc(100dvh-280px))] w-[332px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93">
       <div className="flex shrink-0 items-center gap-2 border-b border-line/70 bg-brand-soft/80 px-3 py-2">
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
           <Route className="h-3.5 w-3.5" strokeWidth={2.4} />

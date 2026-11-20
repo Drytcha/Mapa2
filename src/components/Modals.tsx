@@ -76,7 +76,7 @@ function useDialog(open: boolean, onClose: () => void) {
 function Backdrop({ onClose }: { onClose: () => void }) {
   return (
     <div
-      className="absolute inset-0 bg-[#06130e]/55 backdrop-blur-[3px] animate-fade-in"
+      className="absolute inset-0 bg-[#06130e]/62 animate-fade-in"
       onClick={onClose}
       aria-hidden="true"
     />

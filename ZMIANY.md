@@ -108,11 +108,11 @@ miejscach. Teraz litery pochodzą z jednej tabeli: `src/lib/lineLegend.ts`.
 | 2  | b – kurs przedłużony do Boguszowa-Gorc · k – do Kuźnic · d – do Dzikowca przez Kuźnice · p – tylko do Placu Grunwaldzkiego · v – przez Galerię Victoria |
 | 5  | \* – do Głuszycy Górnej przez Jedlinę-Zdrój · ^ – przez Jedlinę-Zdrój (Uzdrowisko) · e – do Głuszycy przez Jedlinę-Zdrój · u – do Jedliny-Zdroju /Uzdrowisko/ · k – do ul. Kolejowej w Szczawnie-Zdroju |
 | 8  | a – przez Al. Podwale · l – do Lubiechowa · z – do Zamku Książ przez Lubiechów · d – do Dworca Miasto · g – przez St. Bogaczowice do Gostkowa · s – do Strugi · y – do Gostkowa przez Chwaliszów i Stare Bogaczowice |
-| 9  | s – przez ul. Sokołowskiego - Szpital |
+| 9  | a – kurs do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · c – kurs do ul. Jachimowicza · j – kurs do ul. Jachimowicza (Faurecia) |
 | 12 | a – do Andrzejówki · d – do Dworca Głównego PKP · p – tylko do Śródmieścia |
 | 15 | p – tylko do Placu Grunwaldzkiego · t – przez ul. Batorego · a – przez Sokołowsko, Mieroszów do Golińska · b – przez ul. Beethovena · m – przez Sokołowsko do Mieroszowa · z – do ul. Beethovena (MZUK) |
 | 18 | q – do ul. Ratuszowej /Aqua Zdroju/ · j – do ul. Uczniowskiej i ul. Jachimowicza · m – (Mando) · r – (Ronal) · t – (Toyota) · u – (Urząd Skarbowy) |
-| 19 | s – przez ul. Sokołowskiego - Szpital |
+| 19 | a – kurs do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · c – kurs do ul. Jachimowicza · j – kurs do ul. Jachimowicza (Faurecia) |
 | A  | a – przez Auchan · s – przez ul. Sokołowskiego - Szpital |
 | C  | a – przez Auchan · v – przez Galerię Victoria |
 | EX | v – przez Galerię Victoria |
@@ -135,6 +135,29 @@ Gdzie to działa:
 - **wydruk kursówki (PDF)** – kolumna *Linia* pokazuje numer z literą (`2b`, `8s`,
   `18q`), a stopka każdej strony zawiera legendę **tylko użytych** wariantów,
 - **opis funkcji w Pomocy** – zaktualizowany do oficjalnej legendy.
+
+### Linie 9 i 19 — warianty dla kierowców
+
+Obie linie mają tę samą oficjalną legendę:
+
+| Litera | Znaczenie                              |
+| ------ | -------------------------------------- |
+| a      | kurs do przystanku Podwale - Forteczna |
+| d      | kurs do Dworca Szczawienko             |
+| c      | kurs do ul. Jachimowicza               |
+| j      | kurs do ul. Jachimowicza (Faurecia)    |
+
+Dopasowanie idzie po **końcowym przystanku** kursu, więc nie zależy od nazwy
+przystanku pośredniego: `j` (Faurecia) jest sprawdzane przed `c`
+(Jachimowicza), a „Toyota końcowy” zostaje przy `c`. Litery trafiają do
+rozkładu przystanku i do kursówek (`9a`, `9j`, `19d`…).
+
+**Legenda na wydruku jest teraz pełna.** Stopka kursówki wypisuje **wszystkie**
+warianty każdej linii, która występuje w danej kursówce — nie tylko te użyte
+w tym dniu. Kierowca podmieniający kurs ma więc pod ręką znaczenie każdej
+litery. Stopka rezerwuje na to stałe 3 linijki (`TIMETABLE_LEGEND_RESERVED_LINES`)
+i tylko wtedy, gdy kursówka ma choć jeden wariant; jeśli pełna legenda się nie
+mieści, druk wraca do listy wariantów użytych w tym dniu.
 
 ## Zjazd zawsze osobno, bez „C/ZJ*”
 
@@ -233,10 +256,38 @@ Dodatkowo:
 rogu: FPS, najdłuższą klatkę, liczbę klatek > 34 ms na sekundę i liczbę węzłów
 DOM. Bez tego parametru `PerfHud` nic nie renderuje i nie zakłada timerów.
 
-Testy: `npm run test:perf` (pilnuje, żeby filtr ciemnych kafli nie wrócił na
-całą warstwę, rozmycie paneli było ≤ 10 px, nie było `:has()`, etykiety
-przystanków miały limit, kafle nie pytały serwera w trakcie zoomu, GPS miał
-próg ruchu, flota odcisk danych, a licznik FPS był opt-in).
+Testy: `npm run test:perf` (pilnuje, żeby ciemne kafle nie wróciły do filtra CSS,
+nie było `backdrop-filter` ani klas `backdrop-blur`, kafle nie wymuszały
+`will-change`, etykiety przystanków miały limit, kafle nie pytały serwera
+w trakcie zoomu, GPS miał próg ruchu, flota odcisk danych, a licznik FPS był
+opt-in).
+
+### 9 fps przy ruchu mapy: kafle w kanwie i koniec rozmywania tła
+
+**Przyczyny.** Ruch mapy nie rysuje niczego od nowa — Leaflet przesuwa tylko
+warstwę kafli. Cały koszt siedział więc w kompozycji:
+1. Ciemny motyw był filtrem CSS **na każdym z ~40 kafli**, a Leaflet dokłada do
+   każdego kafla `mix-blend-mode: plus-lighter`. Filtr + mieszanie to dwie
+   dodatkowe powierzchnie na kafel, przeliczane przy każdym ruchu.
+2. Panele nad mapą (kilkanaście) miały `backdrop-filter: blur(...)` — rozmycie
+   tła jest liczone **od nowa w każdej klatce**, bo tło się przesuwa.
+3. Kafle miały `will-change: opacity`, czyli osobną warstwę kompozycji każdy.
+4. W trakcie ruchu dalej działały nieskończone animacje markerów (`pinPulse`,
+   `vehicleFloat`), których przy przesuwaniu i tak nie widać.
+
+**Poprawki**
+- `src/lib/mapTiles.ts` — nowa warstwa kafli `createDarkTileLayer`: kafel jest
+  przyciemniany **raz**, w kanwie (`ctx.filter`), a na ekran trafia zwykły
+  `<canvas>`: zero filtra CSS, zero `mix-blend-mode`, zero dodatkowych
+  powierzchni. Przeglądarki bez `ctx.filter` dostają filtr tylko na kaflu
+  (fallback, ten sam wygląd).
+- `globals.css` — `backdrop-filter` wyłączony globalnie (`none !important`),
+  usunięte `will-change: opacity` z kafli; klasy `backdrop-blur*` zniknęły
+  z komponentów, a panele dostały kryjące tło (92–95%), więc wygląd się nie
+  zmienia.
+- `MapView.tsx` + `globals.css` — podczas przesuwania/przybliżania kontener mapy
+  dostaje klasę `map-busy`, która pauzuje pulsowanie i unoszenie markerów.
+- `npm run test:perf` pilnuje wszystkich czterech punktów, żeby nie wróciły.
 
 ### Przystanki tylko wokół widoku
 

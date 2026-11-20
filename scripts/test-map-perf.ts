@@ -9,23 +9,30 @@ const app = read("src/components/MapPlanerApp.tsx");
 const location = read("src/lib/useUserLocation.ts");
 const hud = read("src/components/PerfHud.tsx");
 
-// 1. Ciemna mapa: filtr na pojedynczych kaflach, nie na całej warstwie kafli.
-//    Filtr na kontenerze przerasterowuje cały widok przy każdym ruchu mapy.
+// 1. Ciemna mapa: kafle przyciemniane raz, w kanwie — bez filtra CSS i bez
+//    `mix-blend-mode` z Leafleta. Filtr na każdym z ~40 kafli to kilkadziesiąt
+//    dodatkowych powierzchni do złożenia w każdej klatce ruchu mapy.
+const mapTiles = read("src/lib/mapTiles.ts");
+assert.match(mapTiles, /context\.filter = DARK_TILE_FILTER/, "kafel jest przyciemniany w kanwie");
+assert.match(mapTiles, /createDarkTileLayer/, "eksportowany jest warstwowy konstruktor kafli");
 assert.match(
-  css,
-  /\.basemap-layer--dark \.leaflet-tile \{[^}]*filter:\s*invert/,
-  "filtr ciemnych kafli działa per kafel",
+  mapView,
+  /mapStyle === "dark"\s*\?\s*createDarkTileLayer\(config\.base, baseOptions\)/,
+  "ciemny motyw korzysta z kafli w kanwie",
 );
-assert.doesNotMatch(
-  css,
-  /\.basemap-layer--dark \{[^}]*filter:/,
-  "warstwa kafli nie ma już filtra na całości",
-);
+assert.doesNotMatch(css, /\.leaflet-tile \{[^}]*filter:/, "brak filtra CSS na kaflach");
+assert.doesNotMatch(css, /\.basemap-layer--dark/, "brak klasy filtra warstwy kafli");
 
-// 2. Rozmycie paneli nad mapą musi być tanie (24 px → 8 px).
-const blur = css.match(/--blur-xl:\s*(\d+(?:\.\d+)?)px/);
-assert.ok(blur, "motyw definiuje --blur-xl");
-assert.ok(Number(blur![1]) <= 10, `promień rozmycia paneli ≤ 10 px (jest ${blur![1]} px)`);
+// 2. Rozmycie tła paneli (backdrop-filter) jest wyłączone: przeliczanie rozmycia
+//    nad ruchomą mapą to koszt w każdej klatce, a panele są prawie kryjące.
+assert.match(css, /backdrop-filter: none !important/, "backdrop-filter wyłączony globalnie");
+assert.ok(
+  !/backdrop-blur/.test(read("src/components/MapOverlays.tsx") + app),
+  "panele nad mapą nie używają klas backdrop-blur",
+);
+assert.doesNotMatch(css, /will-change: opacity/, "kafle nie wymuszają osobnej warstwy na czas fade");
+assert.match(mapView, /classList\.toggle\("map-busy"/, "ruch mapy wstrzymuje animacje markerów");
+assert.match(css, /map-busy \.nav-vehicle/, "animacje są pauzowane przez klasę map-busy");
 
 // 2b. Przystanki rysowane tylko wokół widoku (mniej DOM = płynniejsze przesuwanie).
 assert.match(mapView, /const STOP_SHOW_PAD = 0\.\d+/, "zasięg dodawania markerów");
@@ -68,4 +75,4 @@ assert.match(app, /fleetSignature/, "aktualizacje floty są deduplikowane");
 assert.match(hud, /get\("perf"\) === "1"/, "HUD włącza się parametrem ?perf=1");
 assert.match(hud, /if \(!enabled\) return null/, "HUD nie renderuje nic bez zgody");
 
-console.log("map performance guards passed (dark tiles, blur, labels, GPS, fleet)");
+console.log("map performance guards passed (canvas dark tiles, no blur, labels, GPS, fleet)");

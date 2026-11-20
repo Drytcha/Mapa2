@@ -116,7 +116,7 @@ export function MapRouteCard({
   const brigadeTitle = formatBrigadeTitle(brigade);
   if (!routeReady && !hasStart && !hasEnd) return null;
   return (
-    <div className="pointer-events-none hidden w-[292px] max-w-[calc(100vw-116px)] select-none rounded-[14px] border border-line/80 bg-surface/90 px-3 py-2 shadow-[0_12px_35px_rgba(13,42,28,0.13)] backdrop-blur-xl dark:bg-surface/88 sm:block">
+    <div className="pointer-events-none hidden w-[292px] max-w-[calc(100vw-116px)] select-none rounded-[14px] border border-line/80 bg-surface/95 px-3 py-2 shadow-[0_12px_35px_rgba(13,42,28,0.13)] dark:bg-surface/94 sm:block">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="grid h-5 w-5 place-items-center rounded-md bg-brand text-on-brand">
@@ -289,7 +289,7 @@ export function LiveFleetControl({
 
   return (
     <div className="pointer-events-none flex flex-wrap items-center gap-1.5 select-none">
-      <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-1 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-1 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
         <button
           type="button"
           onClick={onToggleLiveBuses}
@@ -364,7 +364,7 @@ export function LiveFleetControl({
 
       {isPlanner && showLiveBuses && dutyStats.eligible > 0 && (
         <div
-          className="pointer-events-auto flex w-[225px] max-w-full items-start gap-1.5 rounded-lg border border-brand/25 bg-surface/93 px-2 py-1.5 text-[8px] leading-snug text-ink-soft shadow-[0_4px_14px_rgba(13,42,28,0.08)] backdrop-blur sm:w-[248px]"
+          className="pointer-events-auto flex w-[225px] max-w-full items-start gap-1.5 rounded-lg border border-brand/25 bg-surface/93 px-2 py-1.5 text-[8px] leading-snug text-ink-soft shadow-[0_4px_14px_rgba(13,42,28,0.08)] sm:w-[248px]"
           title="Każdy wóz jest dopasowany do rozkładu brygad po swoim kursie (GTFS-RT). Linia 19 może jechać w brygadzie 9/01 — nigdy w wymyślonej 19/01."
           data-testid="duty-stats"
         >
@@ -385,7 +385,7 @@ export function LiveFleetControl({
           onClick={() => setLegendExpanded((v) => !v)}
           title="Pokaż / ukryj legendę punktualności GPS"
           aria-expanded={legendExpanded}
-          className="pointer-events-auto flex w-fit flex-wrap items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2 py-1.5 text-[7.5px] font-bold text-mute shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl transition-colors hover:text-ink"
+          className="pointer-events-auto flex w-fit flex-wrap items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2 py-1.5 text-[7.5px] font-bold text-mute shadow-[0_8px_24px_rgba(13,42,28,0.14)] transition-colors hover:text-ink"
         >
           {(
             [
@@ -412,7 +412,7 @@ export function LiveFleetControl({
           type="button"
           onClick={onToggleTrafficSignals}
           className={cn(
-            "pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] backdrop-blur-xl transition-colors",
+            "pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] transition-colors",
             showTrafficSignals
               ? "border-amber-500/40 bg-surface/94 text-amber-700 dark:text-amber-300"
               : "border-line/80 bg-surface/94 text-mute",
@@ -429,7 +429,7 @@ export function LiveFleetControl({
           onClick={onToggleTurnarounds}
           title="Miejsca na zawrócenie wozu ≥ 12 m: ronda i duże skrzyżowania"
           className={cn(
-            "pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] backdrop-blur-xl transition-colors",
+            "pointer-events-auto flex h-8 w-fit items-center gap-1.5 rounded-xl border px-2.5 text-[8.5px] font-extrabold shadow-[0_8px_24px_rgba(13,42,28,0.12)] transition-colors",
             showTurnarounds
               ? "border-sky-500/40 bg-surface/94 text-sky-700 dark:text-sky-300"
               : "border-line/80 bg-surface/94 text-mute",
@@ -534,7 +534,7 @@ export function LiveBusCard({
   const sameLineDuty = isSameDutyLine(bus.routeName, cleanDutyCode);
 
   return (
-    <div className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] backdrop-blur-xl animate-rise-in dark:bg-surface/93">
+    <div className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93">
       <div className="flex shrink-0 items-start gap-2.5 border-b border-line/70 bg-brand-soft/80 px-3 py-2.5">
         <span
           className="metric mt-px grid h-8 min-w-[34px] shrink-0 place-items-center rounded-lg px-1.5 text-[12px] font-extrabold shadow-xs"
@@ -1031,7 +1031,7 @@ export function MapControls({
       ref={rootRef}
       className="pointer-events-none relative flex select-none flex-col items-end gap-1.5"
     >
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
         <button
           type="button"
           onClick={() => {
@@ -1051,7 +1051,7 @@ export function MapControls({
           <Eye className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
         <button
           type="button"
           onClick={onRefreshBusStops}
@@ -1111,7 +1111,7 @@ export function MapControls({
         <span className="mx-1.5 h-px bg-line" />
       </div>
 
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
         <button
           type="button"
           onClick={() => {
@@ -1388,7 +1388,7 @@ export const MapContextMenu = forwardRef<
         }
         items[nextIndex]?.focus();
       }}
-      className="pointer-events-auto absolute z-[1150] w-[248px] max-w-[calc(100vw-16px)] select-none overflow-hidden rounded-[12px] border border-line bg-surface/98 p-1 shadow-[0_16px_40px_rgba(8,30,20,0.28)] backdrop-blur-xl animate-fade-in"
+      className="pointer-events-auto absolute z-[1150] w-[248px] max-w-[calc(100vw-16px)] select-none overflow-hidden rounded-[12px] border border-line bg-surface/98 p-1 shadow-[0_16px_40px_rgba(8,30,20,0.28)] animate-fade-in"
     >
       <div className="px-2.5 py-2">
         <span className="flex items-center gap-1.5 text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
@@ -1553,7 +1553,7 @@ export function MapDrawingBanner({
         : `Każde kliknięcie dodaje punkt przed metą · ${count} / ${MAX_WAYPOINTS}`;
   return (
     <div
-      className="pointer-events-auto w-fit max-w-[360px] select-none rounded-xl border border-brand/20 bg-surface/95 p-3 shadow-lg backdrop-blur animate-rise-in"
+      className="pointer-events-auto w-fit max-w-[360px] select-none rounded-xl border border-brand/20 bg-surface/95 p-3 shadow-lg animate-rise-in"
       role="status"
     >
       <div className="flex items-center gap-2">
@@ -1624,7 +1624,7 @@ export function NavigationHud({
   return (
     <div
       className={cn(
-        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92",
+        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] dark:bg-surface/92",
         minimized ? "w-fit" : "w-[292px] max-w-[calc(100vw-116px)]",
       )}
     >
@@ -1795,7 +1795,7 @@ export function QuickComparison({
   return (
     <div
       className={cn(
-        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] backdrop-blur-xl dark:bg-surface/92",
+        "pointer-events-auto select-none overflow-hidden rounded-[14px] border border-line/80 bg-surface/94 shadow-[0_16px_45px_rgba(13,42,28,0.18)] dark:bg-surface/92",
         minimized ? "w-fit" : "w-[276px]",
       )}
     >
@@ -2081,7 +2081,7 @@ export function BusStopCard({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex min-h-0 w-[352px] max-w-[calc(100vw-72px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] backdrop-blur-xl animate-rise-in dark:bg-surface/93",
+        "pointer-events-auto flex min-h-0 w-[352px] max-w-[calc(100vw-72px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] animate-rise-in dark:bg-surface/93",
         className,
       )}
     >

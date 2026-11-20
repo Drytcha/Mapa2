@@ -4,6 +4,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import L from "leaflet";
 import { coordKey } from "@/lib/core/spatial";
 import { escapeHtml } from "@/lib/core/text";
+import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
@@ -455,6 +456,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       dispatchContextMenu(event);
     });
 
+    // W trakcie ruchu mapy wstrzymujemy animacje markerów (patrz `map-busy`
+    // w globals.css) — i tak są wtedy niewidoczne, a kosztują klatki.
+    const setBusy = (busy: boolean) => () => {
+      container.classList.toggle("map-busy", busy);
+    };
+    map.on("movestart zoomstart", setBusy(true));
+    map.on("moveend zoomend", setBusy(false));
+
     const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
     observer.observe(container);
 
@@ -495,7 +504,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!map) return;
     tileRef.current.forEach((layer) => layer.remove());
     const config = TILES[mapStyle];
-    const base = L.tileLayer(config.base, {
+    const baseOptions: L.TileLayerOptions = {
       attribution: config.attribution,
       maxZoom: 19,
       maxNativeZoom: config.maxZoom,
@@ -504,8 +513,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       // Kafle podmieniamy dopiero po animacji zoomu — w trakcie wystarczy
       // przeskalowany raster, a mniej zapytań to płynniejsze przybliżanie.
       updateWhenZooming: false,
-      className: mapStyle === "dark" ? "basemap-layer basemap-layer--dark" : "basemap-layer",
-    });
+      className: "basemap-layer",
+    };
+    // Ciemne kafle przyciemniamy w kanwie przy wczytywaniu, a nie filtrem CSS —
+    // filtr na kilkudziesięciu kaflach kosztuje kompozycję w każdej klatce.
+    const base =
+      mapStyle === "dark"
+        ? createDarkTileLayer(config.base, baseOptions)
+        : L.tileLayer(config.base, baseOptions);
     base.addTo(map);
     const layers = [base];
     if (config.labels) {
