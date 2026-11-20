@@ -967,7 +967,7 @@ export default function BrigadesPanel({
             {pdfBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
             {pdfBusy ? "Przygotowuję PDF…" : "Pobierz PDF"}
           </button>
-          <span className="text-[9px] text-mute">PDF obejmuje wybraną datę i obowiązujące dla niej warianty GTFS. 1 kursówka na stronę; do 4 przystanków pośrednich. WY/PRZ/ZJ oznaczone ~ wynikają z reguł i nie mają potwierdzonych godzin ani zajezdni. Firma wg katalogu; wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
+          <span className="text-[9px] text-mute">PDF obejmuje wybraną datę i obowiązujące dla niej warianty GTFS. 1 kursówka na stronę; do 4 przystanków pośrednich. Litery przy numerze linii są zgodne z oficjalną legendą wariantów (np. 2b, 8s, 18q) i są opisane w stopce strony. Zjazd jest zawsze osobnym wierszem ZJ — nie dopisujemy go do numeru linii. WY/PRZ/ZJ oznaczone ~ wynikają z reguł i nie mają potwierdzonych godzin ani zajezdni. Firma wg katalogu; wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
           {pdfError && <span role="alert" className="w-full text-[10px] font-semibold text-warning">{pdfError}</span>}
         </div>
       )}

@@ -3,6 +3,13 @@ import { DateTime } from "luxon";
 import { summariseBrigade } from "../brigadeMetrics";
 import { distanceCoords } from "../core/spatial";
 import { isTechnicalRoute } from "../core/text";
+import {
+  legendCodeForTrip,
+  legendLineLabel,
+  legendLines,
+  legendText,
+  lineLegend,
+} from "../lineLegend";
 import type { WalbrzychOperatorKey } from "../types";
 import { BRIGADE_ZONE, describeServiceIds, loadBrigades, loadBrigadeTrips, type BrigadeItem, type BrigadeTripView } from "./brigades";
 import { ensureGtfsSeeded, type GtfsLineItem, type GtfsStopTimeRecord } from "./gtfsStore";
@@ -105,13 +112,91 @@ export function timetablePdfSheets(duties: TimetablePdfDuty[]): Array<{ duty: Ti
   });
 }
 
-/** A direction can mention a depot return during a passenger trip. Preserve
- * its line number: this is not evidence of an additional technical movement. */
+const TECHNICAL_CODES = ["WY", "PRZ", "ZJ"];
+const isTechnicalLine = (lineId: string) =>
+  TECHNICAL_CODES.includes(lineId.trim().toUpperCase());
+
+/** „zjazd” w kierunku lub w opisie przystanku — nie osobny kurs techniczny. */
+const mentionsZjazd = (value: string | undefined) =>
+  /(?:^|[^\p{L}\p{N}])zjazd(?=$|[^\p{L}\p{N}])/iu.test(value ?? "");
+
+/**
+ * Czy kurs pasażerski kończy się zjazdem do zajezdni.
+ *
+ * Taki zjazd NIE jest dopisywany do numeru linii (żadnego „C/ZJ*”). Kurs
+ * dostaje samą linię, a zjazd jest zawsze osobnym wierszem `ZJ`.
+ */
+export function tripEndsInZjazd(row: TimetablePdfTrip): boolean {
+  if (isTechnicalLine(row.trip.lineId)) return false;
+  return (
+    mentionsZjazd(row.trip.destination) ||
+    row.stops.some((stop) => mentionsZjazd(stop.stopHeadsign))
+  );
+}
+
+/**
+ * Litera oficjalnego wariantu kursu (legenda linii, np. `b` na linii 2).
+ * Kurs bez litery jest kursem podstawowym.
+ */
+export function timetableVariantCode(row: TimetablePdfTrip): string {
+  if (isTechnicalLine(row.trip.lineId)) return "";
+  return legendCodeForTrip(row.trip.lineId, {
+    destination: row.trip.destination,
+    stops: row.stops.map((stop) => stop.name),
+  });
+}
+
+/** Numer linii na wydruku: sama linia (bez „/ZJ*”), plus litera wariantu. */
 export function timetableLineLabel(row: TimetablePdfTrip): string {
-  const isTechnical = ["WY", "PRZ", "ZJ"].includes(row.trip.lineId.trim().toUpperCase());
-  const hasZjazd = (value: string | undefined) => /(?:^|[^\p{L}\p{N}])zjazd(?=$|[^\p{L}\p{N}])/iu.test(value ?? "");
-  const marked = !isTechnical && (hasZjazd(row.trip.destination) || row.stops.some((stop) => hasZjazd(stop.stopHeadsign)));
-  return marked ? `${row.trip.lineId}/ZJ*` : row.trip.lineId;
+  return legendLineLabel(row.trip.lineId, timetableVariantCode(row));
+}
+
+/** Warianty użyte w kursówce — do legendy na wydruku (kolejność oficjalna). */
+export function timetableLegendRows(
+  duty: TimetablePdfDuty,
+): Array<{ line: string; code: string; text: string }> {
+  const seen = new Set<string>();
+  const rows: Array<{ line: string; code: string; text: string }> = [];
+  for (const row of duty.trips) {
+    const line = row.trip.lineId.trim();
+    if (isTechnicalLine(line)) continue;
+    const code = timetableVariantCode(row);
+    if (!code) continue;
+    const key = `${line.toUpperCase()}|${code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ line, code, text: legendText(line, code) });
+  }
+  const known = legendLines();
+  const lineOrder = (line: string) => {
+    const index = known.indexOf(line.trim().toUpperCase());
+    return index === -1 ? known.length : index;
+  };
+  const codeOrder = (line: string, code: string) => {
+    const index = (lineLegend(line) ?? []).findIndex((entry) => entry.code === code);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return rows.sort(
+    (a, b) =>
+      lineOrder(a.line) - lineOrder(b.line) ||
+      codeOrder(a.line, a.code) - codeOrder(b.line, b.code) ||
+      a.code.localeCompare(b.code, "pl"),
+  );
+}
+
+/** Jednolinijkowy opis legendy wariantów użytych w kursówce. */
+export function timetableLegendText(duty: TimetablePdfDuty): string {
+  const entries = timetableLegendRows(duty);
+  if (!entries.length) return "";
+  const grouped = new Map<string, string[]>();
+  for (const entry of entries) {
+    const items = grouped.get(entry.line) ?? [];
+    items.push(`${entry.code} – ${entry.text}`);
+    grouped.set(entry.line, items);
+  }
+  return `Legenda wariantów: ${[...grouped.entries()]
+    .map(([line, items]) => `${line}: ${items.join(", ")}`)
+    .join(" · ")}`;
 }
 
 /** Missing codes are a warning, not proof that each run should exist. */
@@ -127,9 +212,14 @@ export type TimetableDisplayRow =
   | { kind: "scheduled"; row: TimetablePdfTrip }
   | { kind: "inferred"; code: "WY" | "PRZ" | "ZJ"; from: string; to: string };
 
-/** Apply the planner's rules only to assigned duties. Inferred rows have no
+/**
+ * Apply the planner's rules only to assigned duties. Inferred rows have no
  * scheduled times or operator-specific depot: they are candidates to verify,
- * not GTFS trips. Real technical trips are never replaced or duplicated. */
+ * not GTFS trips. Real technical trips are never replaced or duplicated.
+ *
+ * Zjazd jest ZAWSZE osobnym wierszem `ZJ` — nigdy dopiskiem do numeru linii.
+ * Wiersz nie powstaje, gdy kurs i tak zaczyna się albo kończy na zajezdni.
+ */
 export function timetableDisplayRows(duty: TimetablePdfDuty): { rows: TimetableDisplayRow[]; missingCoordinates: boolean } {
   const trips = duty.trips;
   if (duty.item.unassigned || !trips.length) {
@@ -138,23 +228,30 @@ export function timetableDisplayRows(duty: TimetablePdfDuty): { rows: TimetableD
   const rows: TimetableDisplayRow[] = [];
   let missingCoordinates = false;
   const isDepot = (name: string) => /^zajezdnia$/iu.test(name.trim());
+  const firstStopName = (row: TimetablePdfTrip) => row.stops[0]?.name ?? row.trip.firstStop.name;
+  const lastStopName = (row: TimetablePdfTrip) => row.stops.at(-1)?.name ?? row.trip.lastStop.name;
+  const lineOf = (row: TimetablePdfTrip) => row.trip.lineId.trim().toUpperCase();
   const wy = (next: TimetablePdfTrip) => {
-    const name = next.stops[0]?.name ?? next.trip.firstStop.name;
-    rows.push({ kind: "inferred", code: "WY", from: "Zajezdnia (do ustalenia)", to: isDepot(name) ? "Do ustalenia (kurs z zajezdni)" : name });
+    const name = firstStopName(next);
+    // Kurs już zaczyna się na zajezdni: nie ma osobnego wyjazdu do dopisania.
+    if (isDepot(name)) return;
+    rows.push({ kind: "inferred", code: "WY", from: "Zajezdnia", to: name });
   };
   const zj = (prev: TimetablePdfTrip) => {
-    const name = prev.stops.at(-1)?.name ?? prev.trip.lastStop.name;
-    rows.push({ kind: "inferred", code: "ZJ", from: isDepot(name) ? "Do ustalenia (kurs w zajezdni)" : name, to: "Zajezdnia (do ustalenia)" });
+    const name = lastStopName(prev);
+    // Kurs kończy się na zajezdni: zjazd jest już w rozkładzie kursu.
+    if (isDepot(name)) return;
+    rows.push({ kind: "inferred", code: "ZJ", from: name, to: "Zajezdnia" });
   };
-  if (trips[0].trip.lineId.trim().toUpperCase() !== "WY") wy(trips[0]);
+  if (lineOf(trips[0]) !== "WY") wy(trips[0]);
   for (let i = 0; i < trips.length; i++) {
     const current = trips[i];
     if (i > 0) {
       const prev = trips[i - 1];
       const gap = current.trip.startMs - prev.trip.endMs;
       if (gap > 2 * 60 * 60_000) {
-        if (prev.trip.lineId.trim().toUpperCase() !== "ZJ") zj(prev);
-        if (current.trip.lineId.trim().toUpperCase() !== "WY") wy(current);
+        if (lineOf(prev) !== "ZJ") zj(prev);
+        if (lineOf(current) !== "WY") wy(current);
       } else if (!isTechnicalRoute(prev.trip.lineId) && !isTechnicalRoute(current.trip.lineId)) {
         const a = prev.trip.lastStop, b = current.trip.firstStop;
         if (!a.id || !b.id || a.id !== b.id) {
@@ -169,8 +266,12 @@ export function timetableDisplayRows(duty: TimetablePdfDuty): { rows: TimetableD
       }
     }
     rows.push({ kind: "scheduled", row: current });
+    // Kurs pasażerski z „zjazdem” w kierunku: zjazd jako osobny wiersz,
+    // bez zmiany numeru linii.
+    if (tripEndsInZjazd(current)) zj(current);
   }
-  if (trips[trips.length - 1].trip.lineId.trim().toUpperCase() !== "ZJ") zj(trips[trips.length - 1]);
+  const last = trips[trips.length - 1];
+  if (lineOf(last) !== "ZJ" && !tripEndsInZjazd(last)) zj(last);
   return { rows, missingCoordinates };
 }
 
@@ -216,6 +317,21 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     fitText(value, x + 0.7, y + height / 2 + size * 0.11, Math.max(0.1, width - 1.4), size);
   };
 
+  // Oficjalna legenda wariantów dla tej kursówki (maks. 2 linie u dołu strony).
+  const legendFooter = (duty: TimetablePdfDuty, width: number) => {
+    const text = timetableLegendText(duty);
+    if (!text) return { lines: [] as string[], size: 6 };
+    for (const size of [6, 5.6, 5.2, 4.8]) {
+      doc.setFontSize(size);
+      const lines = doc.splitTextToSize(text, width) as string[];
+      if (lines.length <= 2) return { lines, size };
+    }
+    doc.setFontSize(4.8);
+    const lines = (doc.splitTextToSize(text, width) as string[]).slice(0, 2);
+    lines[1] = `${lines[1]}…`;
+    return { lines, size: 4.8 };
+  };
+
   sheets.forEach(({ duty, part, parts }, index) => {
     if (index) doc.addPage();
     const number = duty.item.unassigned ? `Bez przypisanej kursówki${parts > 1 ? ` (${part}/${parts})` : ""}` : duty.item.number.replace(/-([0-9]+)$/, "/$1");
@@ -254,7 +370,8 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     cell("Przyj.", xs[12], headerY, ws[12], headerH, 7, true);
     const display = timetableDisplayRows(duty);
     const bodyTop = headerY + headerH;
-    const bodyBottom = pageH - 18;
+    const legend = legendFooter(duty, tableW - 24);
+    const bodyBottom = pageH - 18 - Math.max(0, legend.lines.length - 1) * 3.6;
     const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, display.rows.length));
     const fontSize = Math.min(7.5, rowHeight * 1.55);
     let y = bodyTop;
@@ -280,8 +397,17 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
       for (let i = 0; i < values.length; i++) cell(values[i], xs[i], y, ws[i], rowHeight, fontSize);
       y += rowHeight;
     }
+    legend.lines.forEach((line, lineIndex) => {
+      fitText(
+        line,
+        margin,
+        pageH - 16.6 - (legend.lines.length - 1 - lineIndex) * 3.6,
+        tableW - 24,
+        legend.size,
+      );
+    });
     fitText("WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, niepotwierdzone; godziny i zajezdnia do ustalenia.", margin, pageH - 13, tableW - 24, 6.3);
-    fitText(`*: zjazd w opisie kierunku GTFS, nie osobny przejazd. Do 4 przystanków pośrednich; od 24:00 następna doba.${display.missingCoordinates ? " Brak współrzędnych: PRZ mogą być niepełne." : ""}`, margin, pageH - 9, tableW - 24, 6.3);
+    fitText(`Zjazd zawsze osobnym wierszem (ZJ) — nie dopisujemy go do numeru linii. Do 4 przystanków pośrednich; od 24:00 następna doba.${display.missingCoordinates ? " Brak współrzędnych: PRZ mogą być niepełne." : ""}`, margin, pageH - 9, tableW - 24, 6.3);
     fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Podsumowanie bez wierszy ~; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
     if (data.notice) doc.createAnnotation({ type: "text", title: "Niepełne dane GTFS", contents: data.notice, bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 } });
     fitText(`${index + 1} / ${sheets.length}`, pageW - margin - 18, pageH - 5, 18, 6.3);

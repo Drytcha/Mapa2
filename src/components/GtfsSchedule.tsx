@@ -96,7 +96,10 @@ function LineDepartures({
                 const past =
                   d.atMs + (d.isRealtime ? d.delaySeconds * 1000 : 0) < now;
                 const suffix = direction.suffix ? direction.suffix : "";
-                const label = `Linia ${group.line}, ${d.clock}${suffix}, kierunek ${direction.label}${direction.main ? " (główny)" : ""}${d.isRealtime ? `, GPS ${describeDelay(d.delaySeconds)}` : ""}`;
+                const variant = direction.legendText
+                  ? ` (${direction.legendText})`
+                  : "";
+                const label = `Linia ${group.line}, ${d.clock}${suffix}, kierunek ${direction.label}${variant}${direction.main ? " (główny)" : ""}${d.isRealtime ? `, GPS ${describeDelay(d.delaySeconds)}` : ""}`;
                 return (
                   <button
                     key={key}
@@ -144,7 +147,9 @@ function LineDepartures({
                 aria-label={
                   direction.main
                     ? `Kierunek główny: ${direction.label}`
-                    : `${direction.suffix} → ${direction.label}`
+                    : direction.suffix
+                      ? `${direction.suffix} → ${direction.legendText ?? direction.label}`
+                      : `Kierunek: ${direction.label}`
                 }
               >
                 {direction.main ? (
@@ -164,17 +169,23 @@ function LineDepartures({
                   </>
                 ) : (
                   <>
-                    <b className="shrink-0 font-mono font-bold text-brand-ink">
-                      {direction.suffix}
-                    </b>
+                    {direction.suffix ? (
+                      <b className="shrink-0 font-mono font-bold text-brand-ink">
+                        {direction.suffix}
+                      </b>
+                    ) : (
+                      <span className="shrink-0 text-mute" aria-hidden="true">
+                        •
+                      </span>
+                    )}
                     <span className="shrink-0 text-mute" aria-hidden="true">
                       →
                     </span>
                     <span
-                      className="max-w-[112px] truncate"
+                      className="max-w-[176px] truncate"
                       title={direction.label}
                     >
-                      {direction.label}
+                      {direction.legendText ?? direction.label}
                     </span>
                   </>
                 )}
@@ -194,7 +205,7 @@ function LineDepartures({
               {detail.departure.clock}
               {detail.direction.suffix}
               {" → "}
-              {detail.direction.label}
+              {detail.direction.legendText ?? detail.direction.label}
               {detail.direction.main && group.directions.length > 1 && (
                 <span className="ml-1 rounded bg-surface px-1 py-0.5 text-[8px] font-bold text-mute ring-1 ring-line">
                   kierunek główny
@@ -210,6 +221,11 @@ function LineDepartures({
               <X className="h-3 w-3" />
             </button>
           </div>
+          {detail.direction.legendText && (
+            <p className="text-ink-soft">
+              Kierunek: {detail.direction.label}
+            </p>
+          )}
           {detail.departure.isRealtime ? (
             <p className="text-brand-ink">
               GPS: {formatDelay(detail.departure.delaySeconds)} · przewidywany{" "}
@@ -620,8 +636,9 @@ export default function GtfsSchedule({
       )}
       {shownMatched && (
         <p className="mt-1.5 text-[7px] leading-snug text-mute">
-          Litery = kierunki odchyleń; kierunek główny bez litery. Kliknij
-          godzinę po szczegóły{onPreviewCourse && source !== "fallback" ? " i przebieg kursu na mapie" : ""}. Czas polski.
+          Litery wg oficjalnej legendy linii (np. b – kurs przedłużony do
+          Boguszowa-Gorc); kurs bez litery = kurs podstawowy. Kliknij godzinę po
+          szczegóły{onPreviewCourse && source !== "fallback" ? " i przebieg kursu na mapie" : ""}. Czas polski.
         </p>
       )}
     </section>

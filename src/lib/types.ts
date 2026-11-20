@@ -257,6 +257,10 @@ export interface StopDepartureItem {
   routeLong: string;
   headsign: string;
   finalStop: string;
+  /** Litera oficjalnego wariantu z legendy linii (np. „b”, „*”); "" = kurs podstawowy. */
+  legendCode?: string;
+  /** Oficjalny opis wariantu z legendy linii, np. „kurs przedłużony do Boguszowa-Gorc”. */
+  legendText?: string;
   direction: number;
   minutes: number;
   atMs: number;

@@ -96,3 +96,61 @@ Mając prawdziwą paczkę, można dodatkowo uruchomić
 `REAL_GTFS_ZIP=src/assets/walbrzych-gtfs.zip npm run test:stops:real`. Test sprawdza
 widoczny i klikalny przystanek oraz godzinę odjazdu względem plików CSV paczki na
 ekranie komputera i telefonu. Paczka musi obejmować bieżący dzień.
+
+## Oficjalna legenda wariantów linii (jedno źródło prawdy)
+
+Dotąd litery przy godzinach były **zgadywane** z pierwszej litery nazwy kierunku
+(`11:25g → Głuszyca`), więc te same kursy miały różne oznaczenia w różnych
+miejscach. Teraz litery pochodzą z jednej tabeli: `src/lib/lineLegend.ts`.
+
+| Linia | Legenda |
+| ----- | ------- |
+| 2  | b – kurs przedłużony do Boguszowa-Gorc · k – do Kuźnic · d – do Dzikowca przez Kuźnice · p – tylko do Placu Grunwaldzkiego · v – przez Galerię Victoria |
+| 5  | \* – do Głuszycy Górnej przez Jedlinę-Zdrój · ^ – przez Jedlinę-Zdrój (Uzdrowisko) · e – do Głuszycy przez Jedlinę-Zdrój · u – do Jedliny-Zdroju /Uzdrowisko/ · k – do ul. Kolejowej w Szczawnie-Zdroju |
+| 8  | a – przez Al. Podwale · l – do Lubiechowa · z – do Zamku Książ przez Lubiechów · d – do Dworca Miasto · g – przez St. Bogaczowice do Gostkowa · s – do Strugi · y – do Gostkowa przez Chwaliszów i Stare Bogaczowice |
+| 9  | s – przez ul. Sokołowskiego - Szpital |
+| 12 | a – do Andrzejówki · d – do Dworca Głównego PKP · p – tylko do Śródmieścia |
+| 15 | p – tylko do Placu Grunwaldzkiego · t – przez ul. Batorego · a – przez Sokołowsko, Mieroszów do Golińska · b – przez ul. Beethovena · m – przez Sokołowsko do Mieroszowa · z – do ul. Beethovena (MZUK) |
+| 18 | q – do ul. Ratuszowej /Aqua Zdroju/ · j – do ul. Uczniowskiej i ul. Jachimowicza · m – (Mando) · r – (Ronal) · t – (Toyota) · u – (Urząd Skarbowy) |
+| 19 | s – przez ul. Sokołowskiego - Szpital |
+| A  | a – przez Auchan · s – przez ul. Sokołowskiego - Szpital |
+| C  | a – przez Auchan · v – przez Galerię Victoria |
+| EX | v – przez Galerię Victoria |
+
+**Jak rozpoznawany jest wariant.** Po kierunku kursu (`trip_headsign` / ostatni
+przystanek) *oraz* po przystankach na trasie — warianty „przez …” (Galeria
+Victoria, Al. Podwale, Auchan, Szpital, Batorego, Beethovena, Chwaliszów,
+Uzdrowisko) nie da się odróżnić samą nazwą celu. Kurs bez litery jest kursem
+podstawowym. Rozkład awaryjny zbiorkom.live nie podaje pełnej trasy, więc
+rozpoznaje tylko warianty wynikające z kierunku — nie dopisuje liter „na
+wyczucie”. Linie spoza tabeli zachowują dotychczasowy podział (kierunek główny
++ odchylenia) i nie dostają wymyślonych liter.
+
+Gdzie to działa:
+
+- **rozkład na przystanku** – litery przy godzinach i legenda pod linią pokazują
+  oficjalny opis wariantu (np. `b → kurs przedłużony do Boguszowa-Gorc`),
+  szczegóły odjazdu podają dodatkowo kierunek,
+- **podgląd kursu** – plakietka `2b` i opis wariantu,
+- **wydruk kursówki (PDF)** – kolumna *Linia* pokazuje numer z literą (`2b`, `8s`,
+  `18q`), a stopka każdej strony zawiera legendę **tylko użytych** wariantów,
+- **opis funkcji w Pomocy** – zaktualizowany do oficjalnej legendy.
+
+## Zjazd zawsze osobno, bez „C/ZJ*”
+
+- Numer linii na wydruku to **samo oznaczenie linii** (C, 8, 2…). Zjazd nie jest
+  już dopisywany do numeru kursu w postaci `C/ZJ*`.
+- Kurs, którego kierunek lub opis przystanku mówi o zjeździe, dostaje **osobny
+  wiersz `ZJ`** zaraz po sobie (`Plac Grunwaldzki → Zajezdnia`). Ten sam kurs
+  pozostaje kursem pasażerskim — nie zmieniamy klasyfikacji ani kilometrażu.
+- Zajezdnia nazywa się po prostu **„Zajezdnia”** (wcześniej „Zajezdnia (do
+  ustalenia)”, a przy braku potwierdzenia „Do ustalenia (kurs z zajezdni)”).
+  Wiersz wyjazdu/zjazdu nie powstaje, gdy kurs i tak zaczyna się lub kończy na
+  zajezdni.
+- Stopka wydruku mówi wprost: „Zjazd zawsze osobnym wierszem (ZJ) — nie
+  dopisujemy go do numeru linii”.
+
+Testy: `npm run test:legend` (pełna tabela legendy + rozpoznawanie wariantów +
+litera na wydruku), `npm run test:stops` (litery w rozkładzie przystanku
+z prawdziwego indeksu GTFS) oraz `npm run test:duty-pdf` (osobny wiersz ZJ,
+brak `linia/ZJ*`, nazwa „Zajezdnia”).

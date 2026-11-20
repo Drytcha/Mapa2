@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
 import { getGtfsLines, ensureGtfsSeeded } from "../src/lib/engine/gtfsStore";
-import { collectTimetablePdfData, createTimetablePdf, timetableLineLabel, technicalTripsNote } from "../src/lib/engine/dutyTimetablePdf";
+import { collectTimetablePdfData, createTimetablePdf, timetableDisplayRows, timetableLineLabel, technicalTripsNote } from "../src/lib/engine/dutyTimetablePdf";
 
 // The uploaded 387/388 feed uses both trip_headsign and stop_headsign for
 // "Zjazd" on passenger trips. Include a stop-level label outside the four
@@ -23,12 +23,25 @@ const store = await ensureGtfsSeeded();
 assert.equal(store.base.rawStopTimesByTrip.get("marked-stop")?.[2].stopHeadsign, "PLAC GRUNWALDZKI Zjazd");
 const data = await collectTimetablePdfData(routes, "20261120", { kind: "line", line: "11" });
 const duty = data.duties[0];
+
+// Zjazd NIGDY nie trafia do numeru linii ("11/ZJ*" jest zakazane).
 assert.deepEqual(duty.trips.map((row) => [row.trip.id, row.trip.lineId, timetableLineLabel(row)]), [
-  ["marked-stop", "11", "11/ZJ*"], ["marked-trip", "11", "11/ZJ*"], ["regular", "11", "11"],
+  ["marked-stop", "11", "11"], ["marked-trip", "11", "11"], ["regular", "11", "11"],
 ]);
+
+// Zamiast dopisku — osobny wiersz ZJ po kursie, który kończy się zjazdem.
+const rows = timetableDisplayRows(duty).rows.map((row) => row.kind === "inferred" ? `${row.code}~` : row.row.trip.id);
+assert.deepEqual(rows, [
+  "WY~", "marked-stop", "ZJ~", "marked-trip", "ZJ~", "regular", "ZJ~",
+]);
+assert.ok(rows.every((row) => !row.includes("/ZJ")), "no depot return bolted onto the line number");
+const inferred = timetableDisplayRows(duty).rows.filter((row) => row.kind === "inferred");
+assert.ok(inferred.every((row) => row.kind === "inferred" && [row.from, row.to].includes("Zajezdnia")));
+assert.ok(inferred.every((row) => !/do ustalenia/i.test(`${row.kind === "inferred" ? row.from + row.to : ""}`)), "depot is simply „Zajezdnia”");
+
 assert.equal(duty.item.metrics.revenueTrips, 3);
 assert.equal(duty.item.metrics.technicalTrips, 0);
 assert.match(technicalTripsNote(duty), /Brak osobnych przejazdów technicznych w danych: WY, PRZ, ZJ/);
 assert.equal((await createTimetablePdf(data)).getNumberOfPages(), 1);
 assert.equal(timetableLineLabel({ ...duty.trips[2], trip: { ...duty.trips[2].trip, destination: "Zjazdowa", lineId: "11" } }), "11");
-console.log("GTFS direction zjazd is marked without creating or reclassifying trips");
+console.log("GTFS direction zjazd becomes a separate ZJ row, never „line/ZJ*”");
