@@ -7,11 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts && tsx scripts/test-schedule-fallback.ts && tsx scripts/test-stop-merging.ts",
+    "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts && tsx scripts/test-schedule-fallback.ts && tsx scripts/test-stop-merging.ts && tsx scripts/test-stop-legend.ts",
     "test:stops:e2e": "node scripts/test-stop-map.mjs",
     "test:stops:build": "node scripts/test-stop-production.mjs",
     "test:stops:real": "tsx scripts/test-stop-real.ts",
-    "test:duty-pdf": "tsx scripts/test-duty-pdf.ts && tsx scripts/test-duty-pdf-ui.tsx && tsx scripts/test-technical-duty.ts && tsx scripts/test-gtfs-zjazd.ts && tsx scripts/test-inferred-duty.ts && tsx scripts/test-duty-pdf-days.ts"
+    "test:duty-pdf": "tsx scripts/test-line-legend.ts && tsx scripts/test-duty-pdf.ts && tsx scripts/test-duty-pdf-ui.tsx && tsx scripts/test-technical-duty.ts && tsx scripts/test-gtfs-zjazd.ts && tsx scripts/test-inferred-duty.ts && tsx scripts/test-duty-pdf-days.ts",
+    "test:legend": "tsx scripts/test-line-legend.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",

@@ -1,4 +1,5 @@
 import { foldStopKey } from "./core/text";
+import { hasLineLegend, legendCodeForTrip, legendText, lineLegend } from "./lineLegend";
 import type { StopDepartureItem } from "./types";
 
 export interface DepartureDirection {
@@ -10,6 +11,8 @@ export interface DepartureDirection {
   main: boolean;
   /** Liczba odjazdów w pełnym dniu (przed filtrowaniem czasu i linii). */
   count: number;
+  /** Oficjalny opis wariantu z legendy linii (bez litery). */
+  legendText?: string;
 }
 
 export interface DepartureLineGroup {
@@ -47,7 +50,26 @@ const pickLabel = (labels: Map<string, number>) =>
       bCount - aCount || aLabel.localeCompare(bLabel, "pl"),
   )[0]?.[0] ?? "Nieznany kierunek";
 
-/** Codes come from the whole day's destinations, before time/line filtering. */
+/** Litera wariantu: z GTFS (pełna trasa) albo z kierunku, gdy trasa nieznana. */
+const departureLegendCode = (departure: StopDepartureItem) => {
+  if (typeof departure.legendCode === "string") return departure.legendCode;
+  // Źródło bez pełnej trasy (np. rozkład awaryjny): rozpoznajemy tylko
+  // warianty końcowe, żeby nie dopisywać liter „na wyczucie”.
+  return legendCodeForTrip(departure.routeShort, {
+    destination: departure.finalStop,
+    headsign: departure.headsign,
+  });
+};
+
+/**
+ * Grupowanie odjazdów przystanku według linii i wariantów.
+ *
+ * Dla linii z oficjalną legendą litery pochodzą wyłącznie z tej legendy
+ * (2b, 5*, 8s, 18q, …), a kurs bez litery jest kursem podstawowym. Dla
+ * pozostałych linii zachowany jest dotychczasowy podział na kierunek główny
+ * i odchylenia. Warianty liczymy z całego dnia, przed filtrowaniem godziny
+ * i wybranej linii.
+ */
 export function groupDeparturesByLine(
   departures: StopDepartureItem[],
 ): DepartureLineGroup[] {
@@ -65,16 +87,25 @@ export function groupDeparturesByLine(
     .sort(([a], [b]) => a.localeCompare(b, "pl", { numeric: true }))
     .map(([line, items]) => {
       items.sort((a, b) => a.atMs - b.atMs || a.tripId.localeCompare(b.tripId));
+      const official = hasLineLegend(line);
+      const legendOrder = lineLegend(line)?.map((entry) => entry.code) ?? [];
       const stats = new Map<
         string,
-        { count: number; labels: Map<string, number> }
+        { count: number; labels: Map<string, number>; code: string }
       >();
       for (const d of items) {
         const label = cleanLabel(
           d.finalStop || d.headsign || "Nieznany kierunek",
         );
-        const key = directionKey(label);
-        const entry = stats.get(key) ?? { count: 0, labels: new Map() };
+        const code = official ? departureLegendCode(d) : "";
+        // Linia z legendą grupuje kursy po literze wariantu; kursy podstawowe
+        // mogą mieć kilka różnych kierunków, więc kluczem jest kierunek.
+        const key = official
+          ? code
+            ? `wariant|${code}`
+            : `podstawowy|${directionKey(label)}`
+          : directionKey(label);
+        const entry = stats.get(key) ?? { count: 0, labels: new Map(), code };
         entry.count += 1;
         entry.labels.set(label, (entry.labels.get(label) ?? 0) + 1);
         stats.set(key, entry);
@@ -85,27 +116,70 @@ export function groupDeparturesByLine(
           key,
           label: pickLabel(entry.labels),
           count: entry.count,
+          code: entry.code,
         }))
         .sort(
           (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pl"),
         );
 
-      // Jeden kierunek to cały rozkład. Przy wielu kierunkach literę dostają
-      // tylko odchylenia; stały, dominujący kierunek zostaje bez litery.
-      const hasDominant =
-        ranked.length > 1 &&
-        ranked[0].count >= MIN_DOMINANT_DEPARTURES &&
-        ranked[0].count / items.length >= DOMINANT_SHARE &&
-        ranked[0].count > ranked[1].count;
-      const mainKey = hasDominant
-        ? ranked[0].key
-        : ranked.length === 1
-          ? ranked[0].key
+      let directions: DepartureDirection[];
+      if (official) {
+        // Kurs podstawowy (bez litery) jest głównym kierunkiem; jeśli takiego
+        // nie ma, wszystkie kursy mają litery z legendy.
+        const base = ranked.filter((entry) => !entry.code);
+        const variants = ranked.filter((entry) => entry.code);
+        const mainKey = base.length
+          ? base.reduce((best, entry) => (entry.count > best.count ? entry : best)).key
           : null;
+        directions = [
+          ...base.map((entry) => ({
+            key: entry.key,
+            label: entry.label,
+            suffix: "",
+            main: entry.key === mainKey,
+            count: entry.count,
+            legendText: undefined,
+          })),
+          ...variants
+            .sort(
+              (a, b) =>
+                legendOrder.indexOf(a.code) - legendOrder.indexOf(b.code) ||
+                a.code.localeCompare(b.code, "pl"),
+            )
+            .map((entry) => ({
+              key: entry.key,
+              label: entry.label,
+              suffix: entry.code,
+              main: false,
+              count: entry.count,
+              legendText: legendText(line, entry.code),
+            })),
+        ];
+        // Główny kierunek na początku, potem pozostałe kursy podstawowe,
+        // na końcu warianty w kolejności oficjalnej legendy.
+        directions.sort((a, b) => {
+          if (a.main !== b.main) return a.main ? -1 : 1;
+          const aVariant = Boolean(a.suffix);
+          const bVariant = Boolean(b.suffix);
+          if (aVariant !== bVariant) return aVariant ? 1 : -1;
+          return 0;
+        });
+      } else {
+        // Jeden kierunek to cały rozkład. Przy wielu kierunkach literę dostają
+        // tylko odchylenia; stały, dominujący kierunek zostaje bez litery.
+        const hasDominant =
+          ranked.length > 1 &&
+          ranked[0].count >= MIN_DOMINANT_DEPARTURES &&
+          ranked[0].count / items.length >= DOMINANT_SHARE &&
+          ranked[0].count > ranked[1].count;
+        const mainKey = hasDominant
+          ? ranked[0].key
+          : ranked.length === 1
+            ? ranked[0].key
+            : null;
 
-      const used = new Set<string>();
-      const directions: DepartureDirection[] = ranked.map(
-        ({ key, label, count }) => {
+        const used = new Set<string>();
+        directions = ranked.map(({ key, label, count }) => {
           if (key === mainKey) {
             return { key, label, suffix: "", main: true, count };
           }
@@ -115,12 +189,12 @@ export function groupDeparturesByLine(
           while (used.has(suffix)) suffix = `${letter}${number++}`;
           used.add(suffix);
           return { key, label, suffix, main: false, count };
-        },
-      );
-      directions.sort((a, b) => {
-        if (a.main !== b.main) return a.main ? -1 : 1;
-        return a.label.localeCompare(b.label, "pl");
-      });
+        });
+        directions.sort((a, b) => {
+          if (a.main !== b.main) return a.main ? -1 : 1;
+          return a.label.localeCompare(b.label, "pl");
+        });
+      }
 
       const byKey = new Map(
         directions.map((direction) => [direction.key, direction]),
@@ -130,18 +204,18 @@ export function groupDeparturesByLine(
         color: items[0].routeColor,
         textColor: items[0].routeTextColor,
         directions,
-        departures: items.map((departure) => ({
-          departure,
-          direction: byKey.get(
-            directionKey(
-              cleanLabel(
-                departure.finalStop ||
-                  departure.headsign ||
-                  "Nieznany kierunek",
-              ),
-            ),
-          )!,
-        })),
+        departures: items.map((departure) => {
+          const label = cleanLabel(
+            departure.finalStop || departure.headsign || "Nieznany kierunek",
+          );
+          const code = official ? departureLegendCode(departure) : "";
+          const key = official
+            ? code
+              ? `wariant|${code}`
+              : `podstawowy|${directionKey(label)}`
+            : directionKey(label);
+          return { departure, direction: byKey.get(key)! };
+        }),
       };
     });
 }

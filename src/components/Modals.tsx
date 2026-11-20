@@ -834,7 +834,7 @@ export function SettingsDialog({
             ],
             [
               "Przystanki — rozkład Wałbrzych",
-              "Wyłącznie czynne przystanki z aktualnego rozkładu GTFS. Po kliknięciu przystanku godziny są pogrupowane według linii. Główny, najczęstszy kierunek linii (np. Bystrzycka końcowy) jest pokazany bez litery; litery oznaczają tylko odchylenia (np. 11:25g, g → Głuszyca). Jeśli nie ma wyraźnie dominującego kierunku, każdy kierunek dostaje literę. Legenda znajduje się pod linią, a oznaczenia są aplikacji, nie oficjalnymi symbolami kursów. Wybierz dzień lub tryb Od teraz. Kliknięcie godziny pokazuje kierunek, prognozę GPS, wóz i kursówkę, jeśli są dostępne.",
+              "Wyłącznie czynne przystanki z aktualnego rozkładu GTFS. Po kliknięciu przystanku godziny są pogrupowane według linii. Litery przy godzinach są zgodne z oficjalną legendą wariantów linii (np. 2: b – kurs przedłużony do Boguszowa-Gorc, k – do Kuźnic, v – przez Galerię Victoria; 5: * – do Głuszycy Górnej, ^ – przez Jedlinę-Zdrój (Uzdrowisko); 8: s – do Strugi; 18: q – do ul. Ratuszowej /Aqua Zdroju/). Kurs bez litery jest kursem podstawowym. Wariant jest rozpoznawany po kierunku i trasie kursu, a nie po pierwszej literze nazwy celu. Legenda użytych liter jest pod każdą linią, także na wydruku kursówki. Wybierz dzień lub tryb Od teraz. Kliknięcie godziny pokazuje kierunek, prognozę GPS, wóz i kursówkę, jeśli są dostępne.",
             ],
             [
               "Sygnalizacja świetlna i korki",

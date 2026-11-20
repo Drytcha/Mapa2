@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { formatWarsawClock } from "@/lib/core/time";
 import type { CoursePreview } from "@/lib/engine/gtfsStore";
+import { legendCodeForTrip, legendLineLabel, legendText } from "@/lib/lineLegend";
 import { OPERATOR_STYLES } from "@/lib/transit";
 
 interface Props {
@@ -32,6 +33,12 @@ export default function CoursePreviewCard({
   const [collapsed, setCollapsed] = useState(false);
   const operator = OPERATOR_STYLES[course.operatorKey];
   const dateLabel = `${course.dateId.slice(6, 8)}.${course.dateId.slice(4, 6)}.${course.dateId.slice(0, 4)}`;
+  // Oficjalna legenda linii: litera wariantu wynika z kierunku i trasy kursu.
+  const variantCode = legendCodeForTrip(course.routeShort, {
+    destination: course.headsign,
+    stops: course.stops.map((stop) => stop.name),
+  });
+  const variantText = legendText(course.routeShort, variantCode);
 
 
   return (
@@ -71,7 +78,20 @@ export default function CoursePreviewCard({
           <div className="min-w-0 flex-1">
             <p className="truncate text-[10px] font-extrabold text-ink" title={course.headsign}>
               {course.headsign}
+              {variantCode && (
+                <span
+                  className="ml-1 rounded bg-brand-soft px-1 py-0.5 font-mono text-[8px] font-extrabold text-brand-ink"
+                  title={variantText}
+                >
+                  {legendLineLabel(course.routeShort, variantCode)}
+                </span>
+              )}
             </p>
+            {variantText && (
+              <p className="truncate text-[8px] font-semibold text-brand-ink/80" title={variantText}>
+                {variantText}
+              </p>
+            )}
             <p className="truncate text-[8px] font-semibold text-mute">
               {course.stops[0].name} → {course.stops[course.stops.length - 1].name}
             </p>

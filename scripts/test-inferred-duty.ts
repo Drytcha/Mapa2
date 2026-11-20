@@ -35,9 +35,21 @@ assert.deepEqual(sequence(duty([explicitWy, first, explicitZJ, next])), ["real-w
 const explicitPrz = row("real-prz", 385, 395, b, far, "PRZ");
 assert.deepEqual(sequence(duty([first, explicitPrz, row("next", 400, 420, far, a)])), ["WY", "first", "real-prz", "next", "ZJ"], "do not duplicate an explicit technical transfer");
 assert.deepEqual(sequence(duty([first, explicitZJ, row("real-wy2", 590, 600, a, a, "WY"), next])), ["WY", "first", "real-zj", "real-wy2", "next", "ZJ"], "do not duplicate explicit ZJ/WY around a long break");
-const depot = stop("Zajezdnia", 50);
-const depotRows = timetableDisplayRows(duty([row("depot-trip", 500, 510, depot, depot)])).rows;
+// Zajezdnia nazywa się po prostu „Zajezdnia” — bez „(do ustalenia)”.
+const depotRows = timetableDisplayRows(duty([first, row("last", 500, 520, b, a)])).rows;
 assert.deepEqual(depotRows.map((r) => r.kind === "inferred" ? [r.code, r.from, r.to] : r.row.trip.id), [
-  ["WY", "Zajezdnia (do ustalenia)", "Do ustalenia (kurs z zajezdni)"], "depot-trip", ["ZJ", "Do ustalenia (kurs w zajezdni)", "Zajezdnia (do ustalenia)"],
+  ["WY", "Zajezdnia", "A"], "first", "last", ["ZJ", "A", "Zajezdnia"],
 ]);
+// Kurs, który zaczyna się i kończy na zajezdni, nie dostaje sztucznych WY/ZJ.
+const depot = stop("Zajezdnia", 50);
+const depotRowsSelf = timetableDisplayRows(duty([row("depot-trip", 500, 510, depot, depot)])).rows;
+assert.deepEqual(depotRowsSelf.map((r) => r.kind === "inferred" ? [r.code, r.from, r.to] : r.row.trip.id), [
+  "depot-trip",
+]);
+// Zjazd z opisu kierunku jest osobnym wierszem ZJ (bez „linia/ZJ*”).
+const zjazdTrip = { ...row("marked", 500, 520, b, a), trip: { ...row("marked", 500, 520, b, a).trip, destination: "A Zjazd" } };
+const zjazdRows = timetableDisplayRows(duty([first, zjazdTrip])).rows;
+assert.deepEqual(zjazdRows.map((r) => r.kind === "inferred" ? r.code : r.row.trip.id), [
+  "WY", "first", "marked", "ZJ",
+], "zjazd is a separate row, not a suffix on the line");
 console.log("inferred WY/PRZ/ZJ candidate placement and boundaries passed");

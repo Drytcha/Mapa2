@@ -10,6 +10,7 @@ import {
   type LineEntry,
   type LineVariant,
 } from "@/lib/engine/lineRoutes";
+import { lineLegend } from "@/lib/lineLegend";
 import { cn } from "@/utils/cn";
 import type { KursowkaShapeOverlay } from "./MapView";
 import { Dialog } from "./Modals";
@@ -460,6 +461,26 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
                       );
                     })}
                   </ul>
+                  {lineLegend(selected.shortName) && (
+                    <div
+                      data-testid="line-legend"
+                      className="mt-2 rounded-lg border border-line bg-raised/60 px-2 py-1.5"
+                    >
+                      <h4 className="mb-1 text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                        Oficjalna legenda wariantów
+                      </h4>
+                      <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] leading-snug text-ink-soft">
+                        {lineLegend(selected.shortName)!.map((entry) => (
+                          <li key={entry.code} className="flex min-w-0 items-baseline gap-1">
+                            <b className="font-mono font-extrabold text-brand-ink">{entry.code}</b>
+                            <span aria-hidden="true" className="text-mute">–</span>
+                            <span>{entry.text}</span>
+                          </li>
+                        ))}
+                        <li className="text-mute">kurs bez litery – kurs podstawowy</li>
+                      </ul>
+                    </div>
+                  )}
                   {selected.variants.length > VARIANTS_COLLAPSED && (
                     <button
                       type="button"

@@ -14,6 +14,7 @@ import {
   WARSAW_ZONE,
 } from "../core/time";
 import { formatVehicleNumber } from "../delay";
+import { legendCodeForTrip, legendText, lineLegendNeedsStops } from "../lineLegend";
 import { assetUrl } from "../services";
 import { normalizeDutyCode, serviceForDate } from "../transit";
 import type {
@@ -1614,6 +1615,44 @@ export async function getDutyDetail(options: {
   };
 }
 
+/**
+ * Litera i opis oficjalnego wariantu kursu (legenda linii).
+ *
+ * Lista przystanków jest potrzebna tylko dla wariantów „przez …”; wynik jest
+ * liczony raz na kurs i trzymany przy danym archiwum GTFS (WeakMap czyści się
+ * razem ze starym feedem). Brak trasy nie tworzy litery: kurs zostaje
+ * podstawowy, zamiast zgadywać kierunek z pierwszej litery nazwy.
+ */
+const legendCacheByBase = new WeakMap<
+  ParsedArchiveBase,
+  Map<string, { code: string; text: string }>
+>();
+
+function tripLegend(
+  base: ParsedArchiveBase,
+  rawTripId: string,
+  line: string,
+  destination: string,
+  headsign: string,
+): { code: string; text: string } {
+  let cache = legendCacheByBase.get(base);
+  if (!cache) {
+    cache = new Map();
+    legendCacheByBase.set(base, cache);
+  }
+  const hit = cache.get(rawTripId);
+  if (hit) return hit;
+  const stops = lineLegendNeedsStops(line)
+    ? (base.rawStopTimesByTrip.get(rawTripId) ?? []).map(
+        (st) => base.stopsById.get(st.stopId)?.name ?? base.stopNamesById.get(st.stopId) ?? "",
+      )
+    : undefined;
+  const code = legendCodeForTrip(line, { destination, headsign, stops });
+  const value = { code, text: legendText(line, code) };
+  cache.set(rawTripId, value);
+  return value;
+}
+
 export async function getStopDepartures(options: {
   lat: number;
   lon: number;
@@ -1841,6 +1880,7 @@ export async function getStopDepartures(options: {
 
       const finalStop =
         row.headsign || row.lastStopName || route?.longName || "Końcowy";
+      const legend = tripLegend(store.base, row.rawTripId, routeShort, finalStop, row.headsign);
 
       results.push({
         tripId: row.tripId,
@@ -1860,6 +1900,8 @@ export async function getStopDepartures(options: {
         routeLong: route?.longName ?? "",
         headsign: row.headsign,
         finalStop,
+        legendCode: legend.code,
+        legendText: legend.text,
         direction: row.directionId,
         minutes: row.departureMinutes,
         atMs,
