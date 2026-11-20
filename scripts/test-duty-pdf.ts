@@ -59,10 +59,11 @@ if (process.env.DUTY_PDF_TEST_DENSE_OUTPUT) {
 }
 assert.equal(densePdf.getNumberOfPages(), 1, "dense duty and warning must not create another page");
 const pages = densePdf.internal.pages as unknown as string[][];
-// Six summary boxes, six shaded header cells (background + border), one
-// background for every other row and thirteen bordered cells per row.
+// Six summary boxes, seven shaded header cells (background + border), one
+// background for every other row and fourteen bordered cells per row
+// (Linia | Uwagi | Godz. | Początek | 4× pośrednie | Koniec | Przyj.).
 const denseRowCount = timetableDisplayRows(dense.duties[0]).rows.length;
-assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 6 + 12 + Math.floor(denseRowCount / 2) + 13 * denseRowCount);
+assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 6 + 14 + Math.floor(denseRowCount / 2) + 14 * denseRowCount);
 // Full-width fills must be on the second, fourth, ... course only. The
 // header is already shaded; do not shade the first course too.
 const stripeRects = (page: string[]) => page.filter((instruction) => {

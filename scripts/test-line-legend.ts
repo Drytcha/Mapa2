@@ -3,11 +3,12 @@ import { groupDeparturesByLine } from "../src/lib/departureGroups";
 import {
   hasLineLegend,
   legendCodeForTrip,
+  legendCodesForTrip,
   legendLines,
   legendText,
   lineLegend,
 } from "../src/lib/lineLegend";
-import { timetableFullLegendRows, timetableLegendRows, timetableLegendText, timetableLineLabel, timetablePrintLegendText, timetableVariantCode, type TimetablePdfTrip } from "../src/lib/engine/dutyTimetablePdf";
+import { timetableFullLegendRows, timetableLegendRows, timetableLegendText, timetableLineLabel, timetablePrintLegendText, timetableVariantCode, timetableVariantCodes, timetableVariantLetters, type TimetablePdfTrip } from "../src/lib/engine/dutyTimetablePdf";
 import type { BrigadeTripView } from "../src/lib/engine/brigades";
 import type { TimetablePdfDuty } from "../src/lib/engine/dutyTimetablePdf";
 import type { StopDepartureItem } from "../src/lib/types";
@@ -41,8 +42,10 @@ const SPEC: Record<string, Array<[string, string]>> = {
     ["y", "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice"],
   ],
   "9": [
+    ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
     ["a", "kurs do przystanku Podwale - Forteczna"],
     ["d", "kurs do Dworca Szczawienko"],
+    ["s", "kurs przez ul. Sokołowskiego /szpital/"],
     ["c", "kurs do ul. Jachimowicza"],
     ["j", "kurs do ul. Jachimowicza (Faurecia)"],
   ],
@@ -68,8 +71,10 @@ const SPEC: Record<string, Array<[string, string]>> = {
     ["u", "kurs do ul. Uczniowskiej (Urząd Skarbowy)"],
   ],
   "19": [
+    ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
     ["a", "kurs do przystanku Podwale - Forteczna"],
     ["d", "kurs do Dworca Szczawienko"],
+    ["s", "kurs przez ul. Sokołowskiego /szpital/"],
     ["c", "kurs do ul. Jachimowicza"],
     ["j", "kurs do ul. Jachimowicza (Faurecia)"],
   ],
@@ -151,7 +156,31 @@ assert.equal(code("19", "Aleja Podwale - Forteczna"), "a");
 assert.equal(code("19", "Szczawienko"), "d");
 assert.equal(code("19", "ul. Jachimowicza"), "c");
 assert.equal(code("19", "Jachimowicza Faurecia"), "j", "Faurecia wygrywa z ogólnym Jachimowicza");
-assert.equal(code("19", "Podzamcze", ["Szpital"]), "", "stara litera „s” nie wraca");
+assert.equal(
+  code("19", "Podzamcze", ["Szpital"]),
+  "s",
+  "przejazd przez szpital to uwaga „s”, niezależna od końca kursu",
+);
+assert.equal(code("9", "Dworzec Szczawienko", ["Szpital", "Uczniowska - Urząd Skarbowy"]), "sd*");
+assert.equal(
+  code("9", "Jachimowicza - Toyota końcowy", ["Szpital"]),
+  "sc",
+  "Toyota to nie Faurecia, a szpital dokłada „s”",
+);
+assert.equal(
+  legendCodeForTrip("9", {
+    terminus: "Dworzec Szczawienko - końcowy",
+    destination: "Jachimowicza",
+    stops: ["Stacyjna", "Dworzec Szczawienko - końcowy"],
+  }),
+  "d",
+  "koniec kursu (Dworzec Szczawienko) wygrywa z błędnym kierunkiem GTFS",
+);
+assert.deepEqual(
+  legendCodesForTrip("9", { terminus: "Jachimowicza - Faurecia", stops: ["Szpital", "Jachimowicza - Faurecia"] }),
+  ["s", "j"],
+  "kolejność liter w kolumnie Uwagi: s przed wariantem końcowym",
+);
 assert.equal(code("A", "Centrum", ["Auchan"]), "a");
 assert.equal(code("A", "Centrum", ["Szpital"]), "s");
 assert.equal(code("C", "Centrum", ["Auchan"]), "a");
@@ -246,9 +275,11 @@ const pdfTrip = (line: string, destination: string, stops: string[]): TimetableP
 });
 const struga = pdfTrip("8", "Struga", ["Szczawienko", "Struga"]);
 assert.equal(timetableVariantCode(struga), "s");
-assert.equal(timetableLineLabel(struga), "8s");
+assert.equal(timetableLineLabel(struga), "8", "linia bez liter — litery mają własną kolumnę");
+assert.equal(timetableVariantLetters(struga), "s");
 const boguszow = pdfTrip("2", "Boguszów-Gorce", ["Bystrzycka", "Boguszów-Gorce"]);
-assert.equal(timetableLineLabel(boguszow), "2b");
+assert.equal(timetableLineLabel(boguszow), "2");
+assert.equal(timetableVariantLetters(boguszow), "b");
 assert.equal(timetableLineLabel(pdfTrip("11", "Głuszyca", ["A", "Głuszyca"])), "11");
 assert.equal(timetableLineLabel(pdfTrip("WY", "Zajezdnia", ["Zajezdnia", "A"])), "WY");
 const duty = {
@@ -301,12 +332,17 @@ assert.equal(
   timetableLegendText(duty9),
   "Legenda wariantów: 9: a – kurs do przystanku Podwale - Forteczna · 19: j – kurs do ul. Jachimowicza (Faurecia)",
 );
+const legenda919 =
+  "9: * – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia)"
+  + " · 19: * – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia)";
 assert.equal(
   timetablePrintLegendText(duty9),
-  "Legenda wariantów: 9: a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia) · 19: a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia)",
-  "kursówka linii 9/19 tłumaczy wszystkie cztery warianty",
+  `Legenda wariantów: ${legenda919}`,
+  "kursówka linii 9/19 tłumaczy każdą literę z rozpiski",
 );
-assert.equal(timetableLineLabel(duty9.trips[0]), "9a");
-assert.equal(timetableLineLabel(duty9.trips[1]), "19j");
+assert.equal(timetableLineLabel(duty9.trips[0]), "9");
+assert.equal(timetableVariantLetters(duty9.trips[0]), "a");
+assert.equal(timetableLineLabel(duty9.trips[1]), "19");
+assert.equal(timetableVariantLetters(duty9.trips[1]), "j");
 
 console.log("official line legends, stop timetables and print labels are normalized");
