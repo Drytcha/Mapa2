@@ -151,10 +151,22 @@ try {
     return { page, context, errors, requests, releaseArchive, releaseLive, releaseFallback };
   }
 
+  /**
+   * Markery przystanków rysujemy tylko wokół widoku, więc czekamy na przystanek
+   * z centrum kadru (tt-a), a nie na wszystkie przystanki fikstury. Dalsze
+   * przystanki (tt-b, tt-c) pojawiają się, gdy test sam przesunie mapę.
+   */
   async function waitForGtfs(page) {
     await page.locator('[data-stop-id="tt-a"]').waitFor({ state: "attached", timeout: 15000 });
-    await page.locator('[data-stop-id="tt-b"]').waitFor({ state: "attached", timeout: 15000 });
-    await page.waitForFunction(() => document.querySelectorAll('.bus-stop[data-stop-id^="tt-"]').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('[data-stop-id^="snapshot-"]').length === 0);
+    assert.ok(await page.locator('.bus-stop[data-stop-id^="tt-"]').count() >= 1);
+  }
+
+  /** Ustawia kadr tak, żeby wskazany przystanek na pewno był narysowany. */
+  async function showStop(page, lat, lon, zoom = 16) {
+    await page.evaluate(({ lat, lon, zoom }) => {
+      document.querySelector('[role="application"]').__map.setView([lat, lon], zoom, { animate: false });
+    }, { lat, lon, zoom });
   }
 
   async function assertOnScreenAndClickable(locator) {
@@ -226,6 +238,8 @@ try {
     await page.waitForFunction(() => document.querySelector('button[aria-label="Pobierz przystanki dla bieżącego widoku mapy"]')?.textContent?.includes("2"));
     await waitForGtfs(page);
     await page.evaluate(() => document.querySelector('[role="application"]').__map.setView([50.82, 16.29], 16, { animate: false }));
+    // Markery dochodzą po `moveend` (następna klatka), więc czekamy na sam marker.
+    await page.locator('[data-stop-id="tt-b"]').waitFor({ state: "attached", timeout: 15000 });
     const northMarker = page.locator('[data-stop-id="tt-b"]').locator("..");
     await northMarker.focus();
     await page.keyboard.press("Enter");
@@ -246,8 +260,10 @@ try {
   if (!process.env.TEST_CASE || process.env.TEST_CASE === "offline") {
     console.log("Checking offline snapshot…");
     const { page, context, errors } = await openPage({ mode: "offline" });
-    await page.waitForFunction(() => document.querySelectorAll('.bus-stop[data-stop-id^="snapshot-"]').length > 400);
-    console.log("  Snapshot drawn");
+    await page.waitForFunction(() => document.querySelectorAll('.bus-stop[data-stop-id^="snapshot-"]').length > 20);
+    // Markery poza kadrem nie trafiają do DOM — w kadrze jest ich znacznie mniej niż ~550.
+    assert.ok(await page.locator('.bus-stop[data-stop-id^="snapshot-"]').count() < 400);
+    console.log("  Snapshot drawn (viewport culling)");
     const status = page.getByTestId("stop-data-status");
     await status.getByRole("button", { name: "Ponów" }).waitFor();
     assert.match(await status.innerText(), /migawki.*nieaktualne/i);
@@ -262,7 +278,7 @@ try {
     console.log("  Snapshot selection and unavailable timetable message work");
     await status.getByRole("button", { name: "Ponów" }).click();
     await status.getByRole("button", { name: "Ponów" }).waitFor();
-    assert.ok(await page.locator('.bus-stop[data-stop-id^="snapshot-"]').count() > 400);
+    assert.ok(await page.locator('.bus-stop[data-stop-id^="snapshot-"]').count() > 20);
     assert.deepEqual(errors, []);
     await context.close();
     console.log("  Offline check complete");
@@ -642,6 +658,30 @@ try {
     assert.deepEqual(switching.errors, []);
     await switching.context.close();
   }
+  // Przystanki rysujemy tylko wokół widoku — mniej elementów DOM = płynniejsza mapa.
+  if (!process.env.TEST_CASE || process.env.TEST_CASE === "culling") {
+    console.log("Checking viewport culling of stop markers…");
+    const { page, context, errors } = await openPage({ role: "planner" });
+    await waitForGtfs(page);
+    const drawn = await page.locator(".bus-stop").count();
+    assert.ok(drawn > 10, `expected stop markers around the view, got ${drawn}`);
+    assert.ok(drawn < 400, `expected culling (dataset has ~550 stops), got ${drawn}`);
+
+    // Skok w inny rejon mapy wymienia markery, nie dokłada ich bez końca.
+    await showStop(page, 50.62, 16.36, 15);
+    await page.waitForTimeout(500);
+    const moved = await page.locator(".bus-stop").count();
+    assert.ok(moved > 0, "markers follow the viewport");
+    assert.ok(moved < 400, `markers stay culled after panning, got ${moved}`);
+    assert.equal(
+      await page.locator('[data-stop-id="tt-a"]').count(),
+      0,
+      "markers far outside the viewport are removed from the DOM",
+    );
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   console.log("stop map browser tests passed");
 } finally {
   await browser?.close();

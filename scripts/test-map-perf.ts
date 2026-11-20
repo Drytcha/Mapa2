@@ -27,6 +27,17 @@ const blur = css.match(/--blur-xl:\s*(\d+(?:\.\d+)?)px/);
 assert.ok(blur, "motyw definiuje --blur-xl");
 assert.ok(Number(blur![1]) <= 10, `promień rozmycia paneli ≤ 10 px (jest ${blur![1]} px)`);
 
+// 2b. Przystanki rysowane tylko wokół widoku (mniej DOM = płynniejsze przesuwanie).
+assert.match(mapView, /const STOP_SHOW_PAD = 0\.\d+/, "zasięg dodawania markerów");
+assert.match(mapView, /const STOP_KEEP_PAD = 0\.\d+/, "bufor, zanim marker znika");
+assert.match(mapView, /const syncStops = \(\) =>/, "warstwa przystanków synchronizuje się z widokiem");
+assert.match(mapView, /map\.on\("zoomend moveend", scheduleSync\)/, "przesunięcie mapy odświeża warstwę");
+assert.match(
+  mapView,
+  /stopMarkersRef\.current\.delete\(id\)/,
+  "markery poza buforem są usuwane z DOM",
+);
+
 // 3. Żadnych selektorów :has() — na ~600 markerach kosztują przy każdej zmianie DOM.
 assert.ok(!/:has\(/.test(css), "brak selektorów :has() w stylach");
 assert.match(mapView, /pin-wrap--grabbable/, "kursor „grab” ustawia klasa, nie :has()");

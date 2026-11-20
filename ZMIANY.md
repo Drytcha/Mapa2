@@ -237,3 +237,18 @@ Testy: `npm run test:perf` (pilnuje, żeby filtr ciemnych kafli nie wrócił na
 całą warstwę, rozmycie paneli było ≤ 10 px, nie było `:has()`, etykiety
 przystanków miały limit, kafle nie pytały serwera w trakcie zoomu, GPS miał
 próg ruchu, flota odcisk danych, a licznik FPS był opt-in).
+
+### Przystanki tylko wokół widoku
+
+Warstwa przystanków trzymała w DOM **wszystkie ~550 markerów** miasta niezależnie
+od kadru — plus hit-testowanie każdego z nich przy ruchu myszy. Teraz markery są
+dodawane z zapasem 12% widoku (`STOP_SHOW_PAD`) i usuwane dopiero po wyjściu
+poza bufor 50% (`STOP_KEEP_PAD`), więc przy przesuwaniu nie migają. Wybrany
+przystanek nigdy nie znika. Dochodzenie markerów idzie partiami po 140 na klatkę
+(`STOP_ADD_PER_FRAME`), żeby przesunięcie mapy nie kończyło się długim zadaniem.
+
+Test `npm run test:stops:e2e` sprawdza teraz przycinanie zamiast „wszystkie
+przystanki w DOM”: liczba markerów w kadrze jest mniejsza niż zbiór danych,
+a po przeskoku w inny rejon mapy stare markery znikają (nowy przypadek
+`TEST_CASE=culling`). `waitForGtfs` czeka na przystanek z centrum kadru, bo
+dalsze przystanki fikstury pojawiają się dopiero po przesunięciu mapy.
