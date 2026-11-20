@@ -11,7 +11,7 @@
     "test:stops:e2e": "node scripts/test-stop-map.mjs",
     "test:stops:build": "node scripts/test-stop-production.mjs",
     "test:stops:real": "tsx scripts/test-stop-real.ts",
-    "test:duty-pdf": "tsx scripts/test-duty-pdf.ts && tsx scripts/test-duty-pdf-ui.tsx && tsx scripts/test-technical-duty.ts && tsx scripts/test-gtfs-zjazd.ts"
+    "test:duty-pdf": "tsx scripts/test-duty-pdf.ts && tsx scripts/test-duty-pdf-ui.tsx && tsx scripts/test-technical-duty.ts && tsx scripts/test-gtfs-zjazd.ts && tsx scripts/test-inferred-duty.ts && tsx scripts/test-duty-pdf-days.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",

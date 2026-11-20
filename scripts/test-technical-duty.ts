@@ -3,6 +3,7 @@ import { strToU8, zipSync } from "fflate";
 import { getGtfsLines, ensureGtfsSeeded } from "../src/lib/engine/gtfsStore";
 import { collectTimetablePdfData, createTimetablePdf, technicalTripsNote } from "../src/lib/engine/dutyTimetablePdf";
 import { technicalTripCode } from "../src/lib/engine/technicalTrips";
+import { timetableBlockForDate } from "../src/lib/engine/dutyPdfDays";
 
 assert.equal(technicalTripCode("8", "WY", "Wrocławska"), "WY");
 assert.equal(technicalTripCode("8", "", "Zjazd do zajezdni"), "ZJ");
@@ -51,4 +52,9 @@ if (process.env.DUTY_PDF_TECHNICAL_OUTPUT) {
 }
 const other = await collectTimetablePdfData(routes, "20261119", { kind: "line", line: "9" });
 assert.deepEqual(other.duties[0].trips.map(({ trip }) => trip.lineId), ["PRZ"], "technical-only duty still belongs to its numbered line");
+const nextBlock = timetableBlockForDate(duty.item, "20261119", "20261120");
+const nextDay = await collectTimetablePdfData(routes, "20261120", { kind: "duty", blockId: nextBlock });
+assert.equal(nextDay.duties[0].item.number, duty.item.number);
+assert.deepEqual(nextDay.duties[0].trips.map(({ trip }) => trip.id), ["inactive"], "different date loads only that day's trips");
+await assert.rejects(collectTimetablePdfData(routes, "20261120", { kind: "duty", blockId: "20261120_9-02" }), /Brak kursów/, "missing duty is never substituted");
 console.log("explicit technical GTFS trips and missing-data warning tests passed");

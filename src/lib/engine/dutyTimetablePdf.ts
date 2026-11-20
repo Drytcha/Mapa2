@@ -1,6 +1,8 @@
 import { jsPDF } from "jspdf";
 import { DateTime } from "luxon";
 import { summariseBrigade } from "../brigadeMetrics";
+import { distanceCoords } from "../core/spatial";
+import { isTechnicalRoute } from "../core/text";
 import type { WalbrzychOperatorKey } from "../types";
 import { BRIGADE_ZONE, describeServiceIds, loadBrigades, loadBrigadeTrips, type BrigadeItem, type BrigadeTripView } from "./brigades";
 import { ensureGtfsSeeded, type GtfsLineItem, type GtfsStopTimeRecord } from "./gtfsStore";
@@ -121,6 +123,57 @@ export function technicalTripsNote(duty: TimetablePdfDuty): string {
     : "WY/PRZ/ZJ według dostępnych danych; nie dopisano brakujących przejazdów.";
 }
 
+export type TimetableDisplayRow =
+  | { kind: "scheduled"; row: TimetablePdfTrip }
+  | { kind: "inferred"; code: "WY" | "PRZ" | "ZJ"; from: string; to: string };
+
+/** Apply the planner's rules only to assigned duties. Inferred rows have no
+ * scheduled times or operator-specific depot: they are candidates to verify,
+ * not GTFS trips. Real technical trips are never replaced or duplicated. */
+export function timetableDisplayRows(duty: TimetablePdfDuty): { rows: TimetableDisplayRow[]; missingCoordinates: boolean } {
+  const trips = duty.trips;
+  if (duty.item.unassigned || !trips.length) {
+    return { rows: trips.map((row) => ({ kind: "scheduled", row })), missingCoordinates: false };
+  }
+  const rows: TimetableDisplayRow[] = [];
+  let missingCoordinates = false;
+  const isDepot = (name: string) => /^zajezdnia$/iu.test(name.trim());
+  const wy = (next: TimetablePdfTrip) => {
+    const name = next.stops[0]?.name ?? next.trip.firstStop.name;
+    rows.push({ kind: "inferred", code: "WY", from: "Zajezdnia (do ustalenia)", to: isDepot(name) ? "Do ustalenia (kurs z zajezdni)" : name });
+  };
+  const zj = (prev: TimetablePdfTrip) => {
+    const name = prev.stops.at(-1)?.name ?? prev.trip.lastStop.name;
+    rows.push({ kind: "inferred", code: "ZJ", from: isDepot(name) ? "Do ustalenia (kurs w zajezdni)" : name, to: "Zajezdnia (do ustalenia)" });
+  };
+  if (trips[0].trip.lineId.trim().toUpperCase() !== "WY") wy(trips[0]);
+  for (let i = 0; i < trips.length; i++) {
+    const current = trips[i];
+    if (i > 0) {
+      const prev = trips[i - 1];
+      const gap = current.trip.startMs - prev.trip.endMs;
+      if (gap > 2 * 60 * 60_000) {
+        if (prev.trip.lineId.trim().toUpperCase() !== "ZJ") zj(prev);
+        if (current.trip.lineId.trim().toUpperCase() !== "WY") wy(current);
+      } else if (!isTechnicalRoute(prev.trip.lineId) && !isTechnicalRoute(current.trip.lineId)) {
+        const a = prev.trip.lastStop, b = current.trip.firstStop;
+        if (!a.id || !b.id || a.id !== b.id) {
+          if ([a.lat, a.lon, b.lat, b.lon].every((v) => typeof v === "number" && Number.isFinite(v))) {
+            if (distanceCoords(a.lat!, a.lon!, b.lat!, b.lon!) > 400) {
+              rows.push({ kind: "inferred", code: "PRZ", from: a.name, to: b.name });
+            }
+          } else {
+            missingCoordinates = true;
+          }
+        }
+      }
+    }
+    rows.push({ kind: "scheduled", row: current });
+  }
+  if (trips[trips.length - 1].trip.lineId.trim().toUpperCase() !== "ZJ") zj(trips[trips.length - 1]);
+  return { rows, missingCoordinates };
+}
+
 /** Exactly one A4 sheet per assigned duty and exactly one table row per trip. */
 export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF> {
   if (!data.duties.length) throw new Error("Brak kursówek do wydrukowania.");
@@ -199,30 +252,37 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     cell("Wybrane przystanki pośrednie · godzina odjazdu", xs[3], headerY, xs[11] - xs[3], headerH, 7, true);
     cell("Koniec", xs[11], headerY, ws[11], headerH, 7, true);
     cell("Przyj.", xs[12], headerY, ws[12], headerH, 7, true);
+    const display = timetableDisplayRows(duty);
     const bodyTop = headerY + headerH;
     const bodyBottom = pageH - 18;
-    const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, duty.trips.length));
+    const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, display.rows.length));
     const fontSize = Math.min(7.5, rowHeight * 1.55);
     let y = bodyTop;
-    for (const [rowIndex, row] of duty.trips.entries()) {
-      const { trip, stops } = row;
-      if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
+    for (const [rowIndex, displayRow] of display.rows.entries()) {
       // Header is the first shaded row: the first course is white, the
       // second grey, and the pattern restarts on each duty sheet.
       if (rowIndex % 2 === 1) {
         doc.setFillColor(242, 242, 242);
         doc.rect(margin, y, tableW, rowHeight, "F");
       }
-      const intermediate = selectTimetableCheckpoints(stops);
-      const values = [timetableLineLabel(row), clock(stops[0].departure), stops[0].name];
-      for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
-      values.push(stops[stops.length - 1].name, clock(stops[stops.length - 1].arrival));
+      let values: string[];
+      if (displayRow.kind === "inferred") {
+        values = [`${displayRow.code}~`, "—", displayRow.from, "", "", "", "", "", "", "", "", displayRow.to, "—"];
+      } else {
+        const { row } = displayRow;
+        const { trip, stops } = row;
+        if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
+        const intermediate = selectTimetableCheckpoints(stops);
+        values = [timetableLineLabel(row), clock(stops[0].departure), stops[0].name];
+        for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
+        values.push(stops[stops.length - 1].name, clock(stops[stops.length - 1].arrival));
+      }
       for (let i = 0; i < values.length; i++) cell(values[i], xs[i], y, ws[i], rowHeight, fontSize);
       y += rowHeight;
     }
-    fitText(`WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ${technicalTripsNote(duty)}`, margin, pageH - 13, tableW - 24, 6.3);
-    fitText("*: zjazd w opisie kierunku GTFS, nie osobny przejazd. Do 4 przystanków pośrednich; od 24:00 następna doba.", margin, pageH - 9, tableW - 24, 6.3);
-    fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Firma wg katalogu; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
+    fitText("WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, niepotwierdzone; godziny i zajezdnia do ustalenia.", margin, pageH - 13, tableW - 24, 6.3);
+    fitText(`*: zjazd w opisie kierunku GTFS, nie osobny przejazd. Do 4 przystanków pośrednich; od 24:00 następna doba.${display.missingCoordinates ? " Brak współrzędnych: PRZ mogą być niepełne." : ""}`, margin, pageH - 9, tableW - 24, 6.3);
+    fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Podsumowanie bez wierszy ~; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
     if (data.notice) doc.createAnnotation({ type: "text", title: "Niepełne dane GTFS", contents: data.notice, bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 } });
     fitText(`${index + 1} / ${sheets.length}`, pageW - margin - 18, pageH - 5, 18, 6.3);
   });
