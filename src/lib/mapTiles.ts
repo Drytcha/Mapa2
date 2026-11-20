@@ -11,9 +11,13 @@ import L from "leaflet";
 export const DARK_TILE_FILTER =
   "invert(0.86) hue-rotate(180deg) brightness(1.38) contrast(0.98) saturate(0.86)";
 
+let canvasFilterSupport: boolean | null = null;
 const supportsCanvasFilter = () => {
-  const context = document.createElement("canvas").getContext("2d");
-  return Boolean(context && typeof context.filter === "string");
+  if (canvasFilterSupport === null) {
+    const context = document.createElement("canvas").getContext("2d");
+    canvasFilterSupport = Boolean(context && typeof context.filter === "string");
+  }
+  return canvasFilterSupport;
 };
 
 class TintedTileLayer extends L.TileLayer {
