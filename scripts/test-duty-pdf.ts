@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
-import { collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, selectTimetableCheckpoints, timetablePdfSheets, timetablePdfFilename, timetableDisplayRows } from "../src/lib/engine/dutyTimetablePdf";
+import { TIMETABLE_LEGEND_RESERVED_LINES, collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, selectTimetableCheckpoints, timetableLegendText, timetablePdfSheets, timetablePdfFilename, timetableDisplayRows } from "../src/lib/engine/dutyTimetablePdf";
 import { getGtfsLines } from "../src/lib/engine/gtfsStore";
 import { summariseBrigade } from "../src/lib/brigadeMetrics";
 import type { BrigadeItem, BrigadeTripView } from "../src/lib/engine/brigades";
@@ -72,7 +72,10 @@ const stripeRects = (page: string[]) => page.filter((instruction) => {
 });
 const denseStripes = stripeRects(pages[1]);
 assert.equal(denseStripes.length, Math.floor(denseRowCount / 2));
-const rowHeight = (densePdf.internal.pageSize.getHeight() - 18 - 31) / denseRowCount;
+// Stopka rezerwuje stałą liczbę linijek, gdy legenda istnieje.
+const legendLines = timetableLegendText(dense.duties[0]) ? TIMETABLE_LEGEND_RESERVED_LINES : 0;
+const legendHeight = Math.max(0, legendLines - 1) * 3.6;
+const rowHeight = (densePdf.internal.pageSize.getHeight() - 18 - legendHeight - 31) / denseRowCount;
 for (let i = 0; i < denseStripes.length; i++) {
   const y = Number(denseStripes[i].split(" ")[1]);
   const expectedY = (densePdf.internal.pageSize.getHeight() - 31 - (i * 2 + 1) * rowHeight) * 72 / 25.4;

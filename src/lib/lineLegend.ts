@@ -36,6 +36,22 @@ export interface LineLegendRule extends LineLegendEntry {
 /** Kolejność linii w legendzie wydruku. */
 const LINE_ORDER = ["2", "5", "8", "9", "12", "15", "18", "19", "A", "C", "EX"];
 
+/**
+ * Linie 9 i 19 mają tę samą oficjalną legendę. Kolejność dopasowania ma
+ * znaczenie: kurs do Jachimowicza (Faurecia) musi trafić w `j` przed ogólnym
+ * „Jachimowicza” (`c`).
+ */
+const LINE_9_19_RULES: readonly LineLegendRule[] = [
+  { code: "j", text: "kurs do ul. Jachimowicza (Faurecia)", to: ["faurecia"] },
+  { code: "c", text: "kurs do ul. Jachimowicza", to: ["jachimowicz"] },
+  {
+    code: "a",
+    text: "kurs do przystanku Podwale - Forteczna",
+    to: ["forteczna"],
+  },
+  { code: "d", text: "kurs do Dworca Szczawienko", to: ["szczawienko"] },
+];
+
 const RULES: Record<string, readonly LineLegendRule[]> = {
   "2": [
     { code: "b", text: "kurs przedłużony do Boguszowa-Gorc", to: ["boguszow"] },
@@ -114,13 +130,7 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
       via: ["podwale"],
     },
   ],
-  "9": [
-    {
-      code: "s",
-      text: "kurs przez ul. Sokołowskiego - Szpital",
-      via: ["szpital"],
-    },
-  ],
+  "9": LINE_9_19_RULES,
   "12": [
     {
       code: "a",
@@ -186,13 +196,7 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
       to: ["urzad skarbowy"],
     },
   ],
-  "19": [
-    {
-      code: "s",
-      text: "kurs przez ul. Sokołowskiego - Szpital",
-      via: ["szpital"],
-    },
-  ],
+  "19": LINE_9_19_RULES,
   A: [
     { code: "a", text: "kurs przez Auchan", via: ["auchan"] },
     {
@@ -218,11 +222,11 @@ const DISPLAY_ORDER: Record<string, readonly string[]> = {
   "2": ["b", "k", "d", "p", "v"],
   "5": ["*", "^", "e", "u", "k"],
   "8": ["a", "l", "z", "d", "g", "s", "y"],
-  "9": ["s"],
+  "9": ["a", "d", "c", "j"],
   "12": ["a", "d", "p"],
   "15": ["p", "t", "a", "b", "m", "z"],
   "18": ["q", "j", "m", "r", "t", "u"],
-  "19": ["s"],
+  "19": ["a", "d", "c", "j"],
   A: ["a", "s"],
   C: ["a", "v"],
   EX: ["v"],

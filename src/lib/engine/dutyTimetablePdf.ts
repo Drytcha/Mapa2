@@ -112,6 +112,12 @@ export function timetablePdfSheets(duties: TimetablePdfDuty[]): Array<{ duty: Ti
   });
 }
 
+/**
+ * Ile linijek stopki rezerwuje legenda na wydruku. Stała wartość = stała
+ * geometria wierszy tabeli (testy i podgląd zależą od tego układu).
+ */
+export const TIMETABLE_LEGEND_RESERVED_LINES = 3;
+
 const TECHNICAL_CODES = ["WY", "PRZ", "ZJ"];
 const isTechnicalLine = (lineId: string) =>
   TECHNICAL_CODES.includes(lineId.trim().toUpperCase());
@@ -184,19 +190,65 @@ export function timetableLegendRows(
   );
 }
 
-/** Jednolinijkowy opis legendy wariantów użytych w kursówce. */
-export function timetableLegendText(duty: TimetablePdfDuty): string {
-  const entries = timetableLegendRows(duty);
-  if (!entries.length) return "";
+/**
+ * Pełna oficjalna legenda linii, które występują w kursówce — nie tylko litery
+ * użyte w tym dniu. Kierowca podmieniający kurs ma wtedy pod ręką znaczenie
+ * każdej litery, a nie tylko tych, które wypadły w jego rozkładzie.
+ */
+export function timetableFullLegendRows(
+  duty: TimetablePdfDuty,
+): Array<{ line: string; code: string; text: string }> {
+  const seenLines = new Set<string>();
+  const rows: Array<{ line: string; code: string; text: string }> = [];
+  const known = legendLines();
+  const lineOrder = (line: string) => {
+    const index = known.indexOf(line.trim().toUpperCase());
+    return index === -1 ? known.length : index;
+  };
+  for (const row of duty.trips) {
+    const line = row.trip.lineId.trim();
+    if (isTechnicalLine(line)) continue;
+    const key = line.toUpperCase();
+    if (seenLines.has(key)) continue;
+    seenLines.add(key);
+    for (const entry of lineLegend(line) ?? []) {
+      rows.push({ line, code: entry.code, text: entry.text });
+    }
+  }
+  // Stabilne sortowanie tylko po linii — litery zostają w kolejności oficjalnej.
+  return rows.sort((a, b) => lineOrder(a.line) - lineOrder(b.line));
+}
+
+const formatLegend = (entries: Array<{ line: string; code: string; text: string }>) => {
   const grouped = new Map<string, string[]>();
   for (const entry of entries) {
     const items = grouped.get(entry.line) ?? [];
     items.push(`${entry.code} – ${entry.text}`);
     grouped.set(entry.line, items);
   }
-  return `Legenda wariantów: ${[...grouped.entries()]
+  return [...grouped.entries()]
     .map(([line, items]) => `${line}: ${items.join(", ")}`)
-    .join(" · ")}`;
+    .join(" · ");
+};
+
+/** Jednolinijkowy opis legendy wariantów użytych w kursówce. */
+export function timetableLegendText(duty: TimetablePdfDuty): string {
+  const entries = timetableLegendRows(duty);
+  if (!entries.length) return "";
+  return `Legenda wariantów: ${formatLegend(entries)}`;
+}
+
+/**
+ * Legenda do wydruku: pełna oficjalna rozpiska linii z kursówki.
+ *
+ * Druk próbuje najpierw tej wersji (każda litera linii, także te niewystępujące
+ * w danym dniu), a gdy zabraknie miejsca na stopce — skraca się do wariantów
+ * faktycznie użytych w kursówce.
+ */
+export function timetablePrintLegendText(duty: TimetablePdfDuty): string {
+  const entries = timetableFullLegendRows(duty);
+  if (!entries.length) return "";
+  return `Legenda wariantów: ${formatLegend(entries)}`;
 }
 
 /** Missing codes are a warning, not proof that each run should exist. */
@@ -317,18 +369,33 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     fitText(value, x + 0.7, y + height / 2 + size * 0.11, Math.max(0.1, width - 1.4), size);
   };
 
-  // Oficjalna legenda wariantów dla tej kursówki (maks. 2 linie u dołu strony).
+  // Legenda wariantów na dole strony (maks. 3 linijki, patrz TIMETABLE_LEGEND_RESERVED_LINES).
   const legendFooter = (duty: TimetablePdfDuty, width: number) => {
-    const text = timetableLegendText(duty);
-    if (!text) return { lines: [] as string[], size: 6 };
-    for (const size of [6, 5.6, 5.2, 4.8]) {
-      doc.setFontSize(size);
-      const lines = doc.splitTextToSize(text, width) as string[];
-      if (lines.length <= 2) return { lines, size };
+    // Kursówka bez ani jednego wariantu nie potrzebuje legendy — stopka nie
+    // zabiera wtedy miejsca tabeli.
+    if (!timetableLegendRows(duty).length) return { lines: [] as string[], size: 6 };
+    // Najpierw pełna legenda linii z kursówki (do 3 linijek), potem tylko
+    // warianty użyte w tym dniu.
+    const candidates = [
+      { text: timetablePrintLegendText(duty), maxLines: 3 },
+      { text: timetableLegendText(duty), maxLines: 3 },
+    ].filter((candidate) => candidate.text);
+    for (const candidate of candidates) {
+      for (const size of [6, 5.6, 5.2, 4.8]) {
+        doc.setFontSize(size);
+        const lines = doc.splitTextToSize(candidate.text, width) as string[];
+        if (lines.length <= Math.min(candidate.maxLines, TIMETABLE_LEGEND_RESERVED_LINES)) {
+          return { lines, size };
+        }
+      }
     }
+    if (!candidates.length) return { lines: [] as string[], size: 6 };
     doc.setFontSize(4.8);
-    const lines = (doc.splitTextToSize(text, width) as string[]).slice(0, 2);
-    lines[1] = `${lines[1]}…`;
+    const lines = (doc.splitTextToSize(candidates.at(-1)!.text, width) as string[]).slice(
+      0,
+      TIMETABLE_LEGEND_RESERVED_LINES,
+    );
+    lines[lines.length - 1] = `${lines[lines.length - 1]}…`;
     return { lines, size: 4.8 };
   };
 
@@ -371,7 +438,10 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     const display = timetableDisplayRows(duty);
     const bodyTop = headerY + headerH;
     const legend = legendFooter(duty, tableW - 24);
-    const bodyBottom = pageH - 18 - Math.max(0, legend.lines.length - 1) * 3.6;
+    // Wysokość stopki jest stała, gdy legenda istnieje — tabela zawsze kończy
+    // się w tym samym miejscu, niezależnie od tego, ile wariantów ma linia.
+    const legendReserve = legend.lines.length ? TIMETABLE_LEGEND_RESERVED_LINES : 0;
+    const bodyBottom = pageH - 18 - Math.max(0, legendReserve - 1) * 3.6;
     const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, display.rows.length));
     const fontSize = Math.min(7.5, rowHeight * 1.55);
     let y = bodyTop;

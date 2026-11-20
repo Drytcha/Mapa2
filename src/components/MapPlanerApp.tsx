@@ -2352,7 +2352,7 @@ function MapPlanerWorkspace() {
                 <div
                   role="status"
                   data-testid="stop-data-status"
-                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold leading-snug text-ink shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl"
+                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold leading-snug text-ink shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
                 >
                   {busError || (busLoading
                     ? "Pokazuję zapisaną migawkę przystanków. Wczytuję aktualny rozkład…"
@@ -2587,7 +2587,7 @@ function MapPlanerWorkspace() {
               </div>
             )}
 
-            <div className="pointer-events-none absolute bottom-2.5 left-3 hidden select-none items-center gap-2 rounded-full border border-line/70 bg-surface/80 px-2 py-1 backdrop-blur sm:flex">
+            <div className="pointer-events-none absolute bottom-2.5 left-3 hidden select-none items-center gap-2 rounded-full border border-line/70 bg-surface/92 px-2 py-1 sm:flex">
               {isPlanner ? (
                 <>
                   <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
@@ -2662,7 +2662,7 @@ function MapPlanerWorkspace() {
                 }}
                 aria-expanded={tripOpen}
                 title="Planer podróży — możesz też kliknąć prawym przyciskiem na mapie, aby ustawić start lub cel"
-                className={`pointer-events-auto flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-2 text-[9px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] backdrop-blur transition-all hover:opacity-90 active:scale-[0.98] ${
+                className={`pointer-events-auto flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-2 text-[9px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-all hover:opacity-90 active:scale-[0.98] ${
                   tripOpen
                     ? "border-line-strong bg-surface text-ink"
                     : "border-brand-deep/20 bg-brand text-on-brand"

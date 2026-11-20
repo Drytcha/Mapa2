@@ -38,7 +38,7 @@ export default function UserLocationHud({
       <div
         role="status"
         data-testid="user-location-hud"
-        className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2.5 py-1.5 text-[9px] font-bold text-ink-soft shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl"
+        className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2.5 py-1.5 text-[9px] font-bold text-ink-soft shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
       >
         <Loader2 className="h-3 w-3 animate-spin text-brand-ink" />
         Szukam lokalizacji GPS… zezwól na dostęp w przeglądarce
@@ -52,7 +52,7 @@ export default function UserLocationHud({
       <div
         role="alert"
         data-testid="user-location-hud"
-        className="pointer-events-auto flex max-w-[270px] items-start gap-1.5 rounded-xl border border-warning/40 bg-warning-soft/95 px-2.5 py-1.5 text-[9px] leading-snug text-warning shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl"
+        className="pointer-events-auto flex max-w-[270px] items-start gap-1.5 rounded-xl border border-warning/40 bg-warning-soft/95 px-2.5 py-1.5 text-[9px] leading-snug text-warning shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
       >
         <LocateOff className="mt-px h-3 w-3 shrink-0" />
         <div className="min-w-0 flex-1">
@@ -92,7 +92,7 @@ export default function UserLocationHud({
     <section
       aria-label="Twoja lokalizacja i prędkość"
       data-testid="user-location-hud"
-      className="pointer-events-auto w-[212px] max-w-[calc(100vw-76px)] rounded-xl border border-line/80 bg-surface/94 px-2.5 py-1.5 shadow-[0_8px_24px_rgba(13,42,28,0.14)] backdrop-blur-xl"
+      className="pointer-events-auto w-[212px] max-w-[calc(100vw-76px)] rounded-xl border border-line/80 bg-surface/94 px-2.5 py-1.5 shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">

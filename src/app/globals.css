@@ -147,11 +147,37 @@ button {
   background: #282f38;
 }
 
-/* Filtr nakładamy na pojedyncze kafle, a nie na całą warstwę: przy przesuwaniu
-   i przybliżaniu mapy przeglądarka nie przerasterowuje wtedy całego widoku
-   co klatkę (kafel jest nieruchomy, więc wynik filtra zostaje w pamięci). */
-.basemap-layer--dark .leaflet-tile {
-  filter: invert(0.86) hue-rotate(180deg) brightness(1.38) contrast(0.98) saturate(0.86);
+/* Ciemne kafle są przyciemniane raz, w kanwie, przy wczytywaniu (mapTiles.ts).
+   Wcześniejszy filtr CSS na każdym kaflu (razem z `mix-blend-mode` z Leafleta)
+   kazał przeglądarce składać kilkadziesiąt dodatkowych powierzchni w każdej
+   klatce ruchu mapy — to główny powód spadku do ~9 fps przy przesuwaniu. */
+
+/* Rozmywanie tła pod panelami (`backdrop-filter`) jest liczone od nowa w
+   każdej klatce ruchu mapy. Przy kilkunastu panelach nad mapą to drugi duży
+   koszt przesuwania, a panele mają tło kryjące w 88-98% — różnica jest
+   praktycznie niewidoczna. Dlatego rozmycie wyłączamy globalnie. */
+.backdrop-blur,
+.backdrop-blur-xs,
+.backdrop-blur-sm,
+.backdrop-blur-md,
+.backdrop-blur-lg,
+.backdrop-blur-xl,
+.backdrop-blur-2xl,
+.backdrop-blur-3xl {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Podczas przesuwania/przybliżania mapy pulsowanie i unoszenie się markerów
+   i tak nie jest widoczne, a wymusza przeliczanie animacji w każdej klatce. */
+.leaflet-container.map-busy .pin--start::before,
+.leaflet-container.map-busy .bus-stop--on::after,
+.leaflet-container.map-busy .nav-vehicle,
+.leaflet-container.map-busy .nav-vehicle::after,
+.leaflet-container.map-busy .user-location-pulse,
+.leaflet-container.map-busy .live-bus-label,
+.leaflet-container.map-busy .trip-marker-ring {
+  animation-play-state: paused;
 }
 
 .leaflet-control-attribution {
@@ -163,7 +189,6 @@ button {
   color: var(--color-mute) !important;
   font-size: 9.5px !important;
   padding: 2px 7px !important;
-  backdrop-filter: blur(8px);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -915,9 +940,6 @@ input[type="range"] {
   accent-color: var(--color-brand-ink);
 }
 
-.leaflet-fade-anim .leaflet-tile {
-  will-change: opacity;
-}
 
 @media (prefers-reduced-motion: reduce) {
   *,

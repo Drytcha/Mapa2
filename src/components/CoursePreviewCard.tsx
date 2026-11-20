@@ -45,7 +45,7 @@ export default function CoursePreviewCard({
     <section
       aria-label={`Przebieg kursu linii ${course.routeShort}`}
       data-testid="course-preview-card"
-      className="pointer-events-auto flex max-h-[min(510px,calc(100dvh-230px))] w-[336px] max-w-full flex-col overflow-hidden rounded-[14px] border border-line bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.22)] backdrop-blur-xl animate-rise-in dark:bg-surface/93"
+      className="pointer-events-auto flex max-h-[min(510px,calc(100dvh-230px))] w-[336px] max-w-full flex-col overflow-hidden rounded-[14px] border border-line bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.22)] animate-rise-in dark:bg-surface/93"
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-line/70 bg-brand-soft/70 px-3 py-2">
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
