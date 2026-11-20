@@ -8,6 +8,11 @@ import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
+import {
+  routeArrowIconHtml,
+  routeArrowIconSize,
+  routeArrowPoints,
+} from "@/lib/routeArrows";
 import type {
   BusStop,
   LiveBusVehicle,
@@ -20,6 +25,15 @@ import type {
 import type { TurnaroundSpot } from "@/lib/engine/turnarounds";
 import type { CoursePreview } from "@/lib/engine/gtfsStore";
 import { formatWarsawClock } from "@/lib/core/time";
+
+/**
+ * Przystanki rysujemy tylko wokół widoku: przy ~550 przystankach cała warstwa
+ * w DOM (plus hit-testowanie przy każdym ruchu myszy) to najdroższa część mapy.
+ * `SHOW` to zasięg dodawania, `KEEP` — bufor, żeby markery nie migały na krawędzi.
+ */
+const STOP_SHOW_PAD = 0.12;
+const STOP_KEEP_PAD = 0.5;
+const STOP_ADD_PER_FRAME = 90;
 
 export interface MapUserLocation {
   lat: number;
@@ -410,6 +424,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const tripPane = map.createPane("trip");
     tripPane.style.zIndex = "575";
 
+    // Strzałki kierunku trasy: nad linią trasy, pod przystankami i pinezkami.
+    const routeArrowPane = map.createPane("routeArrows");
+    routeArrowPane.style.zIndex = "450";
+    routeArrowPane.style.pointerEvents = "none";
+
     const userPane = map.createPane("user");
     userPane.style.zIndex = "690";
     userPane.style.pointerEvents = "none";
@@ -482,6 +501,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       maxNativeZoom: config.maxZoom,
       detectRetina: false,
       crossOrigin: true,
+      // Kafle podmieniamy dopiero po animacji zoomu — w trakcie wystarczy
+      // przeskalowany raster, a mniej zapytań to płynniejsze przybliżanie.
+      updateWhenZooming: false,
       className: mapStyle === "dark" ? "basemap-layer basemap-layer--dark" : "basemap-layer",
     });
     base.addTo(map);
@@ -492,6 +514,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         maxNativeZoom: config.maxZoom,
         detectRetina: false,
         crossOrigin: true,
+        updateWhenZooming: false,
         pane: "labels",
         className: "basemap-labels",
         opacity: mapStyle === "satellite" ? 0.85 : 1,
@@ -513,7 +536,6 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const darkTiles = mapStyle !== "light";
     const main = darkTiles ? "#d7f36e" : "#0d4f3b";
     const casing = darkTiles ? "#0a1712" : "#ffffff";
-    const flow = darkTiles ? "#3b6b4f" : "#d7f36e";
 
     L.polyline(route.coords, {
       color: casing,
@@ -534,14 +556,26 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       interactive: false,
     }).addTo(group);
 
-    L.polyline(route.coords, {
-      color: flow,
-      weight: 2.6,
-      opacity: 0.95,
-      lineCap: "round",
-      className: "route-flow",
-      interactive: false,
-    }).addTo(group);
+    // Kierunek pokazują statyczne strzałki (skręty, odcinki w obie strony,
+    // długie proste). Żadnej animacji płynącej linii. Liczenie idzie w kolejnej
+    // klatce, żeby sama linia trasy pojawiła się natychmiast po odpowiedzi OSRM.
+    let arrowFrame = requestAnimationFrame(() => {
+      arrowFrame = 0;
+      for (const arrow of routeArrowPoints(route.coords, route.steps)) {
+        const size = routeArrowIconSize(arrow);
+        L.marker([arrow.lat, arrow.lon], {
+          icon: L.divIcon({
+            className: "pin-wrap route-arrow-wrap",
+            html: routeArrowIconHtml(arrow),
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+          }),
+          pane: "routeArrows",
+          interactive: false,
+          keyboard: false,
+        }).addTo(group);
+      }
+    });
 
     const hitArea = L.polyline(route.coords, {
       color: "#000000",
@@ -632,6 +666,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     return () => {
       if (fitTimer !== undefined) window.clearTimeout(fitTimer);
+      if (arrowFrame) cancelAnimationFrame(arrowFrame);
     };
   }, [route, mapStyle, fitNonce]);
 
@@ -749,7 +784,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           ? `<span class="trip-marker trip-marker--origin"><span class="trip-marker-ring"></span><span class="trip-marker-core"></span></span>`
           : `<span class="trip-marker trip-marker--destination"><span class="trip-marker-pin"></span></span>`;
       return L.divIcon({
-        className: "pin-wrap",
+        className: "pin-wrap pin-wrap--grabbable",
         html: `<div class="trip-marker-wrap">${inner}<span class="trip-marker-label">${escapeHtml(text)}</span></div>`,
         iconSize: [26, 26],
         iconAnchor: [13, 13],
@@ -1118,80 +1153,193 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     });
   }, [waypoints, draftMode]);
 
-  /* Bus stops layer */
+  /* Bus stops layer — rysujemy tylko przystanki wokół widoku. */
   useEffect(() => {
     const group = stopGroupRef.current;
     const map = mapRef.current;
     if (!group || !map) return;
+
+    // Nazwy przystanków to najdroższa część warstwy: każdy otwarty tooltip to
+    // osobny element DOM pozycjonowany przy każdym ruchu mapy. Dlatego trzymamy
+    // ograniczoną listę etykiet (najbliżej środka widoku) i aktualizujemy tylko
+    // te, które faktycznie zmieniły stan.
+    const MAX_STOP_LABELS = 80;
+    const labelled = new Set<string>();
+    const tabbable = new Set<string>();
+
     group.clearLayers();
     stopMarkersRef.current.clear();
     stopStateRef.current.clear();
     if (!busStops.length) return;
 
-    let cancelled = false;
-    let chunk = 0;
-    const CHUNK_SIZE = 90;
+    const byId = new Map<string, BusStop>(busStops.map((stop) => [stop.id, stop] as const));
 
     const refreshLabels = () => {
       const showNames = map.getZoom() >= 16;
       const area = map.getBounds().pad(0.05);
-      stopMarkersRef.current.forEach((marker) => {
+      const center = map.getCenter();
+
+      // Tylko widoczne przystanki są w porządku tabulacji (atrybut zapisujemy
+      // wyłącznie przy zmianie stanu — 500 zapisów na ruch mapy to za dużo).
+      stopMarkersRef.current.forEach((marker, id) => {
         const inView = area.contains(marker.getLatLng());
+        if (tabbable.has(id) === inView) return;
         marker.getElement()?.setAttribute("tabindex", inView ? "0" : "-1");
-        if (showNames && inView) marker.openTooltip();
-        else marker.closeTooltip();
+        if (inView) tabbable.add(id);
+        else tabbable.delete(id);
+      });
+
+      if (!showNames) {
+        if (labelled.size) {
+          labelled.forEach((id) => stopMarkersRef.current.get(id)?.closeTooltip());
+          labelled.clear();
+        }
+        return;
+      }
+
+      const candidates: Array<{ id: string; marker: L.Marker; distance: number }> = [];
+      stopMarkersRef.current.forEach((marker, id) => {
+        const latLng = marker.getLatLng();
+        if (!area.contains(latLng)) return;
+        candidates.push({
+          id,
+          marker,
+          distance: latLng.distanceTo(center),
+        });
+      });
+
+      if (candidates.length > MAX_STOP_LABELS) {
+        candidates.sort((a, b) => a.distance - b.distance);
+        candidates.length = MAX_STOP_LABELS;
+      }
+
+      const wanted = new Set(candidates.map((item) => item.id));
+      labelled.forEach((id) => {
+        if (wanted.has(id)) return;
+        stopMarkersRef.current.get(id)?.closeTooltip();
+        labelled.delete(id);
+      });
+      for (const item of candidates) {
+        if (labelled.has(item.id)) continue;
+        item.marker.openTooltip();
+        labelled.add(item.id);
+      }
+    };
+
+    let cancelled = false;
+    let labelFrame = 0;
+    let addFrame = 0;
+    const queue: BusStop[] = [];
+
+    // moveend + zoomend potrafią przyjść w jednej klatce — etykiety liczymy raz.
+    const scheduleLabels = () => {
+      if (labelFrame) return;
+      labelFrame = requestAnimationFrame(() => {
+        labelFrame = 0;
+        refreshLabels();
       });
     };
 
-    const drawChunk = () => {
-      if (cancelled) return;
-      const slice = busStops.slice(chunk * CHUNK_SIZE, chunk * CHUNK_SIZE + CHUNK_SIZE);
-      for (const stop of slice) {
-        const visual = stopVisualRef.current;
-        const state = computeStopVisualState(stop, visual.selectedStopId, visual.nearRouteIds, visual.usedStopKeys);
-        const marker = L.marker([stop.lat, stop.lon], {
-          icon: createStopDivIcon(stop.id, state),
-          pane: "stops",
-          title: `Przystanek ${stopDisplayName(stop)}`,
-          keyboard: true,
-          riseOnHover: true,
-          zIndexOffset: state.includes("on") ? 900 : state.includes("used") ? 400 : 0,
-        });
-        marker.bindTooltip(escapeHtml(stopDisplayName(stop)), {
-          direction: "right",
-          offset: [14, 0],
-          className: "stop-name-label",
-          opacity: 1,
-        });
-        marker.on("click", (event: L.LeafletMouseEvent) => {
-          L.DomEvent.stopPropagation(event.originalEvent);
+    const createStopMarker = (stop: BusStop) => {
+      const visual = stopVisualRef.current;
+      const state = computeStopVisualState(
+        stop,
+        visual.selectedStopId,
+        visual.nearRouteIds,
+        visual.usedStopKeys,
+      );
+      const marker = L.marker([stop.lat, stop.lon], {
+        icon: createStopDivIcon(stop.id, state),
+        pane: "stops",
+        title: `Przystanek ${stopDisplayName(stop)}`,
+        keyboard: true,
+        riseOnHover: true,
+        zIndexOffset: state.includes("on") ? 900 : state.includes("used") ? 400 : 0,
+      });
+      marker.bindTooltip(escapeHtml(stopDisplayName(stop)), {
+        direction: "right",
+        offset: [14, 0],
+        className: "stop-name-label",
+        opacity: 1,
+      });
+      marker.on("click", (event: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(event.originalEvent);
+        stopClickRef.current?.(stop);
+      });
+      marker.on("keydown", (event: L.LeafletKeyboardEvent) => {
+        const key = event.originalEvent;
+        if ((key.key === "Enter" || key.key === " ") && !key.repeat) {
+          L.DomEvent.stop(key);
           stopClickRef.current?.(stop);
-        });
-        marker.on("keydown", (event: L.LeafletKeyboardEvent) => {
-          const key = event.originalEvent;
-          if ((key.key === "Enter" || key.key === " ") && !key.repeat) {
-            L.DomEvent.stop(key);
-            stopClickRef.current?.(stop);
-          }
-        });
-        marker.on("contextmenu", (event: L.LeafletMouseEvent) => {
-          dispatchContextMenu(event, stop.lat, stop.lon, stop);
-        });
-        marker.addTo(group);
-        marker.getElement()?.setAttribute("aria-label", `Przystanek ${stopDisplayName(stop)}`);
-        stopMarkersRef.current.set(stop.id, marker);
-        stopStateRef.current.set(stop.id, state);
-      }
-      chunk += 1;
-      if (chunk * CHUNK_SIZE < busStops.length) requestAnimationFrame(drawChunk);
-      else refreshLabels();
+        }
+      });
+      marker.on("contextmenu", (event: L.LeafletMouseEvent) => {
+        dispatchContextMenu(event, stop.lat, stop.lon, stop);
+      });
+      marker.addTo(group);
+      marker.getElement()?.setAttribute("aria-label", `Przystanek ${stopDisplayName(stop)}`);
+      stopMarkersRef.current.set(stop.id, marker);
+      stopStateRef.current.set(stop.id, state);
     };
 
-    map.on("zoomend moveend", refreshLabels);
-    drawChunk();
+    const addChunk = () => {
+      addFrame = 0;
+      if (cancelled) return;
+      const slice = queue.splice(0, STOP_ADD_PER_FRAME);
+      for (const stop of slice) {
+        if (stopMarkersRef.current.has(stop.id)) continue;
+        createStopMarker(stop);
+      }
+      if (queue.length) addFrame = requestAnimationFrame(addChunk);
+      else scheduleLabels();
+    };
+
+    const syncStops = () => {
+      if (cancelled) return;
+      const showBounds = map.getBounds().pad(STOP_SHOW_PAD);
+      const keepBounds = map.getBounds().pad(STOP_KEEP_PAD);
+      const selectedId = stopVisualRef.current.selectedStopId;
+
+      // Usuń markery, które wypadły daleko poza widok.
+      for (const [id, marker] of [...stopMarkersRef.current]) {
+        if (id === selectedId) continue;
+        if (keepBounds.contains(marker.getLatLng())) continue;
+        group.removeLayer(marker);
+        stopMarkersRef.current.delete(id);
+        stopStateRef.current.delete(id);
+        labelled.delete(id);
+        tabbable.delete(id);
+      }
+
+      // Dołóż brakujące przystanki z widoku (z zapasem na przesunięcie mapy).
+      queue.length = 0;
+      for (const stop of byId.values()) {
+        if (stopMarkersRef.current.has(stop.id)) continue;
+        if (!showBounds.contains(L.latLng(stop.lat, stop.lon))) continue;
+        queue.push(stop);
+      }
+      if (queue.length && !addFrame) addFrame = requestAnimationFrame(addChunk);
+      scheduleLabels();
+    };
+
+    let syncFrame = 0;
+    const scheduleSync = () => {
+      if (syncFrame) return;
+      syncFrame = requestAnimationFrame(() => {
+        syncFrame = 0;
+        syncStops();
+      });
+    };
+
+    map.on("zoomend moveend", scheduleSync);
+    syncStops();
+
     return () => {
       cancelled = true;
-      map.off("zoomend moveend", refreshLabels);
+      if (labelFrame) cancelAnimationFrame(labelFrame);
+      if (addFrame) cancelAnimationFrame(addFrame);
+      if (syncFrame) cancelAnimationFrame(syncFrame);
+      map.off("zoomend moveend", scheduleSync);
     };
   }, [busStops]);
 
