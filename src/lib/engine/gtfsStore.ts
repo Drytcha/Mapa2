@@ -167,6 +167,8 @@ export interface GtfsStopTimeRecord {
   tripId: string;
   stopId: string;
   stopSequence: number;
+  /** Optional destination displayed from this stop, not a separate trip. */
+  stopHeadsign?: string;
   arrivalMinutes: number;
   departureMinutes: number;
   pickupType: number;
@@ -616,6 +618,7 @@ function parseArchiveBytes(
     let iTrip = -1;
     let iStop = -1;
     let iSeq = -1;
+    let iHeadsign = -1;
     let iArr = -1;
     let iDep = -1;
     let iPick = -1;
@@ -626,6 +629,7 @@ function parseArchiveBytes(
         iTrip = col("trip_id");
         iStop = col("stop_id");
         iSeq = col("stop_sequence");
+        iHeadsign = col("stop_headsign");
         iArr = col("arrival_time");
         iDep = col("departure_time");
         iPick = col("pickup_type");
@@ -645,6 +649,7 @@ function parseArchiveBytes(
         tripId,
         stopId,
         stopSequence: seq,
+        stopHeadsign: iHeadsign >= 0 ? cols[iHeadsign]?.trim() || undefined : undefined,
         arrivalMinutes: arr,
         departureMinutes: dep,
         pickupType: iPick >= 0 ? Number.parseInt(cols[iPick], 10) || 0 : 0,
@@ -694,7 +699,7 @@ function parseArchiveBytes(
       rawTripId: t.trip_id,
       routeId: t.route_id,
       routeShort,
-      technicalCode: technicalTripCode(routeShort, t.trip_short_name || "", t.trip_headsign || ""),
+      technicalCode: technicalTripCode(routeShort, t.trip_short_name || "", t.trip_headsign || "", route?.longName || ""),
       serviceId: t.service_id,
       rawBrigade,
       kursowkaCode: verifiedKursowka,
