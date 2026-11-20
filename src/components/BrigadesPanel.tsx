@@ -164,6 +164,9 @@ export default function BrigadesPanel({
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [listLimit, setListLimit] = useState(100);
   const [reload, setReload] = useState(0);
+  const [pdfScope, setPdfScope] = useState<"duty" | "line" | "mzuk" | "ska" | "other">("duty");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState("");
   const originalHash = useRef<string | null>(null);
 
   useEffect(() => {
@@ -625,6 +628,29 @@ export default function BrigadesPanel({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportTimetablePdf = async () => {
+    if (pdfBusy || loading || resultKey !== `${lineId}|${dateId}`) return;
+    setPdfError("");
+    if (pdfScope === "duty" && !selected) { setPdfError("Wybierz kursówkę z listy."); return; }
+    if (pdfScope === "line" && lineId === "all") { setPdfError("Wybierz konkretną linię w pasku linii."); return; }
+    setPdfBusy(true);
+    try {
+      const { collectTimetablePdfData, createTimetablePdf, timetablePdfFilename } = await import("@/lib/engine/dutyTimetablePdf");
+      const scope = pdfScope === "duty"
+        ? { kind: "duty" as const, blockId: selected!.blockId }
+        : pdfScope === "line"
+          ? { kind: "line" as const, line: lineId }
+          : { kind: "company" as const, company: pdfScope };
+      const data = await collectTimetablePdfData(routes, dateId, scope);
+      const doc = await createTimetablePdf(data);
+      doc.save(timetablePdfFilename(dateId, scope));
+    } catch (cause) {
+      setPdfError(cause instanceof Error ? cause.message : "Nie udało się przygotować PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   const minutesLabel = (minutes: number) =>
     minutes <= 0 ? "0 min" : formatServiceHours(minutes);
   const shortHours = (minutes: number) => {
@@ -889,6 +915,25 @@ export default function BrigadesPanel({
           );
         })}
       </div>
+
+      {showTechnicalNotes && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-line bg-raised/60 px-2 py-1.5" aria-label="Pobieranie rozkładów PDF">
+          <label htmlFor="duty-pdf-scope" className="text-[10px] font-extrabold text-ink">Rozkład PDF</label>
+          <select id="duty-pdf-scope" value={pdfScope} onChange={(event) => { setPdfScope(event.target.value as typeof pdfScope); setPdfError(""); }} className="h-7 max-w-full rounded-md border border-line bg-surface px-2 text-[10px] font-semibold text-ink">
+            <option value="duty">Wybrana kursówka{selected ? `: ${selected.unassigned ? "bez przypisania" : displayDuty(selected.number)}` : ""}</option>
+            <option value="line">Wybrana linia{lineId === "all" ? " (wybierz linię)" : `: ${lineId}`}</option>
+            <option value="mzuk">Firma: MZUK · wszystkie linie</option>
+            <option value="ska">Firma: ŚKA · wszystkie linie</option>
+            <option value="other">Firma: inna / nieprzypisana</option>
+          </select>
+          <button type="button" onClick={() => void handleExportTimetablePdf()} disabled={pdfBusy || loading || !result || resultKey !== `${lineId}|${dateId}` || (pdfScope === "duty" && !selected) || (pdfScope === "line" && lineId === "all")} className="flex h-7 items-center gap-1 rounded-md bg-brand px-2.5 text-[10px] font-extrabold text-on-brand hover:opacity-90 disabled:opacity-40">
+            {pdfBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />}
+            {pdfBusy ? "Przygotowuję PDF…" : "Pobierz PDF"}
+          </button>
+          <span className="text-[9px] text-mute">Wybrany dzień · pełne kursówki; firma według przypisania w katalogu. Wyszukiwarka i filtr firmy nie ograniczają PDF.</span>
+          {pdfError && <span role="alert" className="w-full text-[10px] font-semibold text-warning">{pdfError}</span>}
+        </div>
+      )}
 
       {/* ── Podsumowanie pracy przewozowej wg firm dla Planisty ─────────── */}
       {showTechnicalNotes && result && !loading && filtered.length > 0 && (

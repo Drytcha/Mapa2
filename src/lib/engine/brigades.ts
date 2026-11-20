@@ -558,8 +558,7 @@ async function buildFallbackUnnumberedBrigades(
   const loose = built.filter((b) => b.unassigned).flatMap((b) => b.trips);
   if (loose.length > 0) {
     const sortedLoose = [...loose]
-      .sort((a, b) => a.startMinutes - b.startMinutes || a.id.localeCompare(b.id))
-      .slice(0, 400);
+      .sort((a, b) => a.startMinutes - b.startMinutes || a.id.localeCompare(b.id));
     const trips: BrigadeTripView[] = sortedLoose.map((trip) => ({
       id: trip.id,
       lineId: trip.line,
