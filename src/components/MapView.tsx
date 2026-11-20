@@ -8,6 +8,11 @@ import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
+import {
+  routeArrowIconHtml,
+  routeArrowIconSize,
+  routeArrowPoints,
+} from "@/lib/routeArrows";
 import type {
   BusStop,
   LiveBusVehicle,
@@ -410,6 +415,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const tripPane = map.createPane("trip");
     tripPane.style.zIndex = "575";
 
+    // Strzałki kierunku trasy: nad linią trasy, pod przystankami i pinezkami.
+    const routeArrowPane = map.createPane("routeArrows");
+    routeArrowPane.style.zIndex = "450";
+    routeArrowPane.style.pointerEvents = "none";
+
     const userPane = map.createPane("user");
     userPane.style.zIndex = "690";
     userPane.style.pointerEvents = "none";
@@ -513,7 +523,6 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const darkTiles = mapStyle !== "light";
     const main = darkTiles ? "#d7f36e" : "#0d4f3b";
     const casing = darkTiles ? "#0a1712" : "#ffffff";
-    const flow = darkTiles ? "#3b6b4f" : "#d7f36e";
 
     L.polyline(route.coords, {
       color: casing,
@@ -534,14 +543,22 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       interactive: false,
     }).addTo(group);
 
-    L.polyline(route.coords, {
-      color: flow,
-      weight: 2.6,
-      opacity: 0.95,
-      lineCap: "round",
-      className: "route-flow",
-      interactive: false,
-    }).addTo(group);
+    // Kierunek pokazują statyczne strzałki (skręty, odcinki w obie strony,
+    // długie proste). Żadnej animacji płynącej linii.
+    for (const arrow of routeArrowPoints(route.coords, route.steps)) {
+      const size = routeArrowIconSize(arrow);
+      L.marker([arrow.lat, arrow.lon], {
+        icon: L.divIcon({
+          className: "pin-wrap route-arrow-wrap",
+          html: routeArrowIconHtml(arrow),
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+        }),
+        pane: "routeArrows",
+        interactive: false,
+        keyboard: false,
+      }).addTo(group);
+    }
 
     const hitArea = L.polyline(route.coords, {
       color: "#000000",

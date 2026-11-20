@@ -154,3 +154,37 @@ Testy: `npm run test:legend` (pełna tabela legendy + rozpoznawanie wariantów +
 litera na wydruku), `npm run test:stops` (litery w rozkładzie przystanku
 z prawdziwego indeksu GTFS) oraz `npm run test:duty-pdf` (osobny wiersz ZJ,
 brak `linia/ZJ*`, nazwa „Zajezdnia”).
+
+## Kierunek trasy bez animacji — statyczne strzałki
+
+Ruchoma („płynąca”) linia na wyznaczonej trasie zniknęła: usunięto warstwę
+`.route-flow` i animację `routeDash` (`src/app/globals.css`). Zamiast migającego
+wzoru kierunek pokazują **statyczne strzałki** (`src/lib/routeArrows.ts`,
+rysowane jako `L.divIcon` w panelu `routeArrows`, `z-index` 450 — nad linią,
+pod przystankami i pinezkami). Nic się nie przesuwa, nie ma timerów ani
+`animation`.
+
+Skąd biorą się strzałki (w tej kolejności):
+
+1. **Skrzyżowania i skręty** – z opisu manewrów OSRM (`turn`, `fork`,
+   `roundabout`, `ramp`, `merge`, `end of road`, „lekko w prawo/lewo”).
+   Strzałka stoi ~10 m za skrzyżowaniem i pokazuje kierunek drogi, w którą
+   faktycznie skręca trasa. „Prosto”, zmiana nazwy ulicy i `continue` nie
+   tworzą strzałki.
+2. **Ta sama ulica w obie strony** (np. objazd i powrót) – odcinki w przeciwnym
+   kierunku bliżej niż 26 m dostają strzałki w **obu** kierunkach, w kolorze
+   pomarańczowym (`.route-arrow--reverse`), co ~130 m.
+3. **Długie proste** bez skrętów – pojedyncza, mniejsza strzałka co ~1100 m,
+   żeby na prostym odcinku też było widać kierunek.
+4. Trasa bez żadnych manewrów (np. tryb demo) – jedna strzałka w połowie
+   (dwie przy trasie > 1,5 km).
+
+Odstępy są pilnowane (min. 55 m, skręty 40 m, maks. 40 strzałek), więc trasa
+nie zmienia się w ciąg strzałek. Kolor strzałki (białe ramię + ciemna obwódka)
+jest czytelny na jasnych i ciemnych kafelkach, a `pointer-events: none` oraz
+`interactive: false` zostawiają działanie „kliknij linię, aby dodać punkt
+pośredni”.
+
+Testy: `npm run test:arrows` (kierunki na prostej, skręt, odcinek w obie
+strony, brak fałszywych trafień na objazdzie kwartału, odstępy i limit,
+odporność na `NaN`, czas liczenia oraz brak animacji w CSS i w `MapView`).
