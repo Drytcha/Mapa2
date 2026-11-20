@@ -1647,7 +1647,13 @@ function tripLegend(
         (st) => base.stopsById.get(st.stopId)?.name ?? base.stopNamesById.get(st.stopId) ?? "",
       )
     : undefined;
-  const code = legendCodeForTrip(line, { destination, headsign, stops });
+  // Końcowy przystanek z rozkładu jest pewniejszy niż `headsign` z GTFS.
+  const code = legendCodeForTrip(line, {
+    terminus: stops?.length ? stops[stops.length - 1] : undefined,
+    destination,
+    headsign,
+    stops,
+  });
   const value = { code, text: legendText(line, code) };
   cache.set(rawTripId, value);
   return value;

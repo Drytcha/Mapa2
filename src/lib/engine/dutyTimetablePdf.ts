@@ -4,8 +4,7 @@ import { summariseBrigade } from "../brigadeMetrics";
 import { distanceCoords } from "../core/spatial";
 import { isTechnicalRoute } from "../core/text";
 import {
-  legendCodeForTrip,
-  legendLineLabel,
+  legendCodesForTrip,
   legendLines,
   legendText,
   lineLegend,
@@ -141,20 +140,36 @@ export function tripEndsInZjazd(row: TimetablePdfTrip): boolean {
 }
 
 /**
- * Litera oficjalnego wariantu kursu (legenda linii, np. `b` na linii 2).
+ * Litery oficjalnej legendy dla kursu (np. `b` na linii 2, `sj` na linii 9).
  * Kurs bez litery jest kursem podstawowym.
+ *
+ * Kierunkiem jest **rzeczywisty ostatni przystanek kursu**, a nie `headsign`
+ * z GTFS: zdarzało się, że kurs kończący się na Dworcu Szczawienko miał
+ * w danych kierunek „Jachimowicza” i dostawał literę „do Jachimowicza”.
  */
-export function timetableVariantCode(row: TimetablePdfTrip): string {
-  if (isTechnicalLine(row.trip.lineId)) return "";
-  return legendCodeForTrip(row.trip.lineId, {
+export function timetableVariantCodes(row: TimetablePdfTrip): string[] {
+  if (isTechnicalLine(row.trip.lineId)) return [];
+  const names = row.stops.map((stop) => stop.name);
+  return legendCodesForTrip(row.trip.lineId, {
+    terminus: names.at(-1),
     destination: row.trip.destination,
-    stops: row.stops.map((stop) => stop.name),
+    stops: names,
   });
 }
 
-/** Numer linii na wydruku: sama linia (bez „/ZJ*”), plus litera wariantu. */
+/** Litery wariantu jako jeden napis do kolumny „Uwagi” (`sj`, `b`, …). */
+export function timetableVariantCode(row: TimetablePdfTrip): string {
+  return timetableVariantCodes(row).join("");
+}
+
+/** Numer linii na wydruku: sama linia, bez liter (te mają własną kolumnę). */
 export function timetableLineLabel(row: TimetablePdfTrip): string {
-  return legendLineLabel(row.trip.lineId, timetableVariantCode(row));
+  return row.trip.lineId.trim();
+}
+
+/** Litery do kolumny „Uwagi” — może ich być kilka (np. `sj`, `sd`). */
+export function timetableVariantLetters(row: TimetablePdfTrip): string {
+  return timetableVariantCode(row);
 }
 
 /** Warianty użyte w kursówce — do legendy na wydruku (kolejność oficjalna). */
@@ -166,12 +181,12 @@ export function timetableLegendRows(
   for (const row of duty.trips) {
     const line = row.trip.lineId.trim();
     if (isTechnicalLine(line)) continue;
-    const code = timetableVariantCode(row);
-    if (!code) continue;
-    const key = `${line.toUpperCase()}|${code}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ line, code, text: legendText(line, code) });
+    for (const code of timetableVariantCodes(row)) {
+      const key = `${line.toUpperCase()}|${code}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ line, code, text: legendText(line, code) });
+    }
   }
   const known = legendLines();
   const lineOrder = (line: string) => {
@@ -344,7 +359,8 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
   const margin = 6;
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
   const tableW = pageW - 2 * margin;
-  const widths = [10, 13, 40, 11, 29, 11, 29, 11, 29, 11, 29, 46, 14];
+  // Linia | Uwagi (litery legendy) | Godz. | Początek | 4× (godzina + przystanek) | Koniec | Przyj.
+  const widths = [9, 12, 13, 37, 11, 29, 11, 29, 11, 29, 11, 29, 43, 14];
   const scale = tableW / widths.reduce((sum, width) => sum + width, 0);
   const ws = widths.map((width) => width * scale);
   const xs = [margin];
@@ -430,11 +446,12 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
 
     const headerY = 26, headerH = 5;
     cell("Linia", xs[0], headerY, ws[0], headerH, 7, true);
-    cell("Godz.", xs[1], headerY, ws[1], headerH, 7, true);
-    cell("Początek", xs[2], headerY, ws[2], headerH, 7, true);
-    cell("Wybrane przystanki pośrednie · godzina odjazdu", xs[3], headerY, xs[11] - xs[3], headerH, 7, true);
-    cell("Koniec", xs[11], headerY, ws[11], headerH, 7, true);
-    cell("Przyj.", xs[12], headerY, ws[12], headerH, 7, true);
+    cell("Uwagi", xs[1], headerY, ws[1], headerH, 7, true);
+    cell("Godz.", xs[2], headerY, ws[2], headerH, 7, true);
+    cell("Początek", xs[3], headerY, ws[3], headerH, 7, true);
+    cell("Wybrane przystanki pośrednie · godzina odjazdu", xs[4], headerY, xs[12] - xs[4], headerH, 7, true);
+    cell("Koniec", xs[12], headerY, ws[12], headerH, 7, true);
+    cell("Przyj.", xs[13], headerY, ws[13], headerH, 7, true);
     const display = timetableDisplayRows(duty);
     const bodyTop = headerY + headerH;
     const legend = legendFooter(duty, tableW - 24);
@@ -454,13 +471,13 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
       }
       let values: string[];
       if (displayRow.kind === "inferred") {
-        values = [`${displayRow.code}~`, "—", displayRow.from, "", "", "", "", "", "", "", "", displayRow.to, "—"];
+        values = [`${displayRow.code}~`, "", "—", displayRow.from, "", "", "", "", "", "", "", "", displayRow.to, "—"];
       } else {
         const { row } = displayRow;
         const { trip, stops } = row;
         if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
         const intermediate = selectTimetableCheckpoints(stops);
-        values = [timetableLineLabel(row), clock(stops[0].departure), stops[0].name];
+        values = [timetableLineLabel(row), timetableVariantLetters(row), clock(stops[0].departure), stops[0].name];
         for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
         values.push(stops[stops.length - 1].name, clock(stops[stops.length - 1].arrival));
       }

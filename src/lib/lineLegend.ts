@@ -31,26 +31,63 @@ export interface LineLegendRule extends LineLegendEntry {
   to?: readonly string[];
   /** Wzorce przystanków na trasie — wymagane wszystkie. */
   via?: readonly string[];
+  /**
+   * Grupa wykluczających się wariantów. W liniach złożonych (9 i 19) litera
+   * z tej samej grupy nie dokleja się do drugiej — kurs jedzie tylko do
+   * jednego przystanku końcowego.
+   */
+  group?: string;
 }
 
 /** Kolejność linii w legendzie wydruku. */
 const LINE_ORDER = ["2", "5", "8", "9", "12", "15", "18", "19", "A", "C", "EX"];
 
 /**
- * Linie 9 i 19 mają tę samą oficjalną legendę. Kolejność dopasowania ma
- * znaczenie: kurs do Jachimowicza (Faurecia) musi trafić w `j` przed ogólnym
- * „Jachimowicza” (`c`).
+ * Linie 9 i 19 mają tę samą oficjalną legendę (kolumna „Uwagi” w rozkładzie
+ * dla kierowców). Litery nie wykluczają się: kurs może mieć np. `sj` (przez
+ * szpital i do Jachimowicza) albo `sd` (przez szpital, do Dworca Szczawienko).
+ * Wykluczają się tylko warianty końcowe (grupa) — kurs kończy się w jednym
+ * miejscu.
  */
 const LINE_9_19_RULES: readonly LineLegendRule[] = [
-  { code: "j", text: "kurs do ul. Jachimowicza (Faurecia)", to: ["faurecia"] },
-  { code: "c", text: "kurs do ul. Jachimowicza", to: ["jachimowicz"] },
+  {
+    code: "j",
+    text: "kurs do ul. Jachimowicza (Faurecia)",
+    to: ["faurecia"],
+    group: "koniec",
+  },
+  {
+    code: "c",
+    text: "kurs do ul. Jachimowicza",
+    to: ["jachimowicz"],
+    group: "koniec",
+  },
   {
     code: "a",
     text: "kurs do przystanku Podwale - Forteczna",
     to: ["forteczna"],
+    group: "koniec",
   },
-  { code: "d", text: "kurs do Dworca Szczawienko", to: ["szczawienko"] },
+  {
+    code: "d",
+    text: "kurs do Dworca Szczawienko",
+    to: ["szczawienko"],
+    group: "koniec",
+  },
+  { code: "s", text: "kurs przez ul. Sokołowskiego /szpital/", via: ["szpital"] },
+  {
+    code: "*",
+    text: "na przystanku Uczniowska-US przesiadka pasażerów linią-18",
+    via: ["uczniowska urzad skarbowy"],
+  },
 ];
+
+/**
+ * Linie, których litery się sumują („Uwagi” z rozpiski kierowcy), oraz
+ * kolejność liter w kolumnie: najpierw `s` (trasa), potem koniec, na końcu `*`.
+ */
+const COMBINED_LINES = new Set(["9", "19"]);
+const COMBINE_ORDER: readonly string[] = ["s", "a", "d", "c", "j", "*"];
 
 const RULES: Record<string, readonly LineLegendRule[]> = {
   "2": [
@@ -222,11 +259,11 @@ const DISPLAY_ORDER: Record<string, readonly string[]> = {
   "2": ["b", "k", "d", "p", "v"],
   "5": ["*", "^", "e", "u", "k"],
   "8": ["a", "l", "z", "d", "g", "s", "y"],
-  "9": ["a", "d", "c", "j"],
+  "9": ["*", "a", "d", "s", "c", "j"],
   "12": ["a", "d", "p"],
   "15": ["p", "t", "a", "b", "m", "z"],
   "18": ["q", "j", "m", "r", "t", "u"],
-  "19": ["a", "d", "c", "j"],
+  "19": ["*", "a", "d", "s", "c", "j"],
   A: ["a", "s"],
   C: ["a", "v"],
   EX: ["v"],
@@ -253,7 +290,12 @@ export function lineLegend(line: string): LineLegendEntry[] | null {
 export function legendText(line: string, code: string): string {
   const rules = RULES[normalizeLine(line)];
   if (!rules || !code) return "";
-  return rules.find((rule) => rule.code === code)?.text ?? "";
+  if (code.length === 1) return rules.find((rule) => rule.code === code)?.text ?? "";
+  // Litery złożone (np. `sj` na linii 9) opisujemy po kolei.
+  return [...code]
+    .map((single) => rules.find((rule) => rule.code === single)?.text ?? "")
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Czy linia ma warianty zależne od trasy (potrzebna lista przystanków)? */
@@ -279,26 +321,32 @@ export function legendLines(): string[] {
  * (`to`). Źródła bez pełnej trasy (np. rozkład awaryjny) nie dostają
  * wymyślonych liter — zostają przy kierunku podstawowym.
  */
-export function legendCodeForTrip(
+export function legendCodesForTrip(
   line: string,
   trip: {
+    /** Rzeczywisty przystanek końcowy kursu (najpewniejszy). */
+    terminus?: string;
     destination?: string;
     headsign?: string;
     stops?: readonly string[];
   },
-): string {
-  const rules = RULES[normalizeLine(line)];
-  if (!rules) return "";
+): string[] {
+  const key = normalizeLine(line);
+  const rules = RULES[key];
+  if (!rules) return [];
   // „… przez cokolwiek” opisuje trasę, nie cel — do litery wariantu liczy się
   // tylko końcowy przystanek, inaczej „przez ul. Beethovena” udawałoby kurs
   // kończący się na Beethovena.
-  const destination = (trip.destination || trip.headsign || "").replace(
+  const destination = (trip.terminus || trip.destination || trip.headsign || "").replace(
     /\s+(?:przez|via)\s+.*$/iu,
     "",
   );
   const target = foldStopKey(destination);
   const route = (trip.stops ?? []).map(foldStopKey).filter(Boolean);
+  const codes: string[] = [];
+  const usedGroups = new Set<string>();
   for (const rule of rules) {
+    if (rule.group && usedGroups.has(rule.group)) continue;
     if (rule.to && (!target || !rule.to.some((pattern) => target.includes(pattern)))) {
       continue;
     }
@@ -306,13 +354,37 @@ export function legendCodeForTrip(
       if (!route.length) continue;
       if (!rule.via.every((pattern) => route.some((stop) => stop.includes(pattern)))) continue;
     }
-    return rule.code;
+    codes.push(rule.code);
+    if (rule.group) usedGroups.add(rule.group);
+    // Linie z pojedynczym wariantem: pierwszy pasujący wygrywa.
+    if (!COMBINED_LINES.has(key)) return [rule.code];
   }
-  return "";
+  if (codes.length < 2) return codes;
+  return codes.sort(
+    (a, b) => COMBINE_ORDER.indexOf(a) - COMBINE_ORDER.indexOf(b),
+  );
+}
+
+/**
+ * Litery wariantów kursu, np. `sj` (linia 9). Pusty napis = kurs podstawowy.
+ * Źródła bez pełnej trasy (np. rozkład awaryjny) nie dostają wymyślonych liter.
+ */
+export function legendCodeForTrip(
+  line: string,
+  trip: {
+    terminus?: string;
+    destination?: string;
+    headsign?: string;
+    stops?: readonly string[];
+  },
+): string {
+  return legendCodesForTrip(line, trip).join("");
 }
 
 /** Etykieta kursu do wydruku: numer linii + litera wariantu (np. `2b`). */
 export function legendLineLabel(line: string, code: string): string {
   const clean = line.trim();
-  return code ? `${clean}${code}` : clean;
+  if (!code) return clean;
+  // Jedna litera trzyma się numeru (2b, 8s); kilka liter idzie po spacji (9 sj).
+  return code.length === 1 ? `${clean}${code}` : `${clean} ${code}`;
 }

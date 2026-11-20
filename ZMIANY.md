@@ -136,28 +136,40 @@ Gdzie to działa:
   `18q`), a stopka każdej strony zawiera legendę **tylko użytych** wariantów,
 - **opis funkcji w Pomocy** – zaktualizowany do oficjalnej legendy.
 
-### Linie 9 i 19 — warianty dla kierowców
+### Kolumna „Uwagi” z literami legendy — jak w rozkładzie dla kierowców
 
-Obie linie mają tę samą oficjalną legendę:
+Oficjalny rozkład z `RJ_KWKI_90(Z0)` ma po numerze linii osobną kolumnę
+**Uwagi**, a litery opisują kursy — **kurs może mieć kilka liter naraz**
+(`sj`, `sd`, `j*`, `*a`). Tak samo działa teraz wydruk z planisty:
 
-| Litera | Znaczenie                              |
-| ------ | -------------------------------------- |
-| a      | kurs do przystanku Podwale - Forteczna |
-| d      | kurs do Dworca Szczawienko             |
-| c      | kurs do ul. Jachimowicza               |
-| j      | kurs do ul. Jachimowicza (Faurecia)    |
+| Kolumna | Zawartość |
+| ------- | --------- |
+| Linia   | samo oznaczenie linii (`9`, `19`, `2`, `PRZ`, `ZJ`…) — bez liter |
+| Uwagi   | litery legendy dla tego kursu, np. `sj`, `sd`, `a`, `c` |
 
-Dopasowanie idzie po **końcowym przystanku** kursu, więc nie zależy od nazwy
-przystanku pośredniego: `j` (Faurecia) jest sprawdzane przed `c`
-(Jachimowicza), a „Toyota końcowy” zostaje przy `c`. Litery trafiają do
-rozkładu przystanku i do kursówek (`9a`, `9j`, `19d`…).
+Legenda linii 9 i 19 (wspólna, kolejność jak w rozpisce):
 
-**Legenda na wydruku jest teraz pełna.** Stopka kursówki wypisuje **wszystkie**
-warianty każdej linii, która występuje w danej kursówce — nie tylko te użyte
-w tym dniu. Kierowca podmieniający kurs ma więc pod ręką znaczenie każdej
-litery. Stopka rezerwuje na to stałe 3 linijki (`TIMETABLE_LEGEND_RESERVED_LINES`)
-i tylko wtedy, gdy kursówka ma choć jeden wariant; jeśli pełna legenda się nie
-mieści, druk wraca do listy wariantów użytych w tym dniu.
+| Litera | Znaczenie |
+| --- | --- |
+| `*` | na przystanku Uczniowska-US przesiadka pasażerów linią-18 |
+| `a` | kurs do przystanku Podwale - Forteczna |
+| `d` | kurs do Dworca Szczawienko |
+| `s` | kurs przez ul. Sokołowskiego /szpital/ |
+| `c` | kurs do ul. Jachimowicza |
+| `j` | kurs do ul. Jachimowicza (Faurecia) |
+
+- Litery **sumują się**: `s` (przez szpital) i `*` (przesiadka) dokładają się do
+  litery końca kursu. Wykluczają się tylko warianty końcowe — kurs kończy się
+  w jednym miejscu (`a`/`d`/`c`/`j`). Kolejność w kolumnie: `s`, koniec, `*`.
+- **Kierunkiem jest rzeczywisty ostatni przystanek kursu**, nie `trip_headsign`
+  z GTFS. Wcześniej kurs kończący się na Dworcu Szczawienko dostawał literę
+  „do Jachimowicza”, bo taki miał `headsign`; teraz dostaje `d` (i `s`, jeśli
+  jechał przez szpital).
+- Stopka wydruku wypisuje **pełną** legendę każdej linii z kursówki (wszystkie
+  litery, nie tylko użyte w tym dniu). Stopka rezerwuje stałe 3 linijki
+  (`TIMETABLE_LEGEND_RESERVED_LINES`) i pojawia się tylko wtedy, gdy kursówka ma
+  choć jedną literę; jeśli pełna legenda się nie mieści, druk wraca do liter
+  użytych w danym dniu.
 
 ## Zjazd zawsze osobno, bez „C/ZJ*”
 

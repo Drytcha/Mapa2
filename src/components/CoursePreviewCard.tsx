@@ -34,9 +34,12 @@ export default function CoursePreviewCard({
   const operator = OPERATOR_STYLES[course.operatorKey];
   const dateLabel = `${course.dateId.slice(6, 8)}.${course.dateId.slice(4, 6)}.${course.dateId.slice(0, 4)}`;
   // Oficjalna legenda linii: litera wariantu wynika z kierunku i trasy kursu.
+  // Kierunkiem jest rzeczywisty koniec kursu — `headsign` bywa nieaktualny.
+  const courseStops = course.stops.map((stop) => stop.name);
   const variantCode = legendCodeForTrip(course.routeShort, {
+    terminus: courseStops.at(-1),
     destination: course.headsign,
-    stops: course.stops.map((stop) => stop.name),
+    stops: courseStops,
   });
   const variantText = legendText(course.routeShort, variantCode);
 
