@@ -13,7 +13,8 @@
     "test:stops:real": "tsx scripts/test-stop-real.ts",
     "test:duty-pdf": "tsx scripts/test-line-legend.ts && tsx scripts/test-duty-pdf.ts && tsx scripts/test-duty-pdf-ui.tsx && tsx scripts/test-technical-duty.ts && tsx scripts/test-gtfs-zjazd.ts && tsx scripts/test-inferred-duty.ts && tsx scripts/test-duty-pdf-days.ts",
     "test:legend": "tsx scripts/test-line-legend.ts",
-    "test:arrows": "tsx scripts/test-route-arrows.ts"
+    "test:arrows": "tsx scripts/test-route-arrows.ts",
+    "test:perf": "tsx scripts/test-map-perf.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",

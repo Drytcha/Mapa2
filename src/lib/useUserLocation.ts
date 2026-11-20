@@ -168,6 +168,8 @@ export function useUserLocation({ autoStart = true } = {}): UseUserLocation {
   const [location, setLocation] = useState<UserLocation | null>(null);
   const watchRef = useRef<number | null>(null);
   const motionRef = useRef<MotionState | null>(null);
+  const lastEmittedRef = useRef<UserLocation | null>(null);
+  const lastEmitAtRef = useRef(0);
 
   const stop = useCallback(() => {
     if (watchRef.current !== null && typeof navigator !== "undefined") {
@@ -214,7 +216,10 @@ export function useUserLocation({ autoStart = true } = {}): UseUserLocation {
           maxSpeedKmh: motion.maxSpeedKmh,
           distanceM: motion.distanceM,
         };
-        setLocation({
+        // GPS potrafi „drgać" o metr nawet gdy telefon leży na biurku. Każdy taki
+        // odczyt przerysowywał całą stronę planisty, więc pomijamy drobne szumy:
+        // emitujemy nową pozycję dopiero po realnym ruchu (albo po 3 s ciszy).
+        const next: UserLocation = {
           lat: fix.lat,
           lon: fix.lon,
           accuracy: fix.accuracy,
@@ -225,7 +230,23 @@ export function useUserLocation({ autoStart = true } = {}): UseUserLocation {
           timestamp: fix.timestamp,
           maxSpeedKmh: motion.maxSpeedKmh,
           distanceM: motion.distanceM,
-        });
+        };
+        const previous = lastEmittedRef.current;
+        const now = Date.now();
+        const movedMeters = previous
+          ? distanceCoords(previous.lat, previous.lon, next.lat, next.lon)
+          : Infinity;
+        const meaningfullyDifferent =
+          !previous ||
+          movedMeters >= 1.5 ||
+          Math.abs(next.accuracy - previous.accuracy) >= 5 ||
+          Math.abs((next.speedKmh ?? 0) - (previous.speedKmh ?? 0)) >= 2 ||
+          now - lastEmitAtRef.current >= 3_000;
+        if (meaningfullyDifferent) {
+          lastEmittedRef.current = next;
+          lastEmitAtRef.current = now;
+          setLocation(next);
+        }
         setStatus("active");
       },
       (error) => {

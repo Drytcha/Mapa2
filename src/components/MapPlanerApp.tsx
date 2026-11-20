@@ -101,8 +101,10 @@ import {
   setFleetDemand,
   subscribeSharedClock,
   triggerFleetRefresh,
+  type LiveFleetSnapshot,
 } from "@/lib/core/runtimeHub";
 import { coordKey } from "@/lib/core/spatial";
+import PerfHud from "@/components/PerfHud";
 import { isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
@@ -513,17 +515,36 @@ function MapPlanerWorkspace() {
 
   // Subscribe once to the central deduplicated live-fleet stream (re-renders only when fleet changes)
   useEffect(() => {
-    const initial = getLatestFleetSnapshot();
-    if (initial) {
-      setLiveVehicles(initial.vehicles);
-      setLiveTraffic(initial.traffic);
-    }
-    const offUpdate = onRuntimeEvent("fleet:updated", ({ snapshot }) => {
-      setLiveVehicles(snapshot.vehicles);
+    // Każdy tick floty to pełny re-render planisty, a pozycje często się nie
+    // zmieniają (te same wozy, ten sam przystanek). Porównujemy więc odcisk
+    // danych i pomijamy identyczne aktualizacje — inaczej mapa „drga” co 2,5 s.
+    const fleetSignature = (vehicles: LiveBusVehicle[]) =>
+      vehicles
+        .map(
+          (vehicle) =>
+            `${vehicle.vehicleId}:${vehicle.lat.toFixed(5)}:${vehicle.lon.toFixed(5)}:` +
+            `${vehicle.delaySeconds}:${vehicle.speedKmh?.toFixed(1) ?? ""}:` +
+            `${vehicle.routeName}:${vehicle.kursowka ?? ""}:${vehicle.bearing?.toFixed(0) ?? ""}`
+        )
+        .join("|");
+    let lastVehicleSignature = "";
+    const applySnapshot = (snapshot: LiveFleetSnapshot) => {
+      const signature = fleetSignature(snapshot.vehicles);
       setLiveTraffic(snapshot.traffic);
+      if (signature === lastVehicleSignature) return;
+      lastVehicleSignature = signature;
+      setLiveVehicles(snapshot.vehicles);
       setSelectedLiveBus((prev) =>
         prev ? snapshot.vehicles.find((v) => v.vehicleId === prev.vehicleId) ?? prev : null
       );
+    };
+
+    const initial = getLatestFleetSnapshot();
+    if (initial) {
+      applySnapshot(initial);
+    }
+    const offUpdate = onRuntimeEvent("fleet:updated", ({ snapshot }) => {
+      applySnapshot(snapshot);
     });
     const offLoading = onRuntimeEvent("fleet:loading", setLiveLoading);
     return () => {
@@ -2149,6 +2170,7 @@ function MapPlanerWorkspace() {
 
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
+      <PerfHud />
       <TopBar
         route={activeRoute}
         isRouting={isRouting}

@@ -188,3 +188,52 @@ pośredni”.
 Testy: `npm run test:arrows` (kierunki na prostej, skręt, odcinek w obie
 strony, brak fałszywych trafień na objazdzie kwartału, odstępy i limit,
 odporność na `NaN`, czas liczenia oraz brak animacji w CSS i w `MapView`).
+
+## Płynność planisty: mniej przerasterowania, mniej przerysowań
+
+Planista „gubił klatki" przy przesuwaniu i przybliżaniu mapy oraz przy każdym
+ticku flory/GPS. Cztery najdroższe rzeczy:
+
+1. **Ciemna mapa filtrowana w całości.** Domyślny motyw to ciemny, a motyw
+   ciemny oznacza kafle OSM przepuszczone przez
+   `filter: invert(0.86) hue-rotate(180deg) brightness(1.38) contrast(0.98) saturate(0.86)`
+   nałożony na **całą warstwę kafli**. Przeglądarka przerasterowywała wtedy cały
+   widok mapy w każdej klatce ruchu. Teraz filtr siedzi na **pojedynczych
+   kaflach** (`.basemap-layer--dark .leaflet-tile`) — kafel jest nieruchomy, więc
+   wynik filtra zostaje w pamięci, a przesuwanie to samo compositing.
+2. **24 px rozmycia tła w ~20 panelach nad mapą.** Panele mają tło kryjące w
+   88–96%, więc rozmycie 24 px nic nie dawało wizualnie, a kazało przeglądarce
+   rozmywać tło pod każdym panelem w każdej klatce ruchu mapy. `--blur-xl`
+   schodzi do 8 px (`@theme` w `globals.css`).
+3. **Etykiety przystanków.** Przy `zoom ≥ 16` mapa otwierała tooltip dla
+   **każdego** widocznego przystanku (nawet 200+ elementów DOM) i przepisywała
+   `tabindex` wszystkich ~550 markerów przy każdym `moveend`. Teraz otwarte
+   etykiety są śledzone w `Set`, ograniczone do 80 najbliższych środka widoku
+   (`MAX_STOP_LABELS`), `tabindex` zapisujemy tylko przy zmianie stanu, a
+   `moveend` + `zoomend` w jednej klatce dają jedno odświeżenie (rAF).
+4. **Pełny re-render planisty na szum danych.** GPS potrafi drgnąć o metr, gdy
+   telefon leży na biurku — każdy taki odczyt przerysowywał całe drzewo.
+   `useUserLocation` wysyła nową pozycję dopiero po ruchu ≥ 1,5 m, zmianie
+   dokładności o 5 m, prędkości o 2 km/h albo po 3 s ciszy. Aktualizacje floty
+   mają dodatkowo odcisk danych (`fleetSignature`), więc identyczny snapshot nie
+   wywołuje re-rendera.
+
+Dodatkowo:
+
+- `updateWhenZooming: false` na kaflach — nowe kafle dopiero po animacji zoomu,
+  w trakcie wystarcza przeskalowany raster,
+- strzałki trasy liczą się w kolejnej klatce (`requestAnimationFrame`), więc
+  sama linia trasy pojawia się natychmiast po odpowiedzi OSRM,
+- usunięte selektory `:has()` (były na ~600 markerach) — kursor „grab" to teraz
+  klasa `pin-wrap--grabbable`,
+- `.route-arrow` bez `drop-shadow` (filtr = dodatkowa rasteryzacja przy zoomie).
+
+**Jak to sprawdzić.** `?perf=1` (albo
+`localStorage.setItem("mapplaner.perf","1")`) włącza licznik w lewym dolnym
+rogu: FPS, najdłuższą klatkę, liczbę klatek > 34 ms na sekundę i liczbę węzłów
+DOM. Bez tego parametru `PerfHud` nic nie renderuje i nie zakłada timerów.
+
+Testy: `npm run test:perf` (pilnuje, żeby filtr ciemnych kafli nie wrócił na
+całą warstwę, rozmycie paneli było ≤ 10 px, nie było `:has()`, etykiety
+przystanków miały limit, kafle nie pytały serwera w trakcie zoomu, GPS miał
+próg ruchu, flota odcisk danych, a licznik FPS był opt-in).
