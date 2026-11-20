@@ -15,6 +15,7 @@ export interface SavedTravelerPlace {
   lat: number;
   lon: number;
   stopId?: string;
+  stopIds?: string[];
   createdAt: string;
 }
 
@@ -73,6 +74,7 @@ export async function saveTravelerPlace(point: JourneyPoint): Promise<SavedTrave
       id: existing?.id ?? Math.max(Date.now(), ...places.map((p) => p.id + 1)),
       lat: point.lat, lon: point.lon, label: point.label.slice(0, 120),
       stopId: point.stopId ?? existing?.stopId,
+      stopIds: point.stopIds ?? existing?.stopIds,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     };
     const next = [place, ...places.filter((p) => p.id !== place.id)].slice(0, 20);

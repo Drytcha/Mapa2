@@ -4,6 +4,7 @@ import { coordKey, distanceCoords, isInsideBounds, type GeoBounds } from "./core
 import { dedupeLines, foldPolish, foldStopKey } from "./core/text";
 import { readStorageJson, writeStorageJson } from "./core/time";
 import { loadOfficialStops } from "./engine/officialStops";
+import { mergeTimetableStops } from "./engine/mergeTimetableStops";
 import { getTimetableStops, tidyStopName } from "./engine/timetableStops";
 import type { BusStop } from "./types";
 
@@ -25,7 +26,7 @@ export const WALBRZYCH_ZOOM = 14;
 
 /** Known stops are available immediately, even while the current GTFS is loading. */
 export function getSnapshotBusStops(bounds: Bounds = WALBRZYCH_BOUNDS): BusStop[] {
-  return loadOfficialStops().stops
+  const official = loadOfficialStops().stops
     .filter(
       (stop) =>
         stop.lines.length > 0 &&
@@ -33,8 +34,9 @@ export function getSnapshotBusStops(bounds: Bounds = WALBRZYCH_BOUNDS): BusStop[
         Number.isFinite(stop.lon) &&
         isInsideBounds(stop.lat, stop.lon, bounds)
     )
-    .map((stop) => ({
+    .map((stop): BusStop => ({
       id: `snapshot-${stop.id}`,
+      snapshotIds: [String(stop.id)],
       name: tidyStopName(stop.name),
       lat: stop.lat,
       lon: stop.lon,
@@ -44,6 +46,8 @@ export function getSnapshotBusStops(bounds: Bounds = WALBRZYCH_BOUNDS): BusStop[
       kind: "bus_stop" as const,
       source: "snapshot" as const,
     }));
+  const evidence = new Map(loadOfficialStops().stops.map((stop) => [`snapshot-${stop.id}`, { symbol: stop.symbol }]));
+  return mergeTimetableStops(official, evidence);
 }
 
 /** A viewport refresh must not discard stops in the rest of the network. */
@@ -78,8 +82,8 @@ export function findRefreshedBusStop(selected: BusStop, refreshed: BusStop[]): B
   return candidates[0]?.stop ?? null;
 }
 
-const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6.", "mapplaner.stops.v7."];
-const CACHE_PREFIX = "mapplaner.stops.v8.";
+const LEGACY_CACHE_PREFIXES = ["mapplaner.stops.v5.", "mapplaner.stops.v6.", "mapplaner.stops.v7.", "mapplaner.stops.v8."];
+const CACHE_PREFIX = "mapplaner.stops.v9.";
 const CACHE_TTL = 12 * 60 * 60_000;
 const memoryCache = new LruTtlCache<string, BusStop[]>(24, CACHE_TTL);
 let legacyPurged = false;

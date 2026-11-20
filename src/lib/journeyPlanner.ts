@@ -57,6 +57,7 @@ export interface JourneyPoint {
   lon: number;
   label: string;
   stopId?: string;
+  stopIds?: string[];
 }
 
 export interface JourneyStop {
@@ -991,14 +992,14 @@ export async function planJourneys(options: {
     origin.lat,
     origin.lon,
     ACCESS_RADIUS_FALLBACK_M,
-  ).filter(([s]) => !origin.stopId || graph.stops[s].id === origin.stopId);
+  ).filter(([s]) => origin.stopIds?.length ? origin.stopIds.includes(graph.stops[s].id) : !origin.stopId || graph.stops[s].id === origin.stopId);
   const egress = stopsWithin(
     graph,
     destination.lat,
     destination.lon,
     ACCESS_RADIUS_FALLBACK_M,
   ).filter(
-    ([s]) => !destination.stopId || graph.stops[s].id === destination.stopId,
+    ([s]) => destination.stopIds?.length ? destination.stopIds.includes(graph.stops[s].id) : !destination.stopId || graph.stops[s].id === destination.stopId,
   );
   if (!access.length) {
     return {

@@ -326,6 +326,7 @@ export default function GtfsSchedule({
       lon: stop.lon,
       name: stop.name,
       stopId: stop.gtfsId,
+      stopIds: stop.gtfsIds,
       fromMs: start.toMillis(),
       toMs: start.plus({ days: 1 }).toMillis(),
     };
@@ -418,7 +419,7 @@ export default function GtfsSchedule({
       window.clearTimeout(fallbackTimer);
       fallbackController.abort();
     };
-  }, [stop.id, stop.lat, stop.lon, stop.name, stop.gtfsId, date, retry]);
+  }, [stop.id, stop.lat, stop.lon, stop.name, stop.gtfsId, stop.gtfsIds, stop.snapshotIds, date, retry]);
 
   useEffect(() => {
     return subscribeSharedClock(60_000, (tickNow) => {

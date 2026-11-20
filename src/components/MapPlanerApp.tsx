@@ -1294,6 +1294,7 @@ function MapPlanerWorkspace() {
             lon: stop.lon,
             label: stopDisplayName(stop),
             stopId: stop.gtfsId,
+            stopIds: stop.gtfsIds,
           }
         : {
             lat,
@@ -1344,6 +1345,7 @@ function MapPlanerWorkspace() {
         lon: stop.lon,
         label: stopDisplayName(stop),
         stopId: stop.gtfsId,
+        stopIds: stop.gtfsIds,
       };
       setSelectedStop(null);
       setTripPick(null);
@@ -1411,6 +1413,7 @@ function MapPlanerWorkspace() {
         lon,
         label,
         stopId: stop?.gtfsId,
+        stopIds: stop?.gtfsIds,
       });
       if (saved) {
         setSavedPlaces((current) => [
@@ -2223,7 +2226,7 @@ function MapPlanerWorkspace() {
               usedStopKeys={usedStopKeys}
               onBusStopClick={(stop) => {
                 if (tripPick) {
-                  const point: TripPoint = { lat: stop.lat, lon: stop.lon, label: stop.name, stopId: stop.gtfsId };
+                  const point: TripPoint = { lat: stop.lat, lon: stop.lon, label: stop.name, stopId: stop.gtfsId, stopIds: stop.gtfsIds };
                   if (tripPick === "origin") {
                     updateTripOrigin(point);
                     showToast("Punkt startowy ustawiony na przystanku.");

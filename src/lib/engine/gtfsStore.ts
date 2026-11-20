@@ -1605,6 +1605,7 @@ export async function getStopDepartures(options: {
   lon: number;
   name?: string;
   stopId?: string;
+  stopIds?: readonly string[];
   fromMs?: number;
   /** Exclusive end of a timetable window; with no limit, return every departure. */
   toMs?: number;
@@ -1624,6 +1625,29 @@ export async function getStopDepartures(options: {
   /** The requested day is outside the feed's explicitly declared validity. */
   outsideFeedValidity?: boolean;
 }> {
+  // Read each original platform ID independently (including its live feed),
+  // then merge before applying the limit so no branch of the timetable is lost.
+  const ids = [...new Set(options.stopIds ?? [])];
+  if (ids.length > 1) {
+    const store = await ensureGtfsSeeded();
+    if (ids.some((id) => !store.base.stopsById.has(id))) throw new Error("Brak identyfikatora połączonego przystanku w GTFS.");
+    const parts = await Promise.all(ids.map((stopId) => getStopDepartures({
+      ...options, stopId, stopIds: undefined, limit: undefined,
+      // Unbounded requests otherwise default to ten results per source.
+      toMs: options.toMs ?? Number.MAX_SAFE_INTEGER,
+    })));
+    const departures = new Map<string, StopDepartureItem>();
+    for (const part of parts) for (const departure of part.departures) {
+      departures.set(`${departure.tripId}|${departure.serviceDateId}|${departure.atMs}`, departure);
+    }
+    const limit = options.limit === undefined && Number.isFinite(options.toMs)
+      ? Infinity : Math.min(500, Math.max(1, options.limit ?? 10));
+    return {
+      matched: parts[0].matched,
+      departures: [...departures.values()].sort((a, b) => a.atMs - b.atMs).slice(0, limit),
+      outsideFeedValidity: parts.some((part) => part.outsideFeedValidity),
+    };
+  }
   const store = await ensureGtfsSeeded();
   const { lat, lon } = options;
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {

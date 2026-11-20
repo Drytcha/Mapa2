@@ -96,7 +96,23 @@ export async function getFallbackStopDepartures(
   toMs: number,
   signal: AbortSignal
 ): Promise<StopScheduleResult> {
-  const remote = matchFallbackStop(stop, await getRemoteStops(signal));
+  const allStops = await getRemoteStops(signal);
+  const ids = [...new Set(stop.gtfsIds ?? stop.snapshotIds ?? [])];
+  if (ids.length > 1) {
+    // A partial fallback would silently omit some departures. Require an exact
+    // source ID for every member instead of guessing across platforms.
+    const remotes = ids.map((id) => allStops.find((candidate) => candidate.id === id &&
+      foldStopKey(candidate.name) === foldStopKey(stop.name) &&
+      distanceCoords(stop.lat, stop.lon, candidate.lat, candidate.lon) <= 25));
+    if (remotes.some((remote) => !remote)) throw new Error("Nie udało się dopasować wszystkich części przystanku do rozkładu awaryjnego.");
+    const parts = await Promise.all(remotes.map((remote) => getFallbackStopDepartures(
+      { ...stop, lat: remote!.lat, lon: remote!.lon, gtfsId: remote!.id, gtfsIds: undefined, snapshotIds: undefined }, fromMs, toMs, signal
+    )));
+    const departures = new Map<string, StopDepartureItem>();
+    for (const part of parts) for (const departure of part.departures) departures.set(departure.tripId, departure);
+    return { matched: parts[0].matched, departures: [...departures.values()].sort((a, b) => a.atMs - b.atMs) };
+  }
+  const remote = matchFallbackStop(stop, allStops);
   if (!remote) throw new Error("Nie udało się jednoznacznie dopasować przystanku do rozkładu awaryjnego.");
 
   const departures = new Map<string, StopDepartureItem>();
