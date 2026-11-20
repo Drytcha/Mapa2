@@ -59,11 +59,29 @@ if (process.env.DUTY_PDF_TEST_DENSE_OUTPUT) {
 }
 assert.equal(densePdf.getNumberOfPages(), 1, "dense duty and warning must not create another page");
 const pages = densePdf.internal.pages as unknown as string[][];
-// 4 duty summary boxes + 6 shaded header cells (each background and border)
-// + 13 bordered cells for every trip. No extra course rows are emitted.
-assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 4 + 12 + 13 * 80);
+// Six summary boxes, six shaded header cells (background + border), one
+// background for every other course and thirteen bordered cells per course.
+assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 6 + 12 + 40 + 13 * 80);
+// Full-width fills must be on the second, fourth, ... course only. The
+// header is already shaded; do not shade the first course too.
+const stripeRects = (page: string[]) => page.filter((instruction) => {
+  if (!/ re(?:\s|$)/.test(instruction)) return false;
+  const [, , width] = instruction.split(" ").map(Number);
+  return width > 800;
+});
+const denseStripes = stripeRects(pages[1]);
+assert.equal(denseStripes.length, 40);
+const rowHeight = (densePdf.internal.pageSize.getHeight() - 18 - 31) / 80;
+for (let i = 0; i < 40; i++) {
+  const y = Number(denseStripes[i].split(" ")[1]);
+  const expectedY = (densePdf.internal.pageSize.getHeight() - 31 - (i * 2 + 1) * rowHeight) * 72 / 25.4;
+  assert.ok(Math.abs(y - expectedY) < 0.01, `Wrong zebra stripe at row ${i * 2 + 1}`);
+}
 const multi = await createTimetablePdf({ ...data, duties: [data.duties[0], data.duties[0]] });
 assert.equal(multi.getNumberOfPages(), 2, "each of two duties occupies exactly one page");
+const multiPages = multi.internal.pages as unknown as string[][];
+assert.equal(stripeRects(multiPages[1]).length, 1);
+assert.equal(stripeRects(multiPages[2]).length, 1, "zebra striping restarts after each header");
 const loose = { ...dense.duties[0], item: { ...dense.duties[0].item, unassigned: true } };
 const looseSheets = timetablePdfSheets([loose]);
 assert.deepEqual(looseSheets.map((sheet) => sheet.duty.trips.length), [32, 32, 16]);
