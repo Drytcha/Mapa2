@@ -13,7 +13,7 @@ export type TimetableExportScope =
 
 export interface TimetablePdfTrip {
   trip: BrigadeTripView;
-  stops: Array<{ name: string; arrival: number; departure: number }>;
+  stops: Array<{ name: string; arrival: number; departure: number; stopHeadsign?: string }>;
 }
 export interface TimetablePdfDuty {
   item: BrigadeItem;
@@ -60,7 +60,7 @@ export async function collectTimetablePdfData(routes: GtfsLineItem[], dateId: st
       const stops = times.map((time) => {
         const name = store.base.stopsById.get(time.stopId)?.name ?? store.base.stopNamesById.get(time.stopId);
         if (!name) throw new Error(`Brak przystanku ${time.stopId} w kursie ${trip.id}.`);
-        return { name, arrival: time.arrivalMinutes, departure: time.departureMinutes };
+        return { name, arrival: time.arrivalMinutes, departure: time.departureMinutes, stopHeadsign: time.stopHeadsign };
       });
       rows.push({ trip, stops });
     }
@@ -103,12 +103,21 @@ export function timetablePdfSheets(duties: TimetablePdfDuty[]): Array<{ duty: Ti
   });
 }
 
+/** A direction can mention a depot return during a passenger trip. Preserve
+ * its line number: this is not evidence of an additional technical movement. */
+export function timetableLineLabel(row: TimetablePdfTrip): string {
+  const isTechnical = ["WY", "PRZ", "ZJ"].includes(row.trip.lineId.trim().toUpperCase());
+  const hasZjazd = (value: string | undefined) => /(?:^|[^\p{L}\p{N}])zjazd(?=$|[^\p{L}\p{N}])/iu.test(value ?? "");
+  const marked = !isTechnical && (hasZjazd(row.trip.destination) || row.stops.some((stop) => hasZjazd(stop.stopHeadsign)));
+  return marked ? `${row.trip.lineId}/ZJ*` : row.trip.lineId;
+}
+
 /** Missing codes are a warning, not proof that each run should exist. */
 export function technicalTripsNote(duty: TimetablePdfDuty): string {
   const codes = new Set(duty.trips.map(({ trip }) => trip.lineId.trim().toUpperCase()));
   const missing = ["WY", "PRZ", "ZJ"].filter((code) => !codes.has(code));
   return missing.length
-    ? `Nie znaleziono w danych: ${missing.join(", ")}. Sprawdź kompletność przejazdów technicznych.`
+    ? `Brak osobnych przejazdów technicznych w danych: ${missing.join(", ")}. Sprawdź kompletność.`
     : "WY/PRZ/ZJ według dostępnych danych; nie dopisano brakujących przejazdów.";
 }
 
@@ -195,7 +204,8 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, duty.trips.length));
     const fontSize = Math.min(7.5, rowHeight * 1.55);
     let y = bodyTop;
-    for (const [rowIndex, { trip, stops }] of duty.trips.entries()) {
+    for (const [rowIndex, row] of duty.trips.entries()) {
+      const { trip, stops } = row;
       if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
       // Header is the first shaded row: the first course is white, the
       // second grey, and the pattern restarts on each duty sheet.
@@ -204,14 +214,14 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
         doc.rect(margin, y, tableW, rowHeight, "F");
       }
       const intermediate = selectTimetableCheckpoints(stops);
-      const values = [trip.lineId, clock(stops[0].departure), stops[0].name];
+      const values = [timetableLineLabel(row), clock(stops[0].departure), stops[0].name];
       for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
       values.push(stops[stops.length - 1].name, clock(stops[stops.length - 1].arrival));
       for (let i = 0; i < values.length; i++) cell(values[i], xs[i], y, ws[i], rowHeight, fontSize);
       y += rowHeight;
     }
     fitText(`WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ${technicalTripsNote(duty)}`, margin, pageH - 13, tableW - 24, 6.3);
-    fitText("Pokazano do czterech wybranych przystanków pośrednich, nie pełną listę. Godziny od 24:00 dotyczą następnej doby.", margin, pageH - 9, tableW - 24, 6.3);
+    fitText("*: zjazd w opisie kierunku GTFS, nie osobny przejazd. Do 4 przystanków pośrednich; od 24:00 następna doba.", margin, pageH - 9, tableW - 24, 6.3);
     fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Firma wg katalogu; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
     if (data.notice) doc.createAnnotation({ type: "text", title: "Niepełne dane GTFS", contents: data.notice, bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 } });
     fitText(`${index + 1} / ${sheets.length}`, pageW - margin - 18, pageH - 5, 18, 6.3);

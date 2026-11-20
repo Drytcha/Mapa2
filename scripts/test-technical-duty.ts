@@ -42,7 +42,7 @@ assert.deepEqual(duty.trips[0].stops.map((s) => [s.name, s.departure]), [["Zajez
 assert.deepEqual(duty.trips[2].stops.map((s) => [s.name, s.departure]), [["Koniec", 390], ["Początek", 400]]);
 assert.deepEqual(duty.trips[3].stops.map((s) => [s.name, s.departure]), [["Początek", 405], ["Zajezdnia", 420]]);
 assert.match(technicalTripsNote(duty), /według dostępnych danych/);
-assert.match(technicalTripsNote({ ...duty, trips: duty.trips.filter(({ trip }) => trip.lineId === "8") }), /Nie znaleziono w danych: WY, PRZ, ZJ/);
+assert.match(technicalTripsNote({ ...duty, trips: duty.trips.filter(({ trip }) => trip.lineId === "8") }), /Brak osobnych przejazdów technicznych w danych: WY, PRZ, ZJ/);
 const pdf = await createTimetablePdf(data);
 assert.equal(pdf.getNumberOfPages(), 1);
 if (process.env.DUTY_PDF_TECHNICAL_OUTPUT) {
