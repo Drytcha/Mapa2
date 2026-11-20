@@ -37,6 +37,7 @@ import {
   updateDynamicDutyOperators,
 } from "./brigadeVerification";
 import { reconstructLineSevenDuty } from "./lineSevenDuty";
+import { technicalTripCode, type TechnicalTripCode } from "./technicalTrips";
 import { repairShapeGaps } from "./shapeRepair";
 import type { BuilderStop, BuilderTrip } from "./brigadeBuilder";
 import {
@@ -176,6 +177,8 @@ export interface RawTripDetail {
   rawTripId: string;
   routeId: string;
   routeShort: string;
+  /** An explicit technical label from GTFS, not inferred from route gaps. */
+  technicalCode?: TechnicalTripCode;
   serviceId: string;
   rawBrigade: string;
   kursowkaCode: string;
@@ -199,6 +202,8 @@ interface ParsedArchiveBase {
   routesById: Map<string, GtfsRouteRecord>;
   stops: GtfsStopRecord[];
   stopsById: Map<string, GtfsStopRecord>;
+  /** Names are also retained for depot/technical stops without coordinates. */
+  stopNamesById: Map<string, string>;
   services: GtfsServiceRecord[];
   dayTypeServices: Record<string, Set<string>>;
   /** Exact GTFS calendar: date (YYYYMMDD) -> active service_ids. No "forever" fallback. */
@@ -487,7 +492,9 @@ function parseArchiveBytes(
   );
 
   const stopsById = new Map<string, GtfsStopRecord>();
+  const stopNamesById = new Map<string, string>();
   for (const s of parseCsvRows(readTxt("stops.txt"))) {
+    if (s.stop_id && s.stop_name?.trim()) stopNamesById.set(s.stop_id, s.stop_name.trim());
     if (s.location_type === "1") continue;
     const lat = Number.parseFloat(s.stop_lat);
     const lon = Number.parseFloat(s.stop_lon);
@@ -671,7 +678,7 @@ function parseArchiveBytes(
     const routeShort = route?.shortName ?? t.route_id;
     const firstStop = stopsById.get(first.stopId);
     const lastStop = stopsById.get(last.stopId);
-    const lastStopName = lastStop?.name ?? last.stopId;
+    const lastStopName = lastStop?.name ?? stopNamesById.get(last.stopId) ?? last.stopId;
 
     const rawBrigade = (t.block_id || t.brigade || "").trim();
     const verifiedKursowka =
@@ -687,6 +694,7 @@ function parseArchiveBytes(
       rawTripId: t.trip_id,
       routeId: t.route_id,
       routeShort,
+      technicalCode: technicalTripCode(routeShort, t.trip_short_name || "", t.trip_headsign || ""),
       serviceId: t.service_id,
       rawBrigade,
       kursowkaCode: verifiedKursowka,
@@ -698,7 +706,7 @@ function parseArchiveBytes(
       endMinutes: last.arrivalMinutes,
       firstStopId: first.stopId,
       lastStopId: last.stopId,
-      firstStopName: firstStop?.name ?? first.stopId,
+      firstStopName: firstStop?.name ?? stopNamesById.get(first.stopId) ?? first.stopId,
       lastStopName,
       stopCount: sts.length,
     };
@@ -805,6 +813,7 @@ function parseArchiveBytes(
     routesById,
     stops,
     stopsById,
+    stopNamesById,
     services,
     dayTypeServices,
     serviceIdsByDate,

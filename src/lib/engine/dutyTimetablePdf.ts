@@ -35,7 +35,7 @@ export function selectTimetableDuties(items: BrigadeItem[], scope: TimetableExpo
   if (scope.kind === "company") return items.filter((item) => item.operatorKey === scope.company);
   const line = scope.line.trim().toUpperCase();
   return items.flatMap((item) => {
-    if (!item.unassigned) return item.lineIds.some((id) => id.toUpperCase() === line) ? [item] : [];
+    if (!item.unassigned) return item.lineIds.some((id) => id.toUpperCase() === line) || item.primaryLine.toUpperCase() === line ? [item] : [];
     const trips = item.trips.filter((trip) => trip.lineId.toUpperCase() === line);
     return trips.length ? [{ ...item, trips, tripCount: trips.length, lineIds: [line] }] : [];
   });
@@ -58,9 +58,9 @@ export async function collectTimetablePdfData(routes: GtfsLineItem[], dateId: st
       const times: GtfsStopTimeRecord[] | undefined = store.base.rawStopTimesByTrip.get(trip.id);
       if (!times?.length) throw new Error(`Brak przystanków GTFS dla kursu ${trip.id}. Nie można przygotować kompletnego PDF.`);
       const stops = times.map((time) => {
-        const stop = store.base.stopsById.get(time.stopId);
-        if (!stop) throw new Error(`Brak przystanku ${time.stopId} w kursie ${trip.id}.`);
-        return { name: stop.name, arrival: time.arrivalMinutes, departure: time.departureMinutes };
+        const name = store.base.stopsById.get(time.stopId)?.name ?? store.base.stopNamesById.get(time.stopId);
+        if (!name) throw new Error(`Brak przystanku ${time.stopId} w kursie ${trip.id}.`);
+        return { name, arrival: time.arrivalMinutes, departure: time.departureMinutes };
       });
       rows.push({ trip, stops });
     }
@@ -103,6 +103,15 @@ export function timetablePdfSheets(duties: TimetablePdfDuty[]): Array<{ duty: Ti
   });
 }
 
+/** Missing codes are a warning, not proof that each run should exist. */
+export function technicalTripsNote(duty: TimetablePdfDuty): string {
+  const codes = new Set(duty.trips.map(({ trip }) => trip.lineId.trim().toUpperCase()));
+  const missing = ["WY", "PRZ", "ZJ"].filter((code) => !codes.has(code));
+  return missing.length
+    ? `Nie znaleziono w danych: ${missing.join(", ")}. Sprawdź kompletność przejazdów technicznych.`
+    : "WY/PRZ/ZJ według dostępnych danych; nie dopisano brakujących przejazdów.";
+}
+
 /** Exactly one A4 sheet per assigned duty and exactly one table row per trip. */
 export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF> {
   if (!data.duties.length) throw new Error("Brak kursówek do wydrukowania.");
@@ -139,7 +148,7 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     doc.text(clean, x, y, { horizontalScale: measured > width ? width / measured : 1 });
   };
   const cell = (value: string, x: number, y: number, width: number, height: number, size: number, shade = false) => {
-    if (shade) { doc.setFillColor(237, 237, 237); doc.rect(x, y, width, height, "F"); }
+    if (shade) { doc.setFillColor(242, 242, 242); doc.rect(x, y, width, height, "F"); }
     doc.setDrawColor(160); doc.setLineWidth(0.12); doc.rect(x, y, width, height);
     // Baseline centred within the available height, even for densely packed duties.
     fitText(value, x + 0.7, y + height / 2 + size * 0.11, Math.max(0.1, width - 1.4), size);
@@ -148,19 +157,31 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
   sheets.forEach(({ duty, part, parts }, index) => {
     if (index) doc.addPage();
     const number = duty.item.unassigned ? `Bez przypisanej kursówki${parts > 1 ? ` (${part}/${parts})` : ""}` : duty.item.number.replace(/-([0-9]+)$/, "/$1");
-    fitText(`MAPA2 / ROZKŁAD KURSÓW   |   ${dateLabel}   |   ${data.scopeLabel}`, margin, 8, tableW - (data.notice ? 6 : 0), 8);
-    fitText(`Okres danych GTFS: ${formatDate(data.feedFrom)} – ${formatDate(data.feedTo)}   |   ${data.serviceLabel || "typ dnia według GTFS"}`, margin, 12, tableW, 7);
+    // Two compact metadata lines above a labelled summary, keeping the duty
+    // identifier prominent and the service day separate from the date.
+    fitText("MAPA2 / ROZKŁAD KURSÓW", margin, 8, 160, 8);
+    fitText(`Dzień: ${dateLabel}`, margin + 180, 8, tableW - 180 - (data.notice ? 6 : 0), 8);
+    fitText(`Ważność GTFS: ${formatDate(data.feedFrom)} – ${formatDate(data.feedTo)}`, margin, 12, 145, 7);
+    fitText(`Zakres: ${data.scopeLabel}`, margin + 148, 12, tableW - 148, 7);
     const metrics = summariseBrigade(duty.trips.map((row) => row.trip));
-    const km = metrics.missingLengthTrips ? `Długość: niepełne dane (${metrics.missingLengthTrips} kurs.)` : `Długość kursów: ${(metrics.totalMeters / 1000).toLocaleString("pl-PL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
+    const km = metrics.missingLengthTrips ? `Niepełne dane (${metrics.missingLengthTrips} kurs.)` : `${(metrics.totalMeters / 1000).toLocaleString("pl-PL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
     const boxes = [
-      number,
-      `Firma: ${duty.item.operatorName}`,
-      duty.item.unassigned ? "Czas służby: nie dotyczy" : `Rozpiętość: ${duration(metrics.durationMinutes)}  |  praca szac.: ${duration(metrics.workBlockMinutes)}`,
-      duty.item.unassigned ? km : `${km}  |  przerwy > 90 min: ${duration(metrics.splitBreakMinutes)}`,
+      { label: "KURSÓWKA", value: number },
+      { label: "RODZAJ DNIA", value: data.serviceLabel || "Według GTFS" },
+      { label: "FIRMA", value: duty.item.operatorName },
+      { label: "ROZPIĘTOŚĆ / PRACA SZAC.", value: duty.item.unassigned ? "Nie dotyczy" : `${duration(metrics.durationMinutes)} / ${duration(metrics.workBlockMinutes)}` },
+      { label: "PRZERWY > 90 MIN", value: duty.item.unassigned ? "Nie dotyczy" : duration(metrics.splitBreakMinutes) },
+      { label: "DŁUGOŚĆ KURSÓW", value: km },
     ];
-    const boxWidths = [42, 68, 80, tableW - 190];
+    const boxWidths = [34, 52, 59, 57, 39, tableW - 241];
     let bx = margin;
-    boxes.forEach((value, i) => { cell(value, bx, 15, boxWidths[i], 9, i === 0 ? 9 : 7.2); bx += boxWidths[i]; });
+    boxes.forEach(({ label, value }, i) => {
+      const width = boxWidths[i];
+      doc.setDrawColor(160); doc.setLineWidth(0.12); doc.rect(bx, 15, width, 9);
+      fitText(label, bx + 0.8, 18.1, width - 1.6, 6);
+      fitText(value, bx + 0.8, 22.3, width - 1.6, i === 0 ? 9.5 : 8);
+      bx += width;
+    });
 
     const headerY = 26, headerH = 5;
     cell("Linia", xs[0], headerY, ws[0], headerH, 7, true);
@@ -170,12 +191,18 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     cell("Koniec", xs[11], headerY, ws[11], headerH, 7, true);
     cell("Przyj.", xs[12], headerY, ws[12], headerH, 7, true);
     const bodyTop = headerY + headerH;
-    const bodyBottom = pageH - 14;
+    const bodyBottom = pageH - 18;
     const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, duty.trips.length));
     const fontSize = Math.min(7.5, rowHeight * 1.55);
     let y = bodyTop;
-    for (const { trip, stops } of duty.trips) {
+    for (const [rowIndex, { trip, stops }] of duty.trips.entries()) {
       if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
+      // Header is the first shaded row: the first course is white, the
+      // second grey, and the pattern restarts on each duty sheet.
+      if (rowIndex % 2 === 1) {
+        doc.setFillColor(242, 242, 242);
+        doc.rect(margin, y, tableW, rowHeight, "F");
+      }
       const intermediate = selectTimetableCheckpoints(stops);
       const values = [trip.lineId, clock(stops[0].departure), stops[0].name];
       for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
@@ -183,6 +210,7 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
       for (let i = 0; i < values.length; i++) cell(values[i], xs[i], y, ws[i], rowHeight, fontSize);
       y += rowHeight;
     }
+    fitText(`WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ${technicalTripsNote(duty)}`, margin, pageH - 13, tableW - 24, 6.3);
     fitText("Pokazano do czterech wybranych przystanków pośrednich, nie pełną listę. Godziny od 24:00 dotyczą następnej doby.", margin, pageH - 9, tableW - 24, 6.3);
     fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Firma wg katalogu; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
     if (data.notice) doc.createAnnotation({ type: "text", title: "Niepełne dane GTFS", contents: data.notice, bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 } });

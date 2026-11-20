@@ -323,7 +323,7 @@ export async function loadBrigades(
     const parsedPair = parseDutyPair(dashNumber);
     const primaryLine = parsedPair?.line ?? rawTrip.routeShort.toUpperCase();
     const lineShort = (
-      store.base.routesById.get(rawTrip.routeId)?.shortName ?? rawTrip.routeShort
+      rawTrip.technicalCode || store.base.routesById.get(rawTrip.routeId)?.shortName || rawTrip.routeShort
     ).toUpperCase();
 
     const opKey =
@@ -480,7 +480,7 @@ async function buildFallbackUnnumberedBrigades(
 
   const builderTrips: BuilderTrip[] = rawSubList.map((rawTrip) => {
     const line = (
-      store.base.routesById.get(rawTrip.routeId)?.shortName ?? rawTrip.routeShort
+      rawTrip.technicalCode || store.base.routesById.get(rawTrip.routeId)?.shortName || rawTrip.routeShort
     ).toUpperCase();
     return {
       id: rawTrip.rawTripId,
