@@ -119,19 +119,32 @@ export const TIMETABLE_LEGEND_MAX_ROWS = 7;
 export const TIMETABLE_LEGEND_ROW_HEIGHT = 3.4;
 
 /**
- * Wiersze bloku „UWAGI:” na wydruku — deterministyczne, bez mierzenia tekstu.
+ * Wiersze bloku „UWAGI:” na wydruku — **bez podziału na linie**.
+ *
+ * Kursówka dostaje jedną płaską listę liter: `*`, `a`, `c`, `d`, `j`, `s`…
+ * Numer linii przy każdej literze był zbędnym wierszem (a przy kursówkach
+ * jednej linii — czystym powtórzeniem). Gdyby ta sama litera znaczyła co
+ * innego na dwóch liniach z jednej kursówki, opisy są sklejane w jednym
+ * wierszu, więc liczba wierszy nadal równa się liczbie liter.
  *
  * Najpierw pełna legenda linii z kursówki (wszystkie litery), a gdy nie mieści
- * się na stronie — tylko litery użyte w tym dniu (z „…” przy obcięciu).
+ * się na stronie — tylko litery użyte w tym dniu.
  */
 export function timetableLegendFooterRows(
   duty: TimetablePdfDuty,
-): Array<{ line: string; code: string; text: string }> {
+): Array<{ code: string; text: string }> {
   const full = timetableFullLegendRows(duty);
-  if (full.length && full.length <= TIMETABLE_LEGEND_MAX_ROWS) return full;
-  const used = timetableLegendRows(duty);
-  if (used.length <= TIMETABLE_LEGEND_MAX_ROWS) return used;
-  return used.slice(0, TIMETABLE_LEGEND_MAX_ROWS);
+  const source =
+    full.length && full.length <= TIMETABLE_LEGEND_MAX_ROWS ? full : timetableLegendRows(duty);
+  const merged = new Map<string, string[]>();
+  for (const entry of source) {
+    const texts = merged.get(entry.code) ?? [];
+    if (!texts.includes(entry.text)) texts.push(entry.text);
+    merged.set(entry.code, texts);
+  }
+  return [...merged.entries()]
+    .map(([code, texts]) => ({ code, text: texts.join(" · ") }))
+    .slice(0, TIMETABLE_LEGEND_MAX_ROWS);
 }
 
 const TECHNICAL_CODES = ["WY", "PRZ", "ZJ"];
@@ -408,7 +421,7 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
   //  - pas podsumowania: kursówka | firma | rodzaj dnia | czas pracy | przerwa |
   //    droga | zmiany,
   //  - tabela: Linia | Uwagi | Godz. | Początek | Przystanki kontrolne | Koniec | Zakoń.,
-  //  - stopka „UWAGI:” z legendą liter (po jednym wierszu na literę).
+  //  - stopka „UWAGI:” z legendą liter (jedna płaska lista, bez podziału na linie).
   const brand = ">>> MAPA2 / ROZKŁAD KURSÓW";
   const stamp = DateTime.now().setZone(BRIGADE_ZONE).toFormat("dd.MM.yyyy HH:mm");
 
@@ -565,9 +578,9 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
       doc.text("UWAGI:", margin, legendTop + 3);
       legendRows.forEach((entry, rowIndex) => {
         const rowY = legendTop + 3 + rowIndex * TIMETABLE_LEGEND_ROW_HEIGHT;
-        fitText(entry.line, margin + 14, rowY, 8, 6.6);
-        centered(entry.code, margin + 21, rowY, 6, 6.8);
-        fitText(entry.text, margin + 29, rowY, tableW - 31, 6.6);
+        // Bez numeru linii: litera | opis (jedna lista na całą kursówkę).
+        centered(entry.code, margin + 14, rowY, 6, 6.8);
+        fitText(entry.text, margin + 22, rowY, tableW - 24, 6.6);
       });
     }
 

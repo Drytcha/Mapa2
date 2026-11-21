@@ -8,7 +8,7 @@ import {
   legendText,
   lineLegend,
 } from "../src/lib/lineLegend";
-import { timetableFullLegendRows, timetableLegendRows, timetableLegendText, timetableLineLabel, timetablePrintLegendText, timetableVariantCode, timetableVariantCodes, timetableVariantLetters, type TimetablePdfTrip } from "../src/lib/engine/dutyTimetablePdf";
+import { timetableFullLegendRows, timetableLegendFooterRows, timetableLegendRows, timetableLegendText, timetableLineLabel, timetablePrintLegendText, timetableVariantCode, timetableVariantCodes, timetableVariantLetters, type TimetablePdfTrip } from "../src/lib/engine/dutyTimetablePdf";
 import type { BrigadeTripView } from "../src/lib/engine/brigades";
 import type { TimetablePdfDuty } from "../src/lib/engine/dutyTimetablePdf";
 import type { StopDepartureItem } from "../src/lib/types";
@@ -19,9 +19,9 @@ import type { StopDepartureItem } from "../src/lib/types";
  */
 const SPEC: Record<string, Array<[string, string]>> = {
   "2": [
-    ["b", "kurs przedłużony do Boguszowa-Gorc"],
-    ["k", "kurs przedłużony do Kuźnic"],
-    ["d", "kurs przedłużony do Dzikowca przez Kuźnice"],
+    ["b", "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)"],
+    ["k", "kurs przedłużony do Boguszowa-Gorc - Kuźnic"],
+    ["d", "kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice"],
     ["p", "kurs tylko do Placu Grunwaldzkiego"],
     ["v", "kurs przez Galerię Victoria"],
   ],
@@ -34,20 +34,20 @@ const SPEC: Record<string, Array<[string, string]>> = {
   ],
   "8": [
     ["a", "kurs przez Al. Podwale"],
-    ["l", "kurs do Lubiechowa"],
-    ["z", "kurs do Zamku Książ przez Lubiechów"],
+    ["l", "kurs przedłużony do Lubiechowa"],
+    ["z", "kurs przedłużony do Zamku Książ przez Lubiechów"],
     ["d", "kurs do Dworca Miasto"],
-    ["g", "kurs przez St. Bogaczowice do Gostkowa"],
+    ["g", "kurs przedłużony przez Stare Bogaczowice do Gostkowa"],
     ["s", "kurs przedłużony do Strugi"],
-    ["y", "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice"],
+    ["y", "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice"],
   ],
   "9": [
     ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
-    ["a", "kurs do przystanku Podwale - Forteczna"],
+    ["a", "kurs przedłużony do przystanku Podwale - Forteczna"],
     ["d", "kurs do Dworca Szczawienko"],
     ["s", "kurs przez ul. Sokołowskiego /szpital/"],
-    ["c", "kurs do ul. Jachimowicza"],
-    ["j", "kurs do ul. Jachimowicza (Faurecia)"],
+    ["c", "kurs przedłużony do ul. Jachimowicza"],
+    ["j", "kurs przedłużony do ul. Jachimowicza (Faurecia)"],
   ],
   "12": [
     ["a", "kurs przedłużony do Andrzejówki"],
@@ -57,9 +57,9 @@ const SPEC: Record<string, Array<[string, string]>> = {
   "15": [
     ["p", "kurs tylko do Placu Grunwaldzkiego"],
     ["t", "kurs przez ul. Batorego"],
-    ["a", "kurs przez Sokołowsko, Mieroszów do Golińska"],
+    ["a", "kurs przedłużony przez Sokołowsko, Mieroszów do Golińska"],
     ["b", "kurs przez ul. Beethovena"],
-    ["m", "kurs przez Sokołowsko do Mieroszowa"],
+    ["m", "kurs przedłużony przez Sokołowsko do Mieroszowa"],
     ["z", "kurs do ul. Beethovena (MZUK)"],
   ],
   "18": [
@@ -72,11 +72,11 @@ const SPEC: Record<string, Array<[string, string]>> = {
   ],
   "19": [
     ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
-    ["a", "kurs do przystanku Podwale - Forteczna"],
+    ["a", "kurs przedłużony do przystanku Podwale - Forteczna"],
     ["d", "kurs do Dworca Szczawienko"],
     ["s", "kurs przez ul. Sokołowskiego /szpital/"],
-    ["c", "kurs do ul. Jachimowicza"],
-    ["j", "kurs do ul. Jachimowicza (Faurecia)"],
+    ["c", "kurs przedłużony do ul. Jachimowicza"],
+    ["j", "kurs przedłużony do ul. Jachimowicza (Faurecia)"],
   ],
   A: [
     ["a", "kurs przez Auchan"],
@@ -108,6 +108,7 @@ assert.equal(legendCodeForTrip("11", { destination: "Głuszyca" }), "");
 const code = (line: string, destination: string, stops: string[] = []) =>
   legendCodeForTrip(line, { destination, stops });
 assert.equal(code("2", "Boguszów-Gorce Dworzec"), "b");
+assert.equal(code("2", "Stary Lesieniec"), "b", "Stary Lesieniec to kurs przedłużony do Boguszowa");
 assert.equal(code("2", "Wałbrzych Kuźnice"), "k");
 assert.equal(code("2", "Dzikowiec"), "d");
 assert.equal(code("2", "Plac Grunwaldzki"), "p");
@@ -240,8 +241,8 @@ assert.deepEqual(
   line2.directions.map(({ suffix, main, legendText: text }) => [suffix, main, text ?? ""]),
   [
     ["", true, ""],
-    ["b", false, "kurs przedłużony do Boguszowa-Gorc"],
-    ["d", false, "kurs przedłużony do Dzikowca przez Kuźnice"],
+    ["b", false, "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)"],
+    ["d", false, "kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice"],
     ["v", false, "kurs przez Galerię Victoria"],
   ],
   "linia 2: podstawa bez litery + litery z legendy w jej kolejności",
@@ -292,14 +293,14 @@ const duty = {
   ],
 } as TimetablePdfDuty;
 assert.deepEqual(timetableLegendRows(duty), [
-  { line: "2", code: "b", text: "kurs przedłużony do Boguszowa-Gorc" },
+  { line: "2", code: "b", text: "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)" },
   { line: "8", code: "s", text: "kurs przedłużony do Strugi" },
-  { line: "8", code: "y", text: "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice" },
+  { line: "8", code: "y", text: "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice" },
 ]);
 
 assert.equal(
   timetableLegendText(duty),
-  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc · 8: s – kurs przedłużony do Strugi, y – kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice",
+  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec) · 8: s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
   "stopka wydruku opisuje każdą literę użytego wariantu",
 );
 
@@ -307,7 +308,7 @@ assert.equal(
 // tylko użyte) — kierowca ma wiedzieć, dokąd jedzie każda litera.
 assert.equal(
   timetablePrintLegendText(duty),
-  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc, k – kurs przedłużony do Kuźnic, d – kurs przedłużony do Dzikowca przez Kuźnice, p – kurs tylko do Placu Grunwaldzkiego, v – kurs przez Galerię Victoria · 8: a – kurs przez Al. Podwale, l – kurs do Lubiechowa, z – kurs do Zamku Książ przez Lubiechów, d – kurs do Dworca Miasto, g – kurs przez St. Bogaczowice do Gostkowa, s – kurs przedłużony do Strugi, y – kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice",
+  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec), k – kurs przedłużony do Boguszowa-Gorc - Kuźnic, d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice, p – kurs tylko do Placu Grunwaldzkiego, v – kurs przez Galerię Victoria · 8: a – kurs przez Al. Podwale, l – kurs przedłużony do Lubiechowa, z – kurs przedłużony do Zamku Książ przez Lubiechów, d – kurs do Dworca Miasto, g – kurs przedłużony przez Stare Bogaczowice do Gostkowa, s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
   "stopka wydruku zawiera pełną legendę każdej linii z kursówki",
 );
 assert.deepEqual(
@@ -325,21 +326,52 @@ const duty9 = {
   ],
 } as TimetablePdfDuty;
 assert.deepEqual(timetableLegendRows(duty9), [
-  { line: "9", code: "a", text: "kurs do przystanku Podwale - Forteczna" },
-  { line: "19", code: "j", text: "kurs do ul. Jachimowicza (Faurecia)" },
+  { line: "9", code: "a", text: "kurs przedłużony do przystanku Podwale - Forteczna" },
+  { line: "19", code: "j", text: "kurs przedłużony do ul. Jachimowicza (Faurecia)" },
 ]);
 assert.equal(
   timetableLegendText(duty9),
-  "Legenda wariantów: 9: a – kurs do przystanku Podwale - Forteczna · 19: j – kurs do ul. Jachimowicza (Faurecia)",
+  "Legenda wariantów: 9: a – kurs przedłużony do przystanku Podwale - Forteczna · 19: j – kurs przedłużony do ul. Jachimowicza (Faurecia)",
 );
-const legenda919 =
-  "9: * – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia)"
-  + " · 19: * – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs do ul. Jachimowicza, j – kurs do ul. Jachimowicza (Faurecia)";
+const jedenWiersz919 =
+  "* – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs przedłużony do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs przedłużony do ul. Jachimowicza, j – kurs przedłużony do ul. Jachimowicza (Faurecia)";
+const legenda919 = `9: ${jedenWiersz919} · 19: ${jedenWiersz919}`;
 assert.equal(
   timetablePrintLegendText(duty9),
   `Legenda wariantów: ${legenda919}`,
   "kursówka linii 9/19 tłumaczy każdą literę z rozpiski",
 );
+// Blok „UWAGI:” na wydruku jest płaski — bez powtarzania numeru linii.
+const uwagi9 = timetableLegendFooterRows({
+  item: { unassigned: false } as never,
+  trips: [
+    pdfTrip("9", "Aleja Podwale - Forteczna", ["Bystrzycka", "Aleja Podwale - Forteczna"]),
+    pdfTrip("9", "Jachimowicza Faurecia", ["Szpital", "Jachimowicza Faurecia"]),
+  ],
+} as TimetablePdfDuty);
+assert.deepEqual(
+  uwagi9.map((entry) => entry.code),
+  ["*", "a", "d", "s", "c", "j"],
+  "jedna płaska lista liter (bez wiersza „linia” przy każdej literze)",
+);
+assert.ok(
+  uwagi9.every((entry) => !("line" in entry)),
+  "wiersze UWAG nie niosą numeru linii",
+);
+assert.match(
+  uwagi9.find((entry) => entry.code === "j")!.text,
+  /kurs przedłużony do ul\. Jachimowicza \(Faurecia\)/,
+  "kursy przedłużone są opisane wprost",
+);
+// Dwie linie w jednej kursówce: litery się nie dublują, a gdy pełna legenda
+// nie mieści się na stopce, drukuje się tylko litery użyte w danym dniu.
+const uwagi919 = timetableLegendFooterRows(duty9);
+assert.deepEqual(
+  uwagi919.map((entry) => entry.code),
+  ["a", "j"],
+  "9 + 19 nie dubluje liter i nie rozbija listy na linie",
+);
+
 assert.equal(timetableLineLabel(duty9.trips[0]), "9");
 assert.equal(timetableVariantLetters(duty9.trips[0]), "a");
 assert.equal(timetableLineLabel(duty9.trips[1]), "19");
