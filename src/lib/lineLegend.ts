@@ -52,19 +52,19 @@ const LINE_ORDER = ["2", "5", "8", "9", "12", "15", "18", "19", "A", "C", "EX"];
 const LINE_9_19_RULES: readonly LineLegendRule[] = [
   {
     code: "j",
-    text: "kurs do ul. Jachimowicza (Faurecia)",
+    text: "kurs przedłużony do ul. Jachimowicza (Faurecia)",
     to: ["faurecia"],
     group: "koniec",
   },
   {
     code: "c",
-    text: "kurs do ul. Jachimowicza",
+    text: "kurs przedłużony do ul. Jachimowicza",
     to: ["jachimowicz"],
     group: "koniec",
   },
   {
     code: "a",
-    text: "kurs do przystanku Podwale - Forteczna",
+    text: "kurs przedłużony do przystanku Podwale - Forteczna",
     to: ["forteczna"],
     group: "koniec",
   },
@@ -91,13 +91,21 @@ const COMBINE_ORDER: readonly string[] = ["s", "a", "d", "c", "j", "*"];
 
 const RULES: Record<string, readonly LineLegendRule[]> = {
   "2": [
-    { code: "b", text: "kurs przedłużony do Boguszowa-Gorc", to: ["boguszow"] },
+    {
+      code: "b",
+      text: "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)",
+      to: ["boguszow", "lesieniec"],
+    },
     {
       code: "d",
-      text: "kurs przedłużony do Dzikowca przez Kuźnice",
+      text: "kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice",
       to: ["dzikowiec"],
     },
-    { code: "k", text: "kurs przedłużony do Kuźnic", to: ["kuznic"] },
+    {
+      code: "k",
+      text: "kurs przedłużony do Boguszowa-Gorc - Kuźnic",
+      to: ["kuznic"],
+    },
     {
       code: "p",
       text: "kurs tylko do Placu Grunwaldzkiego",
@@ -139,22 +147,22 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
   "8": [
     {
       code: "y",
-      text: "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice",
+      text: "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
       to: ["gostkow"],
       via: ["chwaliszow"],
     },
     {
       code: "g",
-      text: "kurs przez St. Bogaczowice do Gostkowa",
+      text: "kurs przedłużony przez Stare Bogaczowice do Gostkowa",
       to: ["gostkow"],
       via: ["bogaczowice"],
     },
     {
       code: "z",
-      text: "kurs do Zamku Książ przez Lubiechów",
+      text: "kurs przedłużony do Zamku Książ przez Lubiechów",
       to: ["ksiaz"],
     },
-    { code: "l", text: "kurs do Lubiechowa", to: ["lubiechow"] },
+    { code: "l", text: "kurs przedłużony do Lubiechowa", to: ["lubiechow"] },
     { code: "d", text: "kurs do Dworca Miasto", to: ["dworzec miasto"] },
     {
       code: "s",
@@ -188,10 +196,14 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
   "15": [
     {
       code: "a",
-      text: "kurs przez Sokołowsko, Mieroszów do Golińska",
+      text: "kurs przedłużony przez Sokołowsko, Mieroszów do Golińska",
       to: ["golinsk"],
     },
-    { code: "m", text: "kurs przez Sokołowsko do Mieroszowa", to: ["mieroszow"] },
+    {
+      code: "m",
+      text: "kurs przedłużony przez Sokołowsko do Mieroszowa",
+      to: ["mieroszow"],
+    },
     {
       code: "z",
       text: "kurs do ul. Beethovena (MZUK)",

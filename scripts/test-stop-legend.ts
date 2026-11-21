@@ -124,7 +124,7 @@ assert.equal(
   "kurs przez Galerię Victoria",
   "ten sam kierunek (Bystrzycka), inna trasa — litera v z trasy, nie z nazwy celu",
 );
-assert.equal(byTrip.get("t-y")?.legendText, "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice");
+assert.equal(byTrip.get("t-y")?.legendText, "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice");
 assert.equal(byTrip.get("t-s")?.legendText, "kurs przedłużony do Strugi");
 assert.equal(byTrip.get("t-2base")?.legendText, "");
 
@@ -134,10 +134,10 @@ assert.deepEqual(
   line8.directions.map(({ suffix, legendText }) => [suffix, legendText ?? ""]),
   [
     ["a", "kurs przez Al. Podwale"],
-    ["z", "kurs do Zamku Książ przez Lubiechów"],
-    ["g", "kurs przez St. Bogaczowice do Gostkowa"],
+    ["z", "kurs przedłużony do Zamku Książ przez Lubiechów"],
+    ["g", "kurs przedłużony przez Stare Bogaczowice do Gostkowa"],
     ["s", "kurs przedłużony do Strugi"],
-    ["y", "kurs do Gostkowa przez Chwaliszów i Stare Bogaczowice"],
+    ["y", "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice"],
   ],
   "kolejność liter jak w oficjalnej legendzie linii 8",
 );

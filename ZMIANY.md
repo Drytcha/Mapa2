@@ -105,14 +105,14 @@ miejscach. Teraz litery pochodzą z jednej tabeli: `src/lib/lineLegend.ts`.
 
 | Linia | Legenda |
 | ----- | ------- |
-| 2  | b – kurs przedłużony do Boguszowa-Gorc · k – do Kuźnic · d – do Dzikowca przez Kuźnice · p – tylko do Placu Grunwaldzkiego · v – przez Galerię Victoria |
+| 2  | b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec) · k – kurs przedłużony do Boguszowa-Gorc - Kuźnic · d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice · p – kurs tylko do Placu Grunwaldzkiego · v – kurs przez Galerię Victoria |
 | 5  | \* – do Głuszycy Górnej przez Jedlinę-Zdrój · ^ – przez Jedlinę-Zdrój (Uzdrowisko) · e – do Głuszycy przez Jedlinę-Zdrój · u – do Jedliny-Zdroju /Uzdrowisko/ · k – do ul. Kolejowej w Szczawnie-Zdroju |
-| 8  | a – przez Al. Podwale · l – do Lubiechowa · z – do Zamku Książ przez Lubiechów · d – do Dworca Miasto · g – przez St. Bogaczowice do Gostkowa · s – do Strugi · y – do Gostkowa przez Chwaliszów i Stare Bogaczowice |
-| 9  | a – kurs do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · c – kurs do ul. Jachimowicza · j – kurs do ul. Jachimowicza (Faurecia) |
-| 12 | a – do Andrzejówki · d – do Dworca Głównego PKP · p – tylko do Śródmieścia |
-| 15 | p – tylko do Placu Grunwaldzkiego · t – przez ul. Batorego · a – przez Sokołowsko, Mieroszów do Golińska · b – przez ul. Beethovena · m – przez Sokołowsko do Mieroszowa · z – do ul. Beethovena (MZUK) |
+| 8  | a – kurs przez Al. Podwale · l – kurs przedłużony do Lubiechowa · z – kurs przedłużony do Zamku Książ przez Lubiechów · d – kurs do Dworca Miasto · g – kurs przedłużony przez Stare Bogaczowice do Gostkowa · s – kurs przedłużony do Strugi · y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice |
+| 9  | \* – przesiadka na Uczniowska-US linią 18 · a – kurs przedłużony do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · s – kurs przez ul. Sokołowskiego /szpital/ · c – kurs przedłużony do ul. Jachimowicza · j – kurs przedłużony do ul. Jachimowicza (Faurecia) |
+| 12 | a – kurs przedłużony do Andrzejówki · d – kurs do Dworca Głównego PKP · p – kurs tylko do Śródmieścia |
+| 15 | p – kurs tylko do Placu Grunwaldzkiego · t – kurs przez ul. Batorego · a – kurs przedłużony przez Sokołowsko, Mieroszów do Golińska · b – kurs przez ul. Beethovena · m – kurs przedłużony przez Sokołowsko do Mieroszowa · z – kurs do ul. Beethovena (MZUK) |
 | 18 | q – do ul. Ratuszowej /Aqua Zdroju/ · j – do ul. Uczniowskiej i ul. Jachimowicza · m – (Mando) · r – (Ronal) · t – (Toyota) · u – (Urząd Skarbowy) |
-| 19 | a – kurs do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · c – kurs do ul. Jachimowicza · j – kurs do ul. Jachimowicza (Faurecia) |
+| 19 | \* – przesiadka na Uczniowska-US linią 18 · a – kurs przedłużony do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · s – kurs przez ul. Sokołowskiego /szpital/ · c – kurs przedłużony do ul. Jachimowicza · j – kurs przedłużony do ul. Jachimowicza (Faurecia) |
 | A  | a – przez Auchan · s – przez ul. Sokołowskiego - Szpital |
 | C  | a – przez Auchan · v – przez Galerię Victoria |
 | EX | v – przez Galerię Victoria |
@@ -156,12 +156,12 @@ Wersja RJ ważna od dd.MM.rrrr do dd.MM.rrrr                            Dzień: 
 │ 9     │ sj*   │ 05:00 │ Stacyjna │ 05:07 │ …    │ 05:14 │ …    │ 05:21 │ …    │ Jachim…│ 05:28 │
 └───────┴───────┴───────┴──────────┴───────┴──────┴───────┴──────┴───────┴──────┴────────┴───────┘
 
-UWAGI:  9  *  na przystanku Uczniowska-US przesiadka pasażerów linią-18
-        9  a  kurs do przystanku Podwale - Forteczna
-        9  d  kurs do Dworca Szczawienko
-        9  s  kurs przez ul. Sokołowskiego /szpital/
-        9  c  kurs do ul. Jachimowicza
-        9  j  kurs do ul. Jachimowicza (Faurecia)
+UWAGI:  *  na przystanku Uczniowska-US przesiadka pasażerów linią-18
+        a  kurs przedłużony do przystanku Podwale - Forteczna
+        d  kurs do Dworca Szczawienko
+        s  kurs przez ul. Sokołowskiego /szpital/
+        c  kurs przedłużony do ul. Jachimowicza
+        j  kurs przedłużony do ul. Jachimowicza (Faurecia)
 WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, …
 ```
 
@@ -171,11 +171,15 @@ WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, …
 - **Nagłówek tabeli jest dwupoziomowy**: wysokie kolumny `Linia | Uwagi | Godz. |
   Początek | Koniec | Zakoń.` oraz grupa `Przystanki kontrolne` nad czterema
   parami (godzina + przystanek).
-- **Blok `UWAGI:`** to legenda liter w układzie `linia | litera | opis` —
-  po jednym wierszu na literę (`timetableLegendFooterRows`). Maksymalnie 7
-  wierszy (`TIMETABLE_LEGEND_MAX_ROWS`); jeśli pełna legenda linii się nie
-  mieści, druk bierze litery użyte w danej kursówce, a przy nadmiarze obcina
-  listę.
+- **Blok `UWAGI:`** to **jedna płaska lista** `litera | opis` — bez numeru
+  linii przy każdej literze (przy kursówce jednej linii był to czysty
+  duplikat, a przy dwóch liniach dublował wiersze). Maksymalnie 7 liter
+  (`TIMETABLE_LEGEND_MAX_ROWS`); jeśli pełna legenda linii się nie mieści,
+  druk bierze litery użyte w danej kursówce. Gdyby ta sama litera znaczyła co
+  innego na dwóch liniach, opisy trafiają do jednego wiersza.
+- **Kursy przedłużone są nazwane wprost**: `kurs przedłużony do …` /
+  `kurs przedłużony przez … do …` (linie 2, 8, 9, 12, 15, 19). Skrócone kursy
+  zostają przy `kurs tylko do …`, a warianty trasowe przy `kurs przez …`.
 - Geometria jest deterministyczna (stałe `TIMETABLE_LEGEND_ROW_HEIGHT`,
   wysokości nagłówka), więc test PDF liczy pozycje pasków „zebra” bez
   mierzenia tekstu.
@@ -196,11 +200,11 @@ Legenda linii 9 i 19 (wspólna, kolejność jak w rozpisce):
 | Litera | Znaczenie |
 | --- | --- |
 | `*` | na przystanku Uczniowska-US przesiadka pasażerów linią-18 |
-| `a` | kurs do przystanku Podwale - Forteczna |
+| `a` | kurs przedłużony do przystanku Podwale - Forteczna |
 | `d` | kurs do Dworca Szczawienko |
 | `s` | kurs przez ul. Sokołowskiego /szpital/ |
-| `c` | kurs do ul. Jachimowicza |
-| `j` | kurs do ul. Jachimowicza (Faurecia) |
+| `c` | kurs przedłużony do ul. Jachimowicza |
+| `j` | kurs przedłużony do ul. Jachimowicza (Faurecia) |
 
 - Litery **sumują się**: `s` (przez szpital) i `*` (przesiadka) dokładają się do
   litery końca kursu. Wykluczają się tylko warianty końcowe — kurs kończy się
