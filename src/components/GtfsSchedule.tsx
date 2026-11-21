@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Info,
   Loader2,
   MapPinned,
   RefreshCw,
-  X,
 } from "lucide-react";
 import { DateTime } from "luxon";
 import { subscribeSharedClock } from "@/lib/core/runtimeHub";
@@ -14,18 +15,24 @@ import { filterLinesForRole, isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, WARSAW_ZONE } from "@/lib/core/time";
 import type { BusStop, StopDepartureItem } from "@/lib/types";
 import { cn } from "@/utils/cn";
-import { describeDelay, formatDelay, formatVehicleNumber } from "@/lib/delay";
+import { describeDelay } from "@/lib/delay";
 import { getStopDepartures } from "@/lib/engine/gtfsStore";
 import { getFallbackStopDepartures } from "@/lib/engine/stopScheduleFallback";
 import {
   groupDeparturesByLine,
   type DepartureLineGroup,
 } from "@/lib/departureGroups";
+import StopDepartureDetail from "@/components/StopDepartureDetail";
+import {
+  boardLegend,
+  formatEta,
+  nextDepartures,
+  PUNCTUALITY_LEGEND,
+} from "@/lib/stopBoard";
 
 export type { StopDepartureItem };
 const ZONE = WARSAW_ZONE;
 const today = () => DateTime.now().setZone(ZONE).toISODate()!;
-const clock = formatWarsawClock;
 const EMPTY_DEPARTURES: StopDepartureItem[] = [];
 
 interface Props {
@@ -63,7 +70,6 @@ function LineDepartures({
   onPreviewCourse?: Props["onPreviewCourse"];
 }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState(false);
   const entries = group.departures.filter(
     ({ departure: d }) =>
       !upcomingOnly ||
@@ -195,107 +201,163 @@ function LineDepartures({
         </div>
       </div>
       {detail && (
-        <div
-          className="mt-2 border-l-2 border-brand bg-brand-soft/50 py-1.5 pl-2 pr-1 text-[10px] leading-relaxed"
-          role="region"
-          aria-label="Szczegóły odjazdu"
-        >
-          <div className="flex items-start justify-between gap-1">
-            <p className="font-bold text-ink">
-              {detail.departure.clock}
-              {detail.direction.suffix}
-              {" → "}
-              {detail.direction.legendText ?? detail.direction.label}
-              {detail.direction.main && group.directions.length > 1 && (
-                <span className="ml-1 rounded bg-surface px-1 py-0.5 text-[8px] font-bold text-mute ring-1 ring-line">
-                  kierunek główny
-                </span>
-              )}
-            </p>
-            <button
-              type="button"
-              onClick={() => setSelected(null)}
-              aria-label="Zamknij szczegóły odjazdu"
-              className="grid h-6 w-6 shrink-0 place-items-center rounded hover:bg-surface"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-          {detail.direction.legendText && (
-            <p className="text-ink-soft">
-              Kierunek: {detail.direction.label}
-            </p>
-          )}
-          {detail.departure.isRealtime ? (
-            <p className="text-brand-ink">
-              GPS: {formatDelay(detail.departure.delaySeconds)} · przewidywany{" "}
-              {clock(
-                detail.departure.atMs + detail.departure.delaySeconds * 1000,
-              )}
-            </p>
-          ) : (
-            <p className="text-mute">Według rozkładu; brak prognozy GPS.</p>
-          )}
-          {detail.departure.vehicleId ? (
-            <p className="text-ink-soft">
-              Wóz {formatVehicleNumber(detail.departure.vehicleId)}{" "}
-              {detail.departure.operatorName}
-            </p>
-          ) : detail.departure.operatorName ? (
-            <p className="text-ink-soft">
-              Przewoźnik: {detail.departure.operatorName}
-            </p>
-          ) : null}
-          {onPreviewCourse && detail.departure.canPreviewCourse !== false && (
-            <button
-              type="button"
-              data-testid="preview-departure-course"
-              aria-label={`Pokaż przebieg kursu linii ${group.line} z ${detail.departure.clock}`}
-              onClick={async () => {
-                if (previewing) return;
-                setPreviewing(true);
-                try {
-                  await onPreviewCourse(
-                    detail.departure.tripId,
-                    detail.departure.serviceDateId
-                  );
-                } finally {
-                  setPreviewing(false);
-                }
-              }}
-              disabled={previewing}
-              className="mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-lg bg-brand px-2 text-[9px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {previewing ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <MapPinned className="h-3 w-3" />
-              )}
-              Pokaż przebieg kursu na mapie
-            </button>
-          )}
-          {detail.departure.kursowka && onOpenKursowka && (
-            <button
-              type="button"
-              className="mt-1 font-bold text-brand-ink underline underline-offset-2"
-              onClick={() =>
-                onOpenKursowka(
-                  detail.departure.kursowkaId,
-                  detail.departure.kursowka,
-                )
-              }
-            >
-              Kursówka {detail.departure.kursowka}
-              {detail.departure.operatorKey === "mzuk"
-                ? " (MZUK)"
-                : detail.departure.operatorKey === "ska"
-                  ? " (ŚKA)"
-                  : ""}
-            </button>
-          )}
-        </div>
+        <StopDepartureDetail
+          line={group.line}
+          entry={detail}
+          directionCount={group.directions.length}
+          onClose={() => setSelected(null)}
+          onOpenKursowka={onOpenKursowka}
+          onPreviewCourse={onPreviewCourse}
+        />
       )}
     </section>
+  );
+}
+
+/**
+ * Tablica „Najbliższe odjazdy” (myBus 3.0): jedna lista ~10 najbliższych
+ * kursów wszystkich linii z odliczaniem i kolorem punktualności.
+ */
+export function NextDeparturesBoard({
+  groups,
+  now,
+  onOpenKursowka,
+  onPreviewCourse,
+}: {
+  groups: readonly DepartureLineGroup[];
+  now: number;
+  onOpenKursowka?: Props["onOpenKursowka"];
+  onPreviewCourse?: Props["onPreviewCourse"];
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const rows = nextDepartures(groups, { nowMs: now });
+  if (!rows.length) {
+    return (
+      <p className="py-3 text-[10px] text-mute">
+        Brak najbliższych odjazdów — sprawdź pełny rozkład dnia.
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y divide-line/50" aria-label="Najbliższe odjazdy">
+      {rows.map((row) => {
+        const open = selected === row.key;
+        const predicted = row.isRealtime ? formatWarsawClock(row.etaMs) : null;
+        const directionCount =
+          groups.find((group) => group.line === row.line)?.directions.length ?? 1;
+        return (
+          <li key={row.key} data-testid="board-departure">
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={`Linia ${row.line}, ${row.clock}${row.suffix}, ${row.label}${predicted ? `, przewidywany ${predicted}` : ""}, ${formatEta(row.minutes)}`}
+              onClick={() => setSelected(open ? null : row.key)}
+              className={cn(
+                "flex w-full items-center gap-1.5 rounded px-1 py-[3px] text-left transition-colors focus-visible:outline-2 focus-visible:outline-brand",
+                open ? "bg-brand-soft" : "hover:bg-raised",
+              )}
+            >
+              <span
+                className="metric grid h-5 min-w-5 shrink-0 place-items-center rounded px-1 text-[9px] font-extrabold leading-none"
+                style={{ background: row.color, color: row.textColor }}
+              >
+                {row.line}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 font-mono text-[12px] font-bold tabular-nums",
+                  predicted ? "text-ink" : "text-ink-soft",
+                )}
+              >
+                {predicted ?? row.clock}
+                {row.suffix && (
+                  <span className="align-super text-[7.5px]">{row.suffix}</span>
+                )}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[9.5px] leading-tight text-ink-soft">
+                {row.label}
+              </span>
+              <span className="shrink-0 font-mono text-[8.5px] tabular-nums text-mute">
+                {formatEta(row.minutes)}
+              </span>
+              <span
+                aria-label={row.isRealtime ? row.toneStyle.label : "Brak GPS"}
+                title={row.isRealtime ? row.toneStyle.label : "Brak prognozy GPS"}
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  background: row.isRealtime ? row.toneStyle.bg : "transparent",
+                  boxShadow: row.isRealtime ? undefined : "inset 0 0 0 1px #94a3b8",
+                }}
+              />
+            </button>
+            {open && (
+              <StopDepartureDetail
+                line={row.line}
+                entry={row.departure}
+                directionCount={directionCount}
+                onClose={() => setSelected(null)}
+                onOpenKursowka={onOpenKursowka}
+                onPreviewCourse={onPreviewCourse}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Legenda oznaczeń pod listą — litery wariantów i kolory punktualności. */
+export function StopBoardLegend({ groups }: { groups: readonly DepartureLineGroup[] }) {
+  const letters = boardLegend(groups);
+  return (
+    <div
+      className="mt-1 space-y-1 rounded border border-line bg-raised/50 px-1.5 py-1 text-[8px] leading-snug text-ink-soft"
+      data-testid="board-legend"
+    >
+      {letters.length > 0 && (
+        <div>
+          <p className="font-bold text-ink">Litery wariantów</p>
+          <ul className="space-y-0.5">
+            {letters.map((row) => (
+              <li key={`${row.line}|${row.code}`}>
+                <b className="font-mono font-bold text-brand-ink">{row.code}</b>
+                {" – "}
+                {row.text}
+                <span className="text-mute"> (linia {row.line})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <p className="font-bold text-ink">Kolory punktualności</p>
+        <ul className="space-y-0.5">
+          {PUNCTUALITY_LEGEND.map(({ tone, style }) => (
+            <li key={tone} className="flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: style.bg }}
+              />
+              {style.label}
+            </li>
+          ))}
+          <li className="flex items-center gap-1">
+            <span
+              aria-hidden="true"
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ boxShadow: "inset 0 0 0 1px #94a3b8" }}
+            />
+            Brak prognozy GPS (czas z rozkładu)
+          </li>
+        </ul>
+      </div>
+      <p className="text-mute">
+        Kurs bez litery = kurs podstawowy. Litery wg oficjalnej legendy linii.
+        Czas polski.
+      </p>
+    </div>
   );
 }
 
@@ -315,10 +377,12 @@ export default function GtfsSchedule({
   const [error, setError] = useState("");
   const [source, setSource] = useState<"gtfs" | "gtfs-partial" | "fallback">("gtfs");
   const [date, setDate] = useState(today);
-  const [upcomingOnly, setUpcomingOnly] = useState(false);
+  const [tab, setTab] = useState<"next" | "day" | "upcoming">("day");
+  const [legendOpen, setLegendOpen] = useState(false);
   const [retry, setRetry] = useState(0);
   const [internalFilter, setInternalFilter] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
+  const upcomingOnly = tab === "upcoming";
   const loadedKey = useRef("");
   const activeFilter = onLineFilterChange
     ? (lineFilter ?? null)
@@ -327,7 +391,7 @@ export default function GtfsSchedule({
 
   useEffect(() => {
     setInternalFilter(null);
-    setUpcomingOnly(false);
+    setTab("day");
   }, [stop.id]);
 
   useEffect(() => {
@@ -470,7 +534,7 @@ export default function GtfsSchedule({
   );
   const changeDay = (days: number) => {
     setDate(DateTime.fromISO(date, { zone: ZONE }).plus({ days }).toISODate()!);
-    setUpcomingOnly(false);
+    setTab("day");
   };
 
   return (
@@ -520,7 +584,7 @@ export default function GtfsSchedule({
             onChange={(e) => {
               if (e.target.value) {
                 setDate(e.target.value);
-                setUpcomingOnly(false);
+                setTab("day");
               }
             }}
             className="h-6 min-w-0 rounded border border-line bg-surface px-0.5 text-[9px] text-ink"
@@ -551,11 +615,28 @@ export default function GtfsSchedule({
       <div className="mt-1.5 flex items-center gap-2.5 border-b border-line text-[8px] font-bold">
         <button
           type="button"
-          aria-pressed={!upcomingOnly}
-          onClick={() => setUpcomingOnly(false)}
+          aria-pressed={tab === "next"}
+          data-testid="tab-next"
+          onClick={() => {
+            setDate(today());
+            setTab("next");
+          }}
           className={cn(
             "border-b-2 pb-1",
-            !upcomingOnly
+            tab === "next"
+              ? "border-brand text-brand-ink"
+              : "border-transparent text-mute",
+          )}
+        >
+          Najbliższe
+        </button>
+        <button
+          type="button"
+          aria-pressed={tab === "day"}
+          onClick={() => setTab("day")}
+          className={cn(
+            "border-b-2 pb-1",
+            tab === "day"
               ? "border-brand text-brand-ink"
               : "border-transparent text-mute",
           )}
@@ -564,14 +645,14 @@ export default function GtfsSchedule({
         </button>
         <button
           type="button"
-          aria-pressed={upcomingOnly}
+          aria-pressed={tab === "upcoming"}
           onClick={() => {
             setDate(today());
-            setUpcomingOnly(true);
+            setTab("upcoming");
           }}
           className={cn(
             "border-b-2 pb-1",
-            upcomingOnly
+            tab === "upcoming"
               ? "border-brand text-brand-ink"
               : "border-transparent text-mute",
           )}
@@ -620,26 +701,56 @@ export default function GtfsSchedule({
           Brak odjazdów{activeFilter ? ` linii ${activeFilter}` : ""} tego dnia.
         </p>
       )}
-      {!shownError && (
+      {!shownError && shown.length > 0 && (
         <div className="scroll-area mt-1 max-h-[400px] overflow-y-auto pr-1">
-          {shown.map((group) => (
-            <LineDepartures
-              key={`${stop.id}|${date}|${group.line}`}
-              group={group}
+          {tab === "next" ? (
+            <NextDeparturesBoard
+              groups={shown}
               now={now}
-              upcomingOnly={upcomingOnly}
               onOpenKursowka={onOpenKursowka}
               onPreviewCourse={onPreviewCourse}
             />
-          ))}
+          ) : (
+            shown.map((group) => (
+              <LineDepartures
+                key={`${stop.id}|${date}|${group.line}`}
+                group={group}
+                now={now}
+                upcomingOnly={upcomingOnly}
+                onOpenKursowka={onOpenKursowka}
+                onPreviewCourse={onPreviewCourse}
+              />
+            ))
+          )}
         </div>
       )}
       {shownMatched && (
-        <p className="mt-1.5 text-[7px] leading-snug text-mute">
-          Litery wg oficjalnej legendy linii (np. b – kurs przedłużony do
-          Boguszowa-Gorc); kurs bez litery = kurs podstawowy. Kliknij godzinę po
-          szczegóły{onPreviewCourse && source !== "fallback" ? " i przebieg kursu na mapie" : ""}. Czas polski.
-        </p>
+        <div className="mt-1.5">
+          <button
+            type="button"
+            aria-expanded={legendOpen}
+            data-testid="toggle-legend"
+            onClick={() => setLegendOpen((open) => !open)}
+            className="flex items-center gap-1 text-[8px] font-bold text-brand-ink"
+          >
+            <Info className="h-2.5 w-2.5" />
+            Legenda oznaczeń
+            <ChevronDown
+              className={cn(
+                "h-2.5 w-2.5 transition-transform",
+                legendOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {legendOpen && <StopBoardLegend groups={shown} />}
+          <p className="mt-0.5 text-[7px] leading-snug text-mute">
+            Kliknij godzinę po szczegóły
+            {onPreviewCourse && source !== "fallback"
+              ? " i przebieg kursu na mapie"
+              : ""}
+            . Czas polski.
+          </p>
+        </div>
       )}
     </section>
   );

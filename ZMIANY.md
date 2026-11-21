@@ -363,3 +363,32 @@ przystanki w DOM”: liczba markerów w kadrze jest mniejsza niż zbiór danych,
 a po przeskoku w inny rejon mapy stare markery znikają (nowy przypadek
 `TEST_CASE=culling`). `waitForGtfs` czeka na przystanek z centrum kadru, bo
 dalsze przystanki fikstury pojawiają się dopiero po przesunięciu mapy.
+
+## Tablica najbliższych odjazdów i legenda pod listą (wzór: myBus 3.0)
+
+Ekran przystanku z **myBus 3.0** (PZI TARAN, używany w Wałbrzychu przez ZDKiUM)
+zbiera najbliższe odjazdy i rozkład dnia na jednym ekranie, a pod listą chowa
+wyjaśnienia oznaczeń. Nasza karta przystanku robi to samo:
+
+- **Trzy zakładki** nad listą: **Najbliższe | Cały dzień | Od teraz**.
+  `Najbliższe` to płaska tablica **10 najbliższych kursów wszystkich linii**
+  (myBus pokazuje tablicę odjazdów, nie rozbicie na linie), sortowana po czasie
+  prognozowanym z GPS — opóźniony kurs spada na właściwe miejsce, a kurs już
+  odjechany znika. Obok godziny jest odliczanie (`teraz`, `za 3 min`, `za 1 h 5 min`).
+- **Kolory punktualności** jak w myBus: zielony = na czas / przyspieszenie do
+  1 min, pomarańczowy = opóźnienie do 3 min, czerwony = powyżej 3 min, szary
+  pierścień = brak prognozy GPS. Kolor jest kropką przy godzinie, a jego opis
+  znajduje się w legendzie.
+- **„Legenda oznaczeń”** — link pod listą (domyślnie zwinięty) rozwija litery
+  wariantów **użyte w tym widoku** (kod + oficjalny opis z legendy linii, z numerem
+  linii), opis kolorów punktualności i przypomnienie, że kurs bez litery jest
+  kursem podstawowym. Znika statyczne zdanie o „kursie przedłużonym do Boguszowa-Gorc”,
+  które było nieprawdziwe.
+- **Szczegóły odjazdu** (GPS, wóz, przewoźnik, „Pokaż przebieg kursu na mapie”,
+  kursówka) są współdzielone przez tablicę i pełny rozkład — `StopDepartureDetail.tsx`.
+
+`src/lib/stopBoard.ts` trzyma czystą logikę (`nextDepartures`, `minutesUntil`,
+`formatEta`, `boardLegend`, `PUNCTUALITY_LEGEND`), więc tablicę pokrywa szybki
+test `npm run test:board` (dołączony też do `npm run test:stops`). Domyślnie
+karta otwiera się na „Cały dzień”, żeby dotychczasowe nawigacje i testy
+przeglądarkowe działały bez zmian.
