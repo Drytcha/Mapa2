@@ -112,10 +112,27 @@ export function timetablePdfSheets(duties: TimetablePdfDuty[]): Array<{ duty: Ti
 }
 
 /**
- * Ile linijek stopki rezerwuje legenda na wydruku. Stała wartość = stała
- * geometria wierszy tabeli (testy i podgląd zależą od tego układu).
+ * Wzór wydruku (jak `RJ_KWKI_90(Z0)`): blok „UWAGI:” pod tabelą ma po jednym
+ * wierszu na każdą literę legendy. Te stałe wyznaczają geometrię strony.
  */
-export const TIMETABLE_LEGEND_RESERVED_LINES = 3;
+export const TIMETABLE_LEGEND_MAX_ROWS = 7;
+export const TIMETABLE_LEGEND_ROW_HEIGHT = 3.4;
+
+/**
+ * Wiersze bloku „UWAGI:” na wydruku — deterministyczne, bez mierzenia tekstu.
+ *
+ * Najpierw pełna legenda linii z kursówki (wszystkie litery), a gdy nie mieści
+ * się na stronie — tylko litery użyte w tym dniu (z „…” przy obcięciu).
+ */
+export function timetableLegendFooterRows(
+  duty: TimetablePdfDuty,
+): Array<{ line: string; code: string; text: string }> {
+  const full = timetableFullLegendRows(duty);
+  if (full.length && full.length <= TIMETABLE_LEGEND_MAX_ROWS) return full;
+  const used = timetableLegendRows(duty);
+  if (used.length <= TIMETABLE_LEGEND_MAX_ROWS) return used;
+  return used.slice(0, TIMETABLE_LEGEND_MAX_ROWS);
+}
 
 const TECHNICAL_CODES = ["WY", "PRZ", "ZJ"];
 const isTechnicalLine = (lineId: string) =>
@@ -385,86 +402,140 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
     fitText(value, x + 0.7, y + height / 2 + size * 0.11, Math.max(0.1, width - 1.4), size);
   };
 
-  // Legenda wariantów na dole strony (maks. 3 linijki, patrz TIMETABLE_LEGEND_RESERVED_LINES).
-  const legendFooter = (duty: TimetablePdfDuty, width: number) => {
-    // Kursówka bez ani jednego wariantu nie potrzebuje legendy — stopka nie
-    // zabiera wtedy miejsca tabeli.
-    if (!timetableLegendRows(duty).length) return { lines: [] as string[], size: 6 };
-    // Najpierw pełna legenda linii z kursówki (do 3 linijek), potem tylko
-    // warianty użyte w tym dniu.
-    const candidates = [
-      { text: timetablePrintLegendText(duty), maxLines: 3 },
-      { text: timetableLegendText(duty), maxLines: 3 },
-    ].filter((candidate) => candidate.text);
-    for (const candidate of candidates) {
-      for (const size of [6, 5.6, 5.2, 4.8]) {
-        doc.setFontSize(size);
-        const lines = doc.splitTextToSize(candidate.text, width) as string[];
-        if (lines.length <= Math.min(candidate.maxLines, TIMETABLE_LEGEND_RESERVED_LINES)) {
-          return { lines, size };
-        }
-      }
-    }
-    if (!candidates.length) return { lines: [] as string[], size: 6 };
-    doc.setFontSize(4.8);
-    const lines = (doc.splitTextToSize(candidates.at(-1)!.text, width) as string[]).slice(
-      0,
-      TIMETABLE_LEGEND_RESERVED_LINES,
-    );
-    lines[lines.length - 1] = `${lines[lines.length - 1]}…`;
-    return { lines, size: 4.8 };
+  // Wzór wydruku odwzorowuje papierowy rozkład `RJ_KWKI_90(Z0)`:
+  //  - wiersz nagłówka (nazwa dokumentu + data/godzina wydruku),
+  //  - pogrubiona wersja RJ (ważność feedu),
+  //  - pas podsumowania: kursówka | firma | rodzaj dnia | czas pracy | przerwa |
+  //    droga | zmiany,
+  //  - tabela: Linia | Uwagi | Godz. | Początek | Przystanki kontrolne | Koniec | Zakoń.,
+  //  - stopka „UWAGI:” z legendą liter (po jednym wierszu na literę).
+  const brand = ">>> MAPA2 / ROZKŁAD KURSÓW";
+  const stamp = DateTime.now().setZone(BRIGADE_ZONE).toFormat("dd.MM.yyyy HH:mm");
+
+  const centered = (value: string, x: number, y: number, width: number, size: number) => {
+    if (!value) return;
+    doc.setFontSize(size);
+    const clean = value.replace(/\s+/g, " ").trim();
+    const measured = doc.getTextWidth(clean);
+    const scale = measured > width ? width / measured : 1;
+    doc.text(clean, x + (width - measured * scale) / 2, y, { horizontalScale: scale });
   };
 
   sheets.forEach(({ duty, part, parts }, index) => {
     if (index) doc.addPage();
-    const number = duty.item.unassigned ? `Bez przypisanej kursówki${parts > 1 ? ` (${part}/${parts})` : ""}` : duty.item.number.replace(/-([0-9]+)$/, "/$1");
-    // Two compact metadata lines above a labelled summary, keeping the duty
-    // identifier prominent and the service day separate from the date.
-    fitText("MAPA2 / ROZKŁAD KURSÓW", margin, 8, 160, 8);
-    fitText(`Dzień: ${dateLabel}`, margin + 180, 8, tableW - 180 - (data.notice ? 6 : 0), 8);
-    fitText(`Ważność GTFS: ${formatDate(data.feedFrom)} – ${formatDate(data.feedTo)}`, margin, 12, 145, 7);
-    fitText(`Zakres: ${data.scopeLabel}`, margin + 148, 12, tableW - 148, 7);
+    const number = duty.item.unassigned
+      ? `Bez przypisanej kursówki${parts > 1 ? ` (${part}/${parts})` : ""}`
+      : duty.item.number.replace(/-([0-9]+)$/, "/$1");
+
+    // 1. Wiersz nagłówka: nazwa dokumentu po lewej, metadane wydruku po prawej.
+    fitText(`${brand} [${duty.item.operatorName || "GTFS"}]`, margin, 6.2, tableW * 0.55, 7.2);
+    const metaRight = `${data.scopeLabel} · wydrukowano ${stamp} · ${index + 1}/${sheets.length}`;
+    doc.setFontSize(6.2);
+    const metaWidth = doc.getTextWidth(metaRight);
+    fitText(metaRight, pageW - margin - Math.min(metaWidth, tableW * 0.45), 6.2, tableW * 0.45, 6.2);
+
+    // 2. Wersja RJ (ważność GTFS) + dzień kursówki.
+    fitText(
+      `Wersja RJ ważna od ${formatDate(data.feedFrom)} do ${formatDate(data.feedTo)}`,
+      margin,
+      10.8,
+      tableW * 0.55,
+      8,
+    );
+    const dayLabel = `Dzień: ${dateLabel}`;
+    doc.setFontSize(8);
+    const dayWidth = doc.getTextWidth(dayLabel);
+    fitText(dayLabel, pageW - margin - Math.min(dayWidth, tableW * 0.42), 10.8, tableW * 0.42, 8);
+
+    // 3. Pas podsumowania — siedem pól jak w papierowym wzorze.
     const metrics = summariseBrigade(duty.trips.map((row) => row.trip));
-    const km = metrics.missingLengthTrips ? `Niepełne dane (${metrics.missingLengthTrips} kurs.)` : `${(metrics.totalMeters / 1000).toLocaleString("pl-PL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
-    const boxes = [
-      { label: "KURSÓWKA", value: number },
-      { label: "RODZAJ DNIA", value: data.serviceLabel || "Według GTFS" },
-      { label: "FIRMA", value: duty.item.operatorName },
-      { label: "ROZPIĘTOŚĆ / PRACA SZAC.", value: duty.item.unassigned ? "Nie dotyczy" : `${duration(metrics.durationMinutes)} / ${duration(metrics.workBlockMinutes)}` },
-      { label: "PRZERWY > 90 MIN", value: duty.item.unassigned ? "Nie dotyczy" : duration(metrics.splitBreakMinutes) },
-      { label: "DŁUGOŚĆ KURSÓW", value: km },
+    const km = metrics.missingLengthTrips
+      ? `Niepełne dane (${metrics.missingLengthTrips} kurs.)`
+      : `${(metrics.totalMeters / 1000).toLocaleString("pl-PL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
+    // Zakres służby (pierwszy odjazd – ostatni przyjazd) jak „(04:59-23:05)”.
+    const scheduledTimes = duty.trips
+      .flatMap((row) => [row.stops[0]?.departure, row.stops[row.stops.length - 1]?.arrival])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const span = duty.item.unassigned
+      ? ""
+      : scheduledTimes.length
+        ? `(${clock(Math.min(...scheduledTimes))}-${clock(Math.max(...scheduledTimes))})`
+        : "(-)";
+    const bandY = 13, bandH = 9;
+    const bandCells: Array<{ label?: string; value: string; big?: boolean; center?: boolean }> = [
+      { label: "KURSÓWKA", value: number, big: true },
+      { label: "FIRMA", value: duty.item.operatorName || "—" },
+      { label: "RODZAJ DNIA", value: (data.serviceLabel || "WEDŁUG GTFS").toUpperCase(), center: true },
+      {
+        label: "CZAS PRACY",
+        value: duty.item.unassigned ? "Nie dotyczy" : `${duration(metrics.workBlockMinutes)} ${span}`,
+        center: true,
+      },
+      {
+        label: "CZAS PRZERWANY",
+        value: duty.item.unassigned
+          ? "Nie dotyczy"
+          : metrics.splitBreakMinutes
+            ? duration(metrics.splitBreakMinutes)
+            : "(-)",
+      },
+      { label: "DROGA", value: km },
+      { label: "ZM.", value: duty.item.unassigned ? "—" : String(metrics.estimatedDriverShifts || 1) },
     ];
-    const boxWidths = [34, 52, 59, 57, 39, tableW - 241];
+    const bandWeights = [12, 20, 20, 20, 13, 11, 6];
+    const bandTotal = bandWeights.reduce((sum, weight) => sum + weight, 0);
     let bx = margin;
-    boxes.forEach(({ label, value }, i) => {
-      const width = boxWidths[i];
-      doc.setDrawColor(160); doc.setLineWidth(0.12); doc.rect(bx, 15, width, 9);
-      fitText(label, bx + 0.8, 18.1, width - 1.6, 6);
-      fitText(value, bx + 0.8, 22.3, width - 1.6, i === 0 ? 9.5 : 8);
+    bandCells.forEach((cellDef, i) => {
+      const width = (bandWeights[i] / bandTotal) * tableW;
+      doc.setDrawColor(120);
+      doc.setLineWidth(0.15);
+      doc.rect(bx, bandY, width, bandH);
+      if (cellDef.label) {
+        if (cellDef.center) centered(cellDef.label, bx, bandY + 3.6, width, 6);
+        else fitText(cellDef.label, bx + 1, bandY + 3.6, width - 2, 6);
+      }
+      const valueSize = cellDef.big ? 10 : 7.4;
+      if (cellDef.center && !cellDef.big) centered(cellDef.value, bx, bandY + 7.7, width, valueSize);
+      else fitText(cellDef.value, bx + 1, bandY + 7.7, width - 2, valueSize);
       bx += width;
     });
 
-    const headerY = 26, headerH = 5;
-    cell("Linia", xs[0], headerY, ws[0], headerH, 7, true);
-    cell("Uwagi", xs[1], headerY, ws[1], headerH, 7, true);
-    cell("Godz.", xs[2], headerY, ws[2], headerH, 7, true);
-    cell("Początek", xs[3], headerY, ws[3], headerH, 7, true);
-    cell("Wybrane przystanki pośrednie · godzina odjazdu", xs[4], headerY, xs[12] - xs[4], headerH, 7, true);
-    cell("Koniec", xs[12], headerY, ws[12], headerH, 7, true);
-    cell("Przyj.", xs[13], headerY, ws[13], headerH, 7, true);
+    // 4. Nagłówek tabeli: wysoki wiersz z etykietami + „Przystanki kontrolne”.
+    const headerY = 22.5;
+    const groupH = 4;
+    const colH = 4.4;
+    const headerH = groupH + colH;
+    const headerCell = (label: string, x: number, width: number, y: number, height: number) => {
+      doc.setFillColor(238, 238, 238);
+      doc.rect(x, y, width, height, "F");
+      doc.setDrawColor(120);
+      doc.setLineWidth(0.15);
+      doc.rect(x, y, width, height);
+      // Ta sama linia bazowa co w `cell()` — tekst siedzi w środku komórki.
+      centered(label, x, y + height / 2 + 6.6 * 0.11, width, 6.6);
+    };
+    headerCell("Linia", xs[0], ws[0], headerY, headerH);
+    headerCell("Uwagi", xs[1], ws[1], headerY, headerH);
+    headerCell("Godz.", xs[2], ws[2], headerY, headerH);
+    headerCell("Początek", xs[3], ws[3], headerY, headerH);
+    headerCell("Koniec", xs[12], ws[12], headerY, headerH);
+    headerCell("Zakoń.", xs[13], ws[13], headerY, headerH);
+    headerCell("Przystanki kontrolne", xs[4], xs[12] - xs[4], headerY, groupH);
+    for (let i = 4; i < 12; i++) headerCell("", xs[i], ws[i], headerY + groupH, colH);
+
+    // 5. Tabela kursów.
     const display = timetableDisplayRows(duty);
     const bodyTop = headerY + headerH;
-    const legend = legendFooter(duty, tableW - 24);
-    // Wysokość stopki jest stała, gdy legenda istnieje — tabela zawsze kończy
-    // się w tym samym miejscu, niezależnie od tego, ile wariantów ma linia.
-    const legendReserve = legend.lines.length ? TIMETABLE_LEGEND_RESERVED_LINES : 0;
-    const bodyBottom = pageH - 18 - Math.max(0, legendReserve - 1) * 3.6;
+    const legendRows = timetableLegendFooterRows(duty);
+    const legendHeight = legendRows.length * TIMETABLE_LEGEND_ROW_HEIGHT;
+    // Stopka: legenda „UWAGI:” + 3 linijki przypisów (stałe miejsce).
+    const notesTop = pageH - 14.5;
+    const bodyBottom = notesTop - 2.2 - legendHeight;
     const rowHeight = Math.min(5, (bodyBottom - bodyTop) / Math.max(1, display.rows.length));
-    const fontSize = Math.min(7.5, rowHeight * 1.55);
+    const fontSize = Math.min(7.4, rowHeight * 1.5);
     let y = bodyTop;
     for (const [rowIndex, displayRow] of display.rows.entries()) {
-      // Header is the first shaded row: the first course is white, the
-      // second grey, and the pattern restarts on each duty sheet.
+      // Co drugi kurs na szarym tle; nagłówek tabeli już jest szary.
       if (rowIndex % 2 === 1) {
         doc.setFillColor(242, 242, 242);
         doc.rect(margin, y, tableW, rowHeight, "F");
@@ -478,26 +549,53 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
         if (!stops.length) throw new Error(`Brak przystanków dla kursu ${trip.id}.`);
         const intermediate = selectTimetableCheckpoints(stops);
         values = [timetableLineLabel(row), timetableVariantLetters(row), clock(stops[0].departure), stops[0].name];
-        for (let i = 0; i < 4; i++) values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
+        for (let i = 0; i < 4; i++) {
+          values.push(intermediate[i] ? clock(intermediate[i].departure) : "", intermediate[i]?.name ?? "");
+        }
         values.push(stops[stops.length - 1].name, clock(stops[stops.length - 1].arrival));
       }
       for (let i = 0; i < values.length; i++) cell(values[i], xs[i], y, ws[i], rowHeight, fontSize);
       y += rowHeight;
     }
-    legend.lines.forEach((line, lineIndex) => {
-      fitText(
-        line,
-        margin,
-        pageH - 16.6 - (legend.lines.length - 1 - lineIndex) * 3.6,
-        tableW - 24,
-        legend.size,
-      );
-    });
-    fitText("WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, niepotwierdzone; godziny i zajezdnia do ustalenia.", margin, pageH - 13, tableW - 24, 6.3);
-    fitText(`Zjazd zawsze osobnym wierszem (ZJ) — nie dopisujemy go do numeru linii. Do 4 przystanków pośrednich; od 24:00 następna doba.${display.missingCoordinates ? " Brak współrzędnych: PRZ mogą być niepełne." : ""}`, margin, pageH - 9, tableW - 24, 6.3);
-    fitText(`${data.notice ? "UWAGA: niepełne dane GTFS — szczegóły w notatce PDF. " : ""}GTFS, nie dokument urzędowy. Podsumowanie bez wierszy ~; czas pracy i długość orientacyjne.`, margin, pageH - 5, tableW - 24, 6.3);
-    if (data.notice) doc.createAnnotation({ type: "text", title: "Niepełne dane GTFS", contents: data.notice, bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 } });
-    fitText(`${index + 1} / ${sheets.length}`, pageW - margin - 18, pageH - 5, 18, 6.3);
+
+    // 6. Stopka „UWAGI:” — po jednym wierszu na literę (linia | litera | opis).
+    if (legendRows.length) {
+      const legendTop = notesTop - 1.4 - legendHeight;
+      doc.setFontSize(7);
+      doc.text("UWAGI:", margin, legendTop + 3);
+      legendRows.forEach((entry, rowIndex) => {
+        const rowY = legendTop + 3 + rowIndex * TIMETABLE_LEGEND_ROW_HEIGHT;
+        fitText(entry.line, margin + 14, rowY, 8, 6.6);
+        centered(entry.code, margin + 21, rowY, 6, 6.8);
+        fitText(entry.text, margin + 29, rowY, tableW - 31, 6.6);
+      });
+    }
+
+    // 7. Przypisy i numer strony.
+    fitText(
+      "WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, niepotwierdzone; godziny i zajezdnia do ustalenia. Zjazd zawsze osobnym wierszem (ZJ).",
+      margin,
+      notesTop + 1.2,
+      tableW - 20,
+      5.9,
+    );
+    fitText(
+      `Do 4 przystanków kontrolnych; od 24:00 następna doba.${display.missingCoordinates ? " Brak współrzędnych: PRZ mogą być niepełne." : ""} GTFS, nie dokument urzędowy — czas pracy i droga orientacyjne.`,
+      margin,
+      notesTop + 4.6,
+      tableW - 20,
+      5.9,
+    );
+    if (data.notice) {
+      fitText(`UWAGA: niepełne dane GTFS — ${data.notice}`, margin, notesTop + 8, tableW - 20, 5.9);
+      doc.createAnnotation({
+        type: "text",
+        title: "Niepełne dane GTFS",
+        contents: data.notice,
+        bounds: { x: pageW - margin - 4, y: 5, w: 4, h: 4 },
+      });
+    }
+    fitText(`${index + 1} / ${sheets.length}`, pageW - margin - 18, pageH - 4, 18, 6.3);
   });
   return doc;
 }

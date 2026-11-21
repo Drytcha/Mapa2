@@ -136,6 +136,50 @@ Gdzie to działa:
   `18q`), a stopka każdej strony zawiera legendę **tylko użytych** wariantów,
 - **opis funkcji w Pomocy** – zaktualizowany do oficjalnej legendy.
 
+### Wzór wydruku kursówki — jak papierowy `RJ_KWKI_90(Z0)`
+
+Każda kursówka PDF (bez względu na linię) ma teraz ten sam układ, odwzorowany
+z rozkładu dla kierowców:
+
+```
+>>> MAPA2 / ROZKŁAD KURSÓW [firma]            zakres · wydrukowano dd.MM.rrrr hh:mm · 1/1
+Wersja RJ ważna od dd.MM.rrrr do dd.MM.rrrr                            Dzień: <dzień, data>
+
+┌────────────┬──────────┬──────────────┬──────────────────┬───────────────┬──────────┬─────┐
+│ KURSÓWKA   │ FIRMA    │ RODZAJ DNIA  │ CZAS PRACY       │ CZAS PRZERWANY│ DROGA    │ ZM. │
+│ 9/01       │ MZUK     │ ROBOCZY …    │ 8:14 (04:59-23:05)│ (-)          │ 312,7 km │ 1   │
+└────────────┴──────────┴──────────────┴──────────────────┴───────────────┴──────────┴─────┘
+
+┌───────┬───────┬───────┬──────────┬──────────────────────────────────────────┬────────┬───────┐
+│ Linia │ Uwagi │ Godz. │ Początek │        Przystanki kontrolne               │ Koniec │Zakoń. │
+├───────┼───────┼───────┼──────────┼───────┬──────┬───────┬──────┬───────┬──────┼────────┼───────┤
+│ 9     │ sj*   │ 05:00 │ Stacyjna │ 05:07 │ …    │ 05:14 │ …    │ 05:21 │ …    │ Jachim…│ 05:28 │
+└───────┴───────┴───────┴──────────┴───────┴──────┴───────┴──────┴───────┴──────┴────────┴───────┘
+
+UWAGI:  9  *  na przystanku Uczniowska-US przesiadka pasażerów linią-18
+        9  a  kurs do przystanku Podwale - Forteczna
+        9  d  kurs do Dworca Szczawienko
+        9  s  kurs przez ul. Sokołowskiego /szpital/
+        9  c  kurs do ul. Jachimowicza
+        9  j  kurs do ul. Jachimowicza (Faurecia)
+WY: wyjazd, PRZ: przejazd techniczny, ZJ: zjazd. ~: według reguł, …
+```
+
+- **Pas podsumowania** ma siedem pól jak w papierze: kursówka, firma, rodzaj dnia,
+  czas pracy z zakresem godzin, czas przerwany (`(-)` gdy brak), droga i liczba
+  zmian.
+- **Nagłówek tabeli jest dwupoziomowy**: wysokie kolumny `Linia | Uwagi | Godz. |
+  Początek | Koniec | Zakoń.` oraz grupa `Przystanki kontrolne` nad czterema
+  parami (godzina + przystanek).
+- **Blok `UWAGI:`** to legenda liter w układzie `linia | litera | opis` —
+  po jednym wierszu na literę (`timetableLegendFooterRows`). Maksymalnie 7
+  wierszy (`TIMETABLE_LEGEND_MAX_ROWS`); jeśli pełna legenda linii się nie
+  mieści, druk bierze litery użyte w danej kursówce, a przy nadmiarze obcina
+  listę.
+- Geometria jest deterministyczna (stałe `TIMETABLE_LEGEND_ROW_HEIGHT`,
+  wysokości nagłówka), więc test PDF liczy pozycje pasków „zebra” bez
+  mierzenia tekstu.
+
 ### Kolumna „Uwagi” z literami legendy — jak w rozkładzie dla kierowców
 
 Oficjalny rozkład z `RJ_KWKI_90(Z0)` ma po numerze linii osobną kolumnę

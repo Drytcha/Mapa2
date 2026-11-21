@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
-import { TIMETABLE_LEGEND_RESERVED_LINES, collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, selectTimetableCheckpoints, timetableLegendText, timetablePdfSheets, timetablePdfFilename, timetableDisplayRows } from "../src/lib/engine/dutyTimetablePdf";
+import { TIMETABLE_LEGEND_ROW_HEIGHT, timetableLegendFooterRows, collectTimetablePdfData, createTimetablePdf, selectTimetableDuties, selectTimetableCheckpoints, timetableLegendText, timetablePdfSheets, timetablePdfFilename, timetableDisplayRows } from "../src/lib/engine/dutyTimetablePdf";
 import { getGtfsLines } from "../src/lib/engine/gtfsStore";
 import { summariseBrigade } from "../src/lib/brigadeMetrics";
 import type { BrigadeItem, BrigadeTripView } from "../src/lib/engine/brigades";
@@ -59,11 +59,15 @@ if (process.env.DUTY_PDF_TEST_DENSE_OUTPUT) {
 }
 assert.equal(densePdf.getNumberOfPages(), 1, "dense duty and warning must not create another page");
 const pages = densePdf.internal.pages as unknown as string[][];
-// Six summary boxes, seven shaded header cells (background + border), one
-// background for every other row and fourteen bordered cells per row
-// (Linia | Uwagi | Godz. | Początek | 4× pośrednie | Koniec | Przyj.).
+// Wzór RJ_KWKI_90(Z0): siedem pól pasa podsumowania, piętnaście komórek
+// nagłówka (6 wysokich + „Przystanki kontrolne” + 8 kolumn pośrednich, każde
+// z tłem i obramowaniem), tło co drugiego kursu i czternaście komórek wiersza
+// (Linia | Uwagi | Godz. | Początek | 4× pośrednie | Koniec | Zakoń.).
 const denseRowCount = timetableDisplayRows(dense.duties[0]).rows.length;
-assert.equal(pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length, 6 + 14 + Math.floor(denseRowCount / 2) + 14 * denseRowCount);
+assert.equal(
+  pages[1].filter((instruction) => / re(?:\s|$)/.test(instruction)).length,
+  7 + 2 * 15 + Math.floor(denseRowCount / 2) + 14 * denseRowCount,
+);
 // Full-width fills must be on the second, fourth, ... course only. The
 // header is already shaded; do not shade the first course too.
 const stripeRects = (page: string[]) => page.filter((instruction) => {
@@ -73,13 +77,15 @@ const stripeRects = (page: string[]) => page.filter((instruction) => {
 });
 const denseStripes = stripeRects(pages[1]);
 assert.equal(denseStripes.length, Math.floor(denseRowCount / 2));
-// Stopka rezerwuje stałą liczbę linijek, gdy legenda istnieje.
-const legendLines = timetableLegendText(dense.duties[0]) ? TIMETABLE_LEGEND_RESERVED_LINES : 0;
-const legendHeight = Math.max(0, legendLines - 1) * 3.6;
-const rowHeight = (densePdf.internal.pageSize.getHeight() - 18 - legendHeight - 31) / denseRowCount;
+// Stopka „UWAGI:” ma po jednym wierszu na literę legendy (geometria stała).
+const legendHeight = timetableLegendFooterRows(dense.duties[0]).length * TIMETABLE_LEGEND_ROW_HEIGHT;
+const headerHeight = 8.4;
+const bodyTop = 22.5 + headerHeight;
+const bodyBottom = densePdf.internal.pageSize.getHeight() - 14.5 - 2.2 - legendHeight;
+const rowHeight = Math.min(5, (bodyBottom - bodyTop) / denseRowCount);
 for (let i = 0; i < denseStripes.length; i++) {
   const y = Number(denseStripes[i].split(" ")[1]);
-  const expectedY = (densePdf.internal.pageSize.getHeight() - 31 - (i * 2 + 1) * rowHeight) * 72 / 25.4;
+  const expectedY = (densePdf.internal.pageSize.getHeight() - bodyTop - (i * 2 + 1) * rowHeight) * 72 / 25.4;
   assert.ok(Math.abs(y - expectedY) < 0.01, `Wrong zebra stripe at row ${i * 2 + 1}`);
 }
 const multi = await createTimetablePdf({ ...data, duties: [data.duties[0], data.duties[0]] });
