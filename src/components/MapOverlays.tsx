@@ -87,6 +87,7 @@ export type { StopDisplayMode };
 import GtfsSchedule from "./GtfsSchedule";
 import LiveBusRunPanel from "./LiveBusRunPanel";
 import { getVehicleTripStops } from "@/lib/engine/gtfsStore";
+import { pastRouteColor } from "@/lib/routeProgress";
 import {
   tripVariantLabel,
   vehicleChipLabel,
@@ -452,11 +453,40 @@ export function LiveFleetControl({
 }
 
 /** Always available while an overlay is displayed, including route editing modes. */
-export function ShapeOverlayControl({ title, onClear }: { title: string; onClear: () => void }) {
+export function ShapeOverlayControl({
+  title,
+  onClear,
+  progress,
+  lineColor,
+  dark,
+}: {
+  title: string;
+  onClear: () => void;
+  /** Kurs autobusu z GPS: pokaż legendę „przejechane / przed nami”. */
+  progress?: boolean;
+  lineColor?: string;
+  dark?: boolean;
+}) {
   return (
     <div className="pointer-events-auto flex max-w-full items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 py-1.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
       <BusFront className="h-3 w-3 shrink-0" />
       <span className="min-w-0 break-words">{title}</span>
+      {progress && (
+        <span className="flex shrink-0 items-center gap-1 pl-0.5 text-[7.5px] font-bold text-mute">
+          <span
+            className="h-[3px] w-4 rounded-full"
+            style={{ background: pastRouteColor(Boolean(dark)) }}
+            title="Odcinek już przejechany"
+          />
+          <span>przejechane</span>
+          <span
+            className="h-[3px] w-4 rounded-full"
+            style={{ background: lineColor || "#0d4f3b" }}
+            title="Odcinek przed autobusem"
+          />
+          <span>przed nami</span>
+        </span>
+      )}
       <button
         type="button"
         onClick={onClear}

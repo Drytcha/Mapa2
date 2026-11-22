@@ -1979,7 +1979,8 @@ function MapPlanerWorkspace() {
           );
           return;
         }
-        setKursowkaOverlay(overlay);
+        // Trasa tego autobusu: część za pojazdem rysujemy na szaro (patrz MapView).
+        setKursowkaOverlay({ ...overlay, liveVehicleId: bus.vehicleId });
         setBusOverlay(true);
       })
       .catch(() => {
@@ -2428,6 +2429,9 @@ function MapPlanerWorkspace() {
               {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
                 <ShapeOverlayControl
                   title={kursowkaOverlay.title}
+                  progress={Boolean(kursowkaOverlay.liveVehicleId)}
+                  lineColor={kursowkaOverlay.color}
+                  dark={theme === "dark"}
                   onClear={() => {
                     busOverlayRequestRef.current = null;
                     setBusOverlay(false);

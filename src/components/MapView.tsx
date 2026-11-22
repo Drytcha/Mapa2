@@ -8,6 +8,7 @@ import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
+import { pastRouteColor, splitRouteAtBus } from "@/lib/routeProgress";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
 import {
   routeArrowIconHtml,
@@ -61,6 +62,11 @@ export interface KursowkaShapeOverlay {
   stops: Array<{ name: string; lat: number; lon: number }>;
   /** Present only when previewing one scheduled course, not a whole brigade. */
   course?: CoursePreview;
+  /**
+   * Autobus, którego kurs właśnie oglądamy. Gdy jest podany, część trasy za
+   * pojazdem rysujemy na szaro (już przejechana), a część przed nim kolorem linii.
+   */
+  liveVehicleId?: string | null;
 }
 
 export interface TripMapPoint {
@@ -241,6 +247,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const tileRef = useRef<L.TileLayer[]>([]);
   const routeGroupRef = useRef<L.LayerGroup | null>(null);
   const kursowkaGroupRef = useRef<L.LayerGroup | null>(null);
+  const routeDoneGroupRef = useRef<L.LayerGroup | null>(null);
+  /** Ostatni odcinek podziału „przejechane / przed nami” — ciągłość przy pętli. */
+  const routeDoneIndexRef = useRef<Map<string, number>>(new Map());
   const tripGroupRef = useRef<L.LayerGroup | null>(null);
   const tripOriginRef = useRef<L.Marker | null>(null);
   const tripDestinationRef = useRef<L.Marker | null>(null);
@@ -424,6 +433,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const kursowkaPane = map.createPane("kursowka");
     kursowkaPane.style.zIndex = "510";
 
+    // Odcinek trasy już przejechany przez autobus — nad linią kursu, pod przystankami.
+    const routeDonePane = map.createPane("routeDone");
+    routeDonePane.style.zIndex = "512";
+    routeDonePane.style.pointerEvents = "none";
+
     const courseStopsPane = map.createPane("courseStops");
     courseStopsPane.style.zIndex = "625";
 
@@ -450,6 +464,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     routeGroupRef.current = L.layerGroup().addTo(map);
     kursowkaGroupRef.current = L.layerGroup().addTo(map);
+    routeDoneGroupRef.current = L.layerGroup().addTo(map);
     tripGroupRef.current = L.layerGroup().addTo(map);
     stopGroupRef.current = L.layerGroup().addTo(map);
     signalGroupRef.current = L.layerGroup().addTo(map);
@@ -493,6 +508,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       mapRef.current = null;
       routeGroupRef.current = null;
       kursowkaGroupRef.current = null;
+      routeDoneGroupRef.current = null;
       tripGroupRef.current = null;
       tripOriginRef.current = null;
       tripDestinationRef.current = null;
@@ -791,6 +807,37 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     fitOverlayMap();
   }, [kursowkaOverlay]);
+
+  /* Postęp kursu autobusu: odcinek już przejechany rysujemy na szaro.
+     Warstwa jest osobna (własny pane), więc nie rusza trasy kursu ani jej
+     dopasowania do ekranu — aktualizuje się przy każdej pozycji GPS. */
+  useEffect(() => {
+    const group = routeDoneGroupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const overlay = kursowkaOverlay;
+    const vehicleId = overlay?.liveVehicleId;
+    if (!overlay || !vehicleId || !overlay.polylines.length) return;
+    const bus = liveBuses.find((item) => item.vehicleId === vehicleId);
+    if (!bus) return;
+    const path = overlay.polylines[0];
+    const split = splitRouteAtBus(path, bus, {
+      nearIndex: routeDoneIndexRef.current.get(vehicleId) ?? null,
+    });
+    if (!split || split.passed.length < 2) return;
+    routeDoneIndexRef.current.set(vehicleId, split.index);
+    // Sam kolor, bez białej obwódki: obwódka trasy kursu zostaje nienaruszona,
+    // a szary odcinek dokładnie przykrywa kolor sprzed autobusu.
+    L.polyline(split.passed, {
+      color: pastRouteColor(theme !== "light"),
+      weight: 5,
+      opacity: 1,
+      lineCap: "round",
+      lineJoin: "round",
+      pane: "routeDone",
+      interactive: false,
+    }).addTo(group);
+  }, [kursowkaOverlay, liveBuses, theme]);
 
   /* Planer podróży pasażera: start, odcinki piesze/autobusowe, przesiadki i cel */
   useEffect(() => {

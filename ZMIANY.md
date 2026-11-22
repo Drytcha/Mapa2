@@ -694,3 +694,44 @@ pętli i nigdzie nie sięga Julinowa, tablica odjazdów pokazuje „Strzegomska 
 Kozice”, a katalog linii zawiera wyłącznie warianty z dnia odniesienia. Reszta
 zestawu (`tsc`, `test:bus|board|stops|duty-pdf|legend|arrows|perf|load`,
 `test:bus:e2e`, `build`) zielona.
+
+## Kolor trasy: odcinek przejechany i odcinek przed autobusem
+
+Zgłoszenie: „chcę, aby linia, która już została wykonana przez autobus, miała
+inny kolor niż ta, która ma być wykonana w przyszłości”. Druga część zgłoszenia
+(„nadal są linie przerywane”) jest pilnowana testem — trasa nigdy nie może być
+kreskowana.
+
+**Co doszło**
+
+- Nowy `src/lib/routeProgress.ts` — `splitRouteAtBus()` dzieli przebieg kursu
+  w miejscu, w którym jest autobus. Punkt podziału jest **rzutowany na odcinek**
+  trasy (a nie na najbliższy wierzchołek kształtu), więc oba kolory stykają się
+  w jednym punkcie: żadnej dziury i żadnej „kreski” przy pojeździe. Suma obu
+  odcinków to cała trasa (test: `npm run test:progress`).
+- Gdy trasa biegnie tą samą ulicą dwa razy (pętla, „tam i z powrotem”), podział
+  trzyma się nitki, na której już był (`nearIndex`) — granica nie przeskakuje na
+  drugą nitkę przy każdym odczycie GPS.
+- `MapView.tsx` — nowa warstwa `routeDone` (nad linią kursu, pod przystankami):
+  odcinek za autobusem jest **szary** (neutralny, inny niż kolory linii), a cała
+  trasa przed autobusem zostaje w kolorze linii. Warstwa aktualizuje się przy
+  każdej pozycji GPS i nie rusza dopasowania trasy do ekranu.
+- `MapOverlays.tsx` / `MapPlanerApp.tsx` — panel trasy pokazuje legendę
+  „przejechane / przed nami” z tymi samymi kolorami.
+- Koniec kursu: cała trasa jest szara (nic już nie zostało). Start: cała
+  w kolorze linii.
+
+**Testy**
+
+- `npm run test:progress` (nowy) — podział pod autobusem, ciągłość obu kolorów,
+  suma długości równa trasie, pętla „tam i z powrotem”, krańce kursu, GPS poza
+  trasą, neutralność koloru.
+- `test:bus:e2e` — autobus w fiksturze jedzie **w połowie odcinka** (poprzednio
+  stał na przystanku, więc podziału nie dało się sprawdzić), a test czyta z DOM
+  kolor i `stroke-dasharray` obu warstw: przejechany odcinek ma inny kolor i
+  **żadnego** wzoru kreskowego. Fikstura `location` jest teraz w kolejności
+  `[lon, lat]`, tak jak podaje API zbiorkom (wcześniej współrzędne były
+  zamienione, a test tego nie wychwytywał).
+- `test:perf` — nowy warunek: `dashArray` wolno używać tylko dla odcinków
+  pieszych w planerze (`2 7`) i szkicu własnej trasy (`5 7`). Trasa kursu nie
+  może wrócić do linii przerywanej (`9 6` z poprzedniej wersji).

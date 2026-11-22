@@ -75,4 +75,22 @@ assert.match(app, /fleetSignature/, "aktualizacje floty są deduplikowane");
 assert.match(hud, /get\("perf"\) === "1"/, "HUD włącza się parametrem ?perf=1");
 assert.match(hud, /if \(!enabled\) return null/, "HUD nie renderuje nic bez zgody");
 
+// 10. Trasa na mapie jest zawsze ciągła: kreski (`dashArray`) wolno używać
+//     wyłącznie w planerze podróży (odcinki piesze) i przy szkicu własnej trasy.
+//     Wcześniej cała brygada rysowała się linią przerywaną `9 6` — to nie może
+//     wrócić, bo trasa kursu ma być jedną, czytelną linią.
+const dashPatterns = [...mapView.matchAll(/dashArray: "([^"]+)"/g)].map((match) => match[1]).sort();
+assert.deepEqual(
+  dashPatterns,
+  ["2 7", "5 7"],
+  `kreski tylko dla odcinków pieszych i szkicu trasy (są: ${dashPatterns.join(", ")})`,
+);
+assert.match(mapView, /pane: "kursowka"/, "trasa kursu rysowana w swoim pane");
+const kursowkaBlock = mapView.slice(mapView.indexOf("const drawable = kursowkaOverlay.polylines"));
+assert.ok(
+  kursowkaBlock.length > 0 && !/dashArray/.test(kursowkaBlock.slice(0, 2000)),
+  "trasa kursu bez wzoru kreskowego (jedna ciągła linia)",
+);
+assert.match(mapView, /createPane\("routeDone"\)/, "przejechany odcinek ma własną warstwę nad trasą");
+
 console.log("map performance guards passed (canvas dark tiles, no blur, labels, GPS, fleet)");
