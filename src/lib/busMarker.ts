@@ -14,6 +14,12 @@ import type { LiveBusVehicle } from "./types";
 export interface BusLabelOptions {
   kursowka: boolean;
   vehicleNumber: boolean;
+  /**
+   * Kierunek z rozkładu (ostatni przystanek kursu). Ma pierwszeństwo nad
+   * tablicą kierunkową GPS, która bywa nieaktualna — np. linia 11 pokazywała
+   * „Nowy Julianów”, choć kurs kończy na pętli Strzegomska – Kozice.
+   */
+  destination?: string | null;
 }
 
 interface MarkerLabelSegment {
@@ -88,6 +94,8 @@ export function buildBusMarker(
   selected: boolean
 ): { html: string; tooltip: string } {
   const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
+  // Kierunek z rozkładu jest pewniejszy niż tablica kierunkowa GPS.
+  const directionLabel = options.destination || bus.headsign || "";
   const company = OPERATOR_STYLES[bus.operatorKey] ?? OPERATOR_STYLES.other;
   const { segments, hasExtra } = buildMarkerSegments(bus, options);
   const compact = !hasExtra && segments.length === 1;
@@ -128,7 +136,7 @@ export function buildBusMarker(
     ...(options.vehicleNumber && vehicleNumber
       ? [{ key: "Numer taborowy wozu", value: vehicleNumber }]
       : []),
-    ...(bus.headsign ? [{ key: "Kierunek", value: bus.headsign }] : []),
+    ...(directionLabel ? [{ key: "Kierunek", value: directionLabel }] : []),
     { key: "Prędkość | punktualność", value: `${speedText} | ${delayDescription}` },
   ];
   const tooltip = [
