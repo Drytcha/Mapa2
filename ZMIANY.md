@@ -527,3 +527,65 @@ Test `npm run test:bus:e2e` ma teraz drugą fazę w Chromium na 390×844
 (`isMobile`, `hasTouch`, DPR 2): sprawdza `position: fixed`, odstępy od
 krawędzi, wysokość ≤ 56% ekranu, ukrytą listę brygad, to, że trasa zaczyna się
 i kończy **nad** szufladą, oraz zwijanie/rozwijanie uchwytem.
+
+## Szybsze i płynniejsze wczytywanie danych (rozkład, przystanki, trasy)
+
+Zgłoszenie: „zoptymalizuj cały kod pod względem wczytywania danych, żeby robił to
+szybciej i płynniej”. Wczytanie rozkładu to jeden długi blok pracy na wątku
+głównym: rozpakowanie ZIP-a, parsowanie kilkudziesięciu tysięcy wierszy CSV,
+indeks brygad i zapis do IndexedDB. Przeglądarka nie może wtedy odmalować mapy
+ani obsłużyć dotyku.
+
+**Co zmieniono**
+
+1. **Parsowanie oddaje sterowanie przeglądarce.** Nowe `core/cooperative.ts`
+   (`yieldToMain`, `scheduler.yield()` → `MessageChannel` → `setTimeout`) i czytnik
+   CSV `createCsvReader()` pozwalają przerwać pracę co ~2000 wierszy oraz między
+   plikami paczki. Nie ma już jednego zadania blokującego interfejs na ~0,5 s.
+2. **`shapes.txt` dochodzi leniwie.** To najdroższy plik paczki i nie jest
+   potrzebny do pierwszego ekranu. Rozpakowanie pomija go (`unzipSync` z filtrem),
+   a `ensureShapesReady()` parsuje go porcjami dopiero wtedy, gdy ktoś rysuje
+   trasę (linie, kurs, plan podróży) — i tylko raz na bazę. W tle, po pierwszym
+   ekranie, geometria i tak się dociepla.
+3. **Gotowa baza w IndexedDB.** Sparsowany rozkład (`gtfs_parsed_*`) jest zapisywany
+   jako structured clone (Mapy/Set-y bez konwersji do JSON), więc powrót na
+   stronę nie rozpakowuje ZIP-a ani nie parsuje CSV. Zapis i zapis bajtów paczki
+   czekają na bezczynność (2 s + `requestIdleCallback`), żeby nie konkurowały
+   z pierwszym rysowaniem mapy.
+4. **Bez powtarzania tej samej pracy.** `loadAndBuild` liczy tożsamość paczki
+   (długość + sumy skrajnych fragmentów + źródło) i przy tych samych bajtach
+   zwraca istniejący magazyn. Zniknął też zapis wielomegabajtowego archiwum przy
+   każdym wejściu oraz ponowne parsowanie przy odświeżeniu rozkładu.
+5. **Równoległe zapytania na starcie.** Paczka, gotowa baza i obserwacje GPS
+   startują jednocześnie; `warmUpStorage()` otwiera IndexedDB już przy starcie
+   modułu (samo otwarcie bazy potrafiło zająć ~300 ms w środku ścieżki startu).
+6. **Tańsze parsowanie CSV.** `timeToMinutes` nie alokuje tablicy na wiersz,
+   `parseCsvLine` przycina pola tylko wtedy, gdy naprawdę mają spacje.
+7. **Indeks obsad linii 7 liczony raz na typ dnia.** Rekonstrukcja brygad dla
+   każdej daty (90 dat × kursy) była liczona od nowa; teraz wynik jest
+   współdzielony przez daty o tym samym zestawie rozkładów, a kursy są grupowane
+   po `service_id` zamiast filtrowane dla każdej daty.
+
+**Pomiar** (`npm run bench:load`, Chromium, syntetyczna paczka 1,1 MB: 2100 kursów,
+63 tys. wierszy `stop_times`, 90 tys. punktów kształtu; mediana z 3 wejść)
+
+| Metryka | Przed | Po |
+| --- | --- | --- |
+| Zimno: pierwszy autobus na mapie | 1564 ms | **1438 ms** |
+| Zimno: blokady UI (suma / najdłuższa) | 720 ms / 422 ms | **352 ms / 146 ms** |
+| Ciepło: pierwszy autobus na mapie | 1621 ms | **1286 ms** |
+| Ciepło: blokady UI (suma / najdłuższa) | 642 ms / 406 ms | **319 ms / 154 ms** |
+| Ciepło: etapy wczytywania danych | pełne parsowanie ~0,6 s | **~0,55 s z cache, bez rozpakowywania** |
+
+**Diagnostyka.** `core/perfMarks.ts` zapisuje czasy etapów (`gtfs:archive`,
+`gtfs:unzip`, `gtfs:csv:*`, `gtfs:index`, `gtfs:shapes`, `gtfs:cache*`). Widać je
+w HUD (`?perf=1`, linia „dane … ms”), w osi czasu DevTools (`performance.measure`)
+oraz przez `window.__mapplanerPerf.getTimings()`.
+
+**Testy.** Nowy `npm run test:load` (`scripts/test-gtfs-load.ts`) pilnuje, że
+a) `shapes.txt` nie jest parsowany na starcie,
+b) wczytywanie oddaje sterowanie (timer zdąża się wykonać w trakcie),
+c) ta sama paczka nie jest rozpakowywana drugi raz,
+d) kształty dochodzą przy pierwszym rysowaniu trasy i tylko raz.
+Do pomiaru w przeglądarce doszło `npm run bench:load` (syntetyczna paczka w
+`scripts/lib/syntheticGtfs.ts`).

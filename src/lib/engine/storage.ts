@@ -67,6 +67,15 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
+/**
+ * Otwiera bazę w tle, zanim ktokolwiek o nią poprosi. Samo `indexedDB.open`
+ * potrafi zająć kilkaset milisekund (wersjonowanie, odblokowanie), a bez tego
+ * pierwsze wczytanie rozkładu czeka na nie w środku krytycznej ścieżki.
+ */
+export function warmUpStorage(): void {
+  void openDb();
+}
+
 export async function idbGetKv<T>(key: string): Promise<T | null> {
   const db = await openDb();
   if (!db) return (memoryKv.get(key) as T | undefined) ?? null;

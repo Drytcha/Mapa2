@@ -19,6 +19,7 @@ import { repairShapeGaps } from "./engine/shapeRepair";
 import { WARSAW_ZONE } from "./core/time";
 import {
   ensureGtfsSeeded,
+  ensureShapesReady,
   type GtfsMemoryStore,
   type GtfsStopRecord,
 } from "./engine/gtfsStore";
@@ -968,6 +969,9 @@ export async function planJourneys(options: {
   const { origin, destination } = options;
   options.signal?.throwIfAborted();
   const store = await ensureGtfsSeeded();
+  // Kształty tras dochodzą leniwie — plan podróży rysuje odcinki autobusowe
+  // po `shapes.txt`, więc czekamy na nie dopiero tutaj.
+  await ensureShapesReady(store);
   options.signal?.throwIfAborted();
   const graph = getStopGraph(store);
   const departMs = options.departMs ?? Date.now();

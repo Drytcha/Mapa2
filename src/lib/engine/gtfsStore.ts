@@ -41,6 +41,8 @@ import { reconstructLineSevenDuty } from "./lineSevenDuty";
 import { technicalTripCode, type TechnicalTripCode } from "./technicalTrips";
 import { repairShapeGaps } from "./shapeRepair";
 import type { BuilderStop, BuilderTrip } from "./brigadeBuilder";
+import { CSV_CHUNK_ROWS, yieldToMain } from "../core/cooperative";
+import { createLap, measureSync, recordTiming } from "../core/perfMarks";
 import {
   idbGetKv,
   idbSetKv,
@@ -65,6 +67,12 @@ const OFFICIAL_GTFS_PROXY_URL = "/api/transit/gtfs";
 const ZBIORKOM_FALLBACK_GTFS_URL =
   "https://api.zbiorkom.live/api6-open/walbrzych/gtfs/default";
 const ARCHIVE_KV_KEY = "gtfs_archive_walbrzych_eu_v2";
+/**
+ * Gotowa baza po parsowaniu (Mapy/Set-y są klonowalne przez structured clone,
+ * więc IndexedDB przechowuje je bez konwersji do JSON). Dzięki temu powrót na
+ * stronę nie rozpakowuje ZIP-a ani nie parsuje dziesiątek tysięcy wierszy CSV.
+ */
+const PARSED_KV_KEY = "gtfs_parsed_walbrzych_eu_v1";
 const ARCHIVE_MAX_AGE_MS = 12 * 3600 * 1000;
 const ZONE = WARSAW_ZONE;
 
@@ -334,8 +342,22 @@ export interface DutyDetailPayload {
 
 export const normalizeStopName = foldStopKey;
 
+/** Czy pole wymaga przycięcia? Większość paczek GTFS nie ma spacji w komórkach. */
+function needsTrim(text: string): boolean {
+  if (text.length === 0) return false;
+  const first = text.charCodeAt(0);
+  const last = text.charCodeAt(text.length - 1);
+  return first <= 0x20 || last <= 0x20;
+}
+
 function parseCsvLine(line: string): string[] {
-  if (!line.includes('"')) return line.split(",").map((v) => v.trim());
+  if (!line.includes('"')) {
+    const parts = line.split(",");
+    for (let i = 0; i < parts.length; i += 1) {
+      if (needsTrim(parts[i])) parts[i] = parts[i].trim();
+    }
+    return parts;
+  }
   const out: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -349,26 +371,29 @@ function parseCsvLine(line: string): string[] {
         inQuotes = !inQuotes;
       }
     } else if (ch === "," && !inQuotes) {
-      out.push(cur.trim());
+      out.push(needsTrim(cur) ? cur.trim() : cur);
       cur = "";
     } else {
       cur += ch;
     }
   }
-  out.push(cur.trim());
+  out.push(needsTrim(cur) ? cur.trim() : cur);
   return out;
 }
 
 /**
- * Column-indexed CSV streamer: avoids allocating tens of thousands of intermediate
- * Record<string, string> objects when parsing large GTFS files like stop_times.txt.
+ * Strumień wierszy CSV bez alokacji obiektów `Record<string, string>`.
+ *
+ * `next()` zwraca kolejne pola jako tablicę (albo `null` na końcu). Dzięki temu
+ * pętle mogą przerywać pracę co N wierszy (`await yieldToMain()`) — długi plik
+ * `stop_times.txt` nie musi blokować interfejsu jednym „long taskiem”.
  */
-function forEachCsvRow(
-  text: string,
-  cb: (cols: string[], colIndex: (name: string) => number) => void,
-): void {
-  if (!text) return;
-  const clean = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+function createCsvReader(text: string): {
+  header: string[];
+  index: (name: string) => number;
+  next: () => string[] | null;
+} {
+  const clean = text && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   let pos = 0;
   const len = clean.length;
 
@@ -380,23 +405,24 @@ function forEachCsvRow(
         end > pos && clean.charCodeAt(end - 1) === 13 ? end - 1 : end;
       const line = clean.slice(pos, sliceEnd);
       pos = end + 1;
-      if (line.trim().length > 0) return line;
+      if (line.length > 0) return line;
     }
     return null;
   };
 
   const headerLine = nextLine();
-  if (!headerLine) return;
-  const headers = parseCsvLine(headerLine);
+  const header = headerLine ? parseCsvLine(headerLine) : [];
   const indexMap = new Map<string, number>();
-  headers.forEach((h, idx) => indexMap.set(h, idx));
-  const colIndex = (name: string) => indexMap.get(name) ?? -1;
+  header.forEach((h, idx) => indexMap.set(h, idx));
 
-  let line = nextLine();
-  while (line !== null) {
-    cb(parseCsvLine(line), colIndex);
-    line = nextLine();
-  }
+  return {
+    header,
+    index: (name: string) => indexMap.get(name) ?? -1,
+    next: () => {
+      const line = nextLine();
+      return line === null ? null : parseCsvLine(line);
+    },
+  };
 }
 
 function parseCsvRows(text: string): Array<Record<string, string>> {
@@ -421,14 +447,41 @@ function parseCsvRows(text: string): Array<Record<string, string>> {
   return rows;
 }
 
+/**
+ * „hh:mm:ss” → minuty od północy. Bez `split(":")`, bo przy kilkudziesięciu
+ * tysiącach wierszy `stop_times.txt` alokacja tablicy na wiersz to realny koszt.
+ */
 function timeToMinutes(hhmmss: string): number {
-  const parts = hhmmss.split(":");
-  if (parts.length < 2) return 0;
-  const h = Number(parts[0]);
-  const m = Number(parts[1]);
-  const s = parts[2] ? Number(parts[2]) : 0;
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
-  return h * 60 + m + Math.round((Number.isFinite(s) ? s : 0) / 60);
+  const len = hhmmss.length;
+  if (len === 0) return 0;
+  let i = 0;
+  let h = 0;
+  let m = 0;
+  let s = 0;
+  let colons = 0;
+  for (; i < len; i += 1) {
+    const code = hhmmss.charCodeAt(i);
+    if (code === 58) break;
+    if (code < 48 || code > 57) return 0;
+    h = h * 10 + (code - 48);
+  }
+  if (i < len && hhmmss.charCodeAt(i) === 58) colons += 1;
+  i += 1;
+  for (; i < len; i += 1) {
+    const code = hhmmss.charCodeAt(i);
+    if (code === 58) break;
+    if (code < 48 || code > 57) return 0;
+    m = m * 10 + (code - 48);
+  }
+  if (i < len && hhmmss.charCodeAt(i) === 58) colons += 1;
+  i += 1;
+  for (; i < len; i += 1) {
+    const code = hhmmss.charCodeAt(i);
+    if (code < 48 || code > 57) break;
+    s = s * 10 + (code - 48);
+  }
+  if (colons === 0) return 0;
+  return h * 60 + m + Math.round(s / 60);
 }
 
 function routeSortOrder(shortName: string): number {
@@ -445,11 +498,16 @@ function routeSortOrder(shortName: string): number {
 const distanceMeters = distanceCoords;
 const clock = minutesToClock;
 
-function parseArchiveBytes(
+async function parseArchiveBytes(
   zipBytes: Uint8Array,
   source: string,
-): ParsedArchiveBase {
-  const files = unzipSync(zipBytes);
+): Promise<ParsedArchiveBase> {
+  // `shapes.txt` rozpakowujemy osobno i tylko wtedy, gdy ktoś rysuje trasę —
+  // dekompresja największego pliku paczki nie może opóźniać pierwszego ekranu.
+  const files = measureSync("gtfs:unzip", () =>
+    unzipSync(zipBytes, { filter: (file) => file.name !== "shapes.txt" })
+  );
+  const lap = createLap();
   const readTxt = (name: string) => (files[name] ? strFromU8(files[name]) : "");
 
   const feedRows = parseCsvRows(readTxt("feed_info.txt"));
@@ -462,6 +520,8 @@ function parseArchiveBytes(
   const feedEndDate =
     Number.parseInt(feedRows[0]?.feed_end_date ?? "", 10) || 0;
 
+  lap("gtfs:csv:feed");
+  await yieldToMain();
   const routesById = new Map<string, GtfsRouteRecord>();
   const canonicalByShort = new Map<string, GtfsRouteRecord>();
   for (const r of parseCsvRows(readTxt("routes.txt"))) {
@@ -494,6 +554,8 @@ function parseArchiveBytes(
     (a, b) => a.sortOrder - b.sortOrder || a.shortName.localeCompare(b.shortName, "pl", { numeric: true }),
   );
 
+  lap("gtfs:csv:routes");
+  await yieldToMain();
   const stopsById = new Map<string, GtfsStopRecord>();
   const stopNamesById = new Map<string, string>();
   for (const s of parseCsvRows(readTxt("stops.txt"))) {
@@ -515,6 +577,8 @@ function parseArchiveBytes(
   }
   const stops = Array.from(stopsById.values());
 
+  lap("gtfs:csv:stops");
+  await yieldToMain();
   const rawServiceDates = new Map<string, Set<number>>();
   // 1. Expand standard calendar.txt weekday masks if any are enabled
   const weekdayCols = [
@@ -614,52 +678,55 @@ function parseArchiveBytes(
     }
   }
 
+  lap("gtfs:csv:calendar");
+  await yieldToMain();
   const rawStopTimesByTrip = new Map<string, GtfsStopTimeRecord[]>();
   {
-    let iTrip = -1;
-    let iStop = -1;
-    let iSeq = -1;
-    let iHeadsign = -1;
-    let iArr = -1;
-    let iDep = -1;
-    let iPick = -1;
-    let iDrop = -1;
-    let initialized = false;
-    forEachCsvRow(readTxt("stop_times.txt"), (cols, col) => {
-      if (!initialized) {
-        iTrip = col("trip_id");
-        iStop = col("stop_id");
-        iSeq = col("stop_sequence");
-        iHeadsign = col("stop_headsign");
-        iArr = col("arrival_time");
-        iDep = col("departure_time");
-        iPick = col("pickup_type");
-        iDrop = col("drop_off_type");
-        initialized = true;
-      }
+    // Największy plik paczki (dziesiątki tysięcy wierszy) — czytany porcjami,
+    // żeby między nimi przeglądarka mogła odmalować mapę.
+    const reader = createCsvReader(readTxt("stop_times.txt"));
+    const col = reader.index;
+    const iTrip = col("trip_id");
+    const iStop = col("stop_id");
+    const iSeq = col("stop_sequence");
+    const iHeadsign = col("stop_headsign");
+    const iArr = col("arrival_time");
+    const iDep = col("departure_time");
+    const iPick = col("pickup_type");
+    const iDrop = col("drop_off_type");
+    let cols = reader.next();
+    let processed = 0;
+    while (cols !== null) {
       const tripId = iTrip >= 0 ? cols[iTrip] : "";
       const stopId = iStop >= 0 ? cols[iStop] : "";
-      if (!tripId || !stopId) return;
-      const arrStr = iArr >= 0 ? cols[iArr] : "";
-      const depStr = iDep >= 0 ? cols[iDep] : "";
-      const arr = timeToMinutes(arrStr || depStr);
-      const dep = timeToMinutes(depStr || arrStr);
-      const seq = iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0;
-      const list = rawStopTimesByTrip.get(tripId) ?? [];
-      list.push({
-        tripId,
-        stopId,
-        stopSequence: seq,
-        stopHeadsign: iHeadsign >= 0 ? cols[iHeadsign]?.trim() || undefined : undefined,
-        arrivalMinutes: arr,
-        departureMinutes: dep,
-        pickupType: iPick >= 0 ? Number.parseInt(cols[iPick], 10) || 0 : 0,
-        dropOffType: iDrop >= 0 ? Number.parseInt(cols[iDrop], 10) || 0 : 0,
-      });
-      rawStopTimesByTrip.set(tripId, list);
-    });
+      if (tripId && stopId) {
+        const arrStr = iArr >= 0 ? cols[iArr] : "";
+        const depStr = iDep >= 0 ? cols[iDep] : "";
+        const arr = timeToMinutes(arrStr || depStr);
+        const dep = timeToMinutes(depStr || arrStr);
+        const seq = iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0;
+        const list = rawStopTimesByTrip.get(tripId);
+        const row: GtfsStopTimeRecord = {
+          tripId,
+          stopId,
+          stopSequence: seq,
+          stopHeadsign: iHeadsign >= 0 ? cols[iHeadsign]?.trim() || undefined : undefined,
+          arrivalMinutes: arr,
+          departureMinutes: dep,
+          pickupType: iPick >= 0 ? Number.parseInt(cols[iPick], 10) || 0 : 0,
+          dropOffType: iDrop >= 0 ? Number.parseInt(cols[iDrop], 10) || 0 : 0,
+        };
+        if (list) list.push(row);
+        else rawStopTimesByTrip.set(tripId, [row]);
+        processed += 1;
+        if (processed % CSV_CHUNK_ROWS === 0) await yieldToMain();
+      }
+      cols = reader.next();
+    }
   }
 
+  lap("gtfs:csv:stop_times");
+  await yieldToMain();
   const activeCalendarServices = new Set<string>();
   for (const [dateKey, sids] of serviceIdsByDate) {
     if (feedStartDate > 0 && dateKey < feedStartDate) continue;
@@ -743,6 +810,7 @@ function parseArchiveBytes(
     }
   }
 
+  lap("gtfs:csv:trips");
   const topDestByStopId = new Map<string, string>();
   for (const [stopId, counts] of destCountByStop) {
     let bestDest = "";
@@ -756,43 +824,12 @@ function parseArchiveBytes(
     if (bestDest) topDestByStopId.set(stopId, bestDest);
   }
 
-  const shapeBuckets = new Map<
-    string,
-    Array<{ seq: number; lat: number; lon: number }>
-  >();
-  {
-    let iId = -1;
-    let iLat = -1;
-    let iLon = -1;
-    let iSeq = -1;
-    let initialized = false;
-    forEachCsvRow(readTxt("shapes.txt"), (cols, col) => {
-      if (!initialized) {
-        iId = col("shape_id");
-        iLat = col("shape_pt_lat");
-        iLon = col("shape_pt_lon");
-        iSeq = col("shape_pt_sequence");
-        initialized = true;
-      }
-      const shapeId = iId >= 0 ? cols[iId] : "";
-      if (!shapeId) return;
-      const lat = iLat >= 0 ? Number.parseFloat(cols[iLat]) : Number.NaN;
-      const lon = iLon >= 0 ? Number.parseFloat(cols[iLon]) : Number.NaN;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-      const seq = iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0;
-      const list = shapeBuckets.get(shapeId) ?? [];
-      list.push({ seq, lat, lon });
-      shapeBuckets.set(shapeId, list);
-    });
-  }
+  lap("gtfs:csv:destinations");
+  await yieldToMain();
+  // `shapes.txt` to najdroższy plik paczki i nie jest potrzebny do pierwszego
+  // ekranu (mapa, przystanki, odjazdy). Geometria linii dochodzi leniwie —
+  // patrz `ensureShapesReady()`.
   const shapesById = new Map<string, [number, number][]>();
-  for (const [shapeId, pts] of shapeBuckets) {
-    pts.sort((a, b) => a.seq - b.seq);
-    shapesById.set(
-      shapeId,
-      pts.map((p) => [p.lat, p.lon] as [number, number]),
-    );
-  }
 
   const services: GtfsServiceRecord[] = [
     {
@@ -812,6 +849,8 @@ function parseArchiveBytes(
     },
   ];
 
+  lap("gtfs:csv:services");
+  await yieldToMain();
   return {
     source,
     feedVersion,
@@ -847,6 +886,10 @@ function registerMissingLineSevenDuty(
       .filter((entry) => entry.verified && entry.routeShort.toUpperCase() === "7")
       .map((entry) => [entry.tripId, entry.kursowkaCode]),
   );
+  if (!sevenTrips.length) {
+    registerLineSevenRosters(new Map());
+    return;
+  }
   const stops = new Map<string, BuilderStop>(
     [...base.stopsById].map(([id, stop]) => [id, { lat: stop.lat, lon: stop.lon }]),
   );
@@ -855,6 +898,31 @@ function registerMissingLineSevenDuty(
     Array<{ id: string; startMs: number; endMs: number }>
   >();
 
+  // Kursy linii 7 pogrupowane po `service_id` — bez tego każda data filtrowała
+  // całą listę kursów od nowa (90 dat × kilkaset kursów).
+  const tripsByService = new Map<string, BuilderTrip[]>();
+  for (const trip of sevenTrips) {
+    const builderTrip: BuilderTrip = {
+      id: trip.rawTripId,
+      line: "7",
+      headsign: trip.headsign,
+      startMinutes: trip.startMinutes,
+      endMinutes: trip.endMinutes,
+      firstStopId: trip.firstStopId,
+      lastStopId: trip.lastStopId,
+      firstStopName: trip.firstStopName,
+      lastStopName: trip.lastStopName,
+      lengthMeters: 0,
+      observedBrigade: verifiedByTrip.get(trip.rawTripId),
+    };
+    const list = tripsByService.get(trip.serviceId);
+    if (list) list.push(builderTrip);
+    else tripsByService.set(trip.serviceId, [builderTrip]);
+  }
+  // Ten sam zestaw rozkładów (np. wszystkie dni robocze) daje identyczną
+  // obsadę — rekonstrukcja brygad liczy się raz, nie dla każdej daty.
+  const rosterBySignature = new Map<string, ReturnType<typeof reconstructLineSevenDuty>>();
+
   for (const [dateKey, activeServices] of base.serviceIdsByDate) {
     if (
       (base.feedStartDate && dateKey < base.feedStartDate) ||
@@ -862,23 +930,21 @@ function registerMissingLineSevenDuty(
     ) {
       continue;
     }
-    const serviceTrips: BuilderTrip[] = sevenTrips
-      .filter((trip) => activeServices.has(trip.serviceId))
-      .map((trip) => ({
-        id: trip.rawTripId,
-        line: "7",
-        headsign: trip.headsign,
-        startMinutes: trip.startMinutes,
-        endMinutes: trip.endMinutes,
-        firstStopId: trip.firstStopId,
-        lastStopId: trip.lastStopId,
-        firstStopName: trip.firstStopName,
-        lastStopName: trip.lastStopName,
-        lengthMeters: 0,
-        observedBrigade: verifiedByTrip.get(trip.rawTripId),
-      }));
-    if (!serviceTrips.length) continue;
-    const dutyTrips = reconstructLineSevenDuty(serviceTrips, stops);
+    const services = [...activeServices]
+      .filter((serviceId) => tripsByService.has(serviceId))
+      .sort();
+    if (!services.length) continue;
+    const signature = services.join("|");
+    let dutyTrips = rosterBySignature.get(signature);
+    if (!dutyTrips) {
+      const serviceTrips: BuilderTrip[] = [];
+      for (const serviceId of services) {
+        const list = tripsByService.get(serviceId);
+        if (list) serviceTrips.push(...list);
+      }
+      dutyTrips = reconstructLineSevenDuty(serviceTrips, stops);
+      rosterBySignature.set(signature, dutyTrips);
+    }
     if (!dutyTrips.length) continue;
     const dateId = String(dateKey);
     const midnight = DateTime.fromFormat(dateId, "yyyyLLdd", { zone: ZONE }).startOf("day");
@@ -1052,6 +1118,12 @@ interface StoredArchive {
   bytes: Uint8Array;
 }
 
+interface StoredParsedBase {
+  version: string;
+  identity: string;
+  base: ParsedArchiveBase;
+}
+
 export interface SyncResult {
   source: string;
   version: string;
@@ -1089,6 +1161,8 @@ function isZipArchive(bytes: Uint8Array): boolean {
     bytes[2] === 0x03 && bytes[3] === 0x04;
 }
 
+let archiveFromIndexedDb = false;
+
 async function fetchArchiveBytes(
   forceLive: boolean,
 ): Promise<{ bytes: Uint8Array; source: string }> {
@@ -1122,6 +1196,7 @@ async function fetchArchiveBytes(
     isZipArchive(cached.bytes) &&
     Date.now() - cached.cachedAt < ARCHIVE_MAX_AGE_MS
   ) {
+    archiveFromIndexedDb = true;
     return { bytes: cached.bytes, source: cached.source };
   }
 
@@ -1186,23 +1261,236 @@ async function fetchArchiveBytes(
   );
 }
 
+/**
+ * Tożsamość paczki: długość + sumy kontrolne skrajnych fragmentów + źródło.
+ * Wystarcza, żeby nie parsować drugi raz tych samych bajtów (i żeby nie
+ * nadpisywać wpisu w IndexedDB, gdy nic się nie zmieniło).
+ */
+function archiveIdentity(bytes: Uint8Array, source: string): string {
+  let head = 0;
+  let tail = 0;
+  const end = bytes.length;
+  for (let i = 0; i < Math.min(2048, end); i += 1) head = (head * 31 + bytes[i]) >>> 0;
+  for (let i = Math.max(0, end - 2048); i < end; i += 1) tail = (tail * 31 + bytes[i]) >>> 0;
+  return `${end}:${head.toString(36)}:${tail.toString(36)}:${source}`;
+}
+
+let currentArchive: { bytes: Uint8Array; source: string; identity: string } | null = null;
+
+/**
+ * Zapis samych bajtów paczki (kopia offline + źródło dla `shapes.txt`) także
+ * czeka na spokojniejszy moment. Structured clone wielomegabajtowego bufora
+ * potrafi zablokować wątek główny na kilkaset milisekund.
+ */
+function scheduleArchiveCacheWrite(source: string, bytes: Uint8Array): void {
+  const write = () => {
+    const started = Date.now();
+    void idbSetKv<StoredArchive>(ARCHIVE_KV_KEY, {
+      version: DUTY_SCHEMA_VERSION,
+      source,
+      cachedAt: Date.now(),
+      bytes,
+    })
+      .catch(() => undefined)
+      .finally(() => recordTiming("gtfs:cache", Date.now() - started));
+  };
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+    .requestIdleCallback;
+  setTimeout(() => {
+    if (typeof idle === "function") idle(write, { timeout: 6_000 });
+    else write();
+  }, 2_500);
+}
+
+/**
+ * Zapis sparsowanej bazy po pierwszym ekranie.
+ *
+ * Structured clone tak dużego obiektu (dziesiątki tysięcy wierszy) to praca na
+ * wątku głównym, więc zapis czeka, aż strona będzie naprawdę bezczynna —
+ * inaczej konkurowałby z pierwszym rysowaniem mapy i autobusów.
+ */
+function scheduleParsedCacheWrite(identity: string, base: ParsedArchiveBase): void {
+  const write = () => {
+    const started = Date.now();
+    // Kształty trzymamy osobno (dochodzą leniwie) — kopia bez nich jest mniejsza
+    // i zawsze spójna.
+    const snapshot: ParsedArchiveBase = { ...base, shapesById: new Map() };
+    void idbSetKv<StoredParsedBase>(PARSED_KV_KEY, {
+      version: DUTY_SCHEMA_VERSION,
+      identity,
+      base: snapshot,
+    })
+      .catch(() => undefined)
+      .finally(() => recordTiming("gtfs:cache:parsed", Date.now() - started));
+  };
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+    .requestIdleCallback;
+  const later = () => {
+    if (typeof idle === "function") idle(write, { timeout: 6_000 });
+    else setTimeout(write, 1_500);
+  };
+  setTimeout(later, 2_000);
+}
+let bakedIdentity: string | null = null;
+
 async function loadAndBuild(forceLive: boolean): Promise<GtfsMemoryStore> {
-  const { bytes, source } = await fetchArchiveBytes(forceLive);
+  const archiveLap = createLap();
+  // Trzy niezależne od siebie zapytania ruszają równocześnie: paczka (sieć lub
+  // IndexedDB), gotowa baza z poprzedniego wejścia i obserwacje GPS. Sekwencyjnie
+  // sumowały się w jedną, długą blokadę startu.
+  const archivePromise = fetchArchiveBytes(forceLive);
+  const parsedPromise = forceLive
+    ? Promise.resolve(null)
+    : idbGetKv<StoredParsedBase>(PARSED_KV_KEY);
+  const observationsPromise = loadLiveObservations();
+  const { bytes, source } = await archivePromise;
+  archiveLap("gtfs:archive");
+  currentArchive = { bytes, source, identity: archiveIdentity(bytes, source) };
+
+  // Ponowne „wczytanie” tej samej paczki (np. ręczne odświeżenie rozkładu bez
+  // nowych danych) nie może kosztować kolejnego rozpakowania i parsowania.
+  if (!forceLive && memoryStore && bakedIdentity === currentArchive.identity) {
+    return memoryStore;
+  }
+
   tripMatchCache.clear();
-  const base = parseArchiveBytes(bytes, source);
-  const observations = await loadLiveObservations();
-  registerMissingLineSevenDuty(base, observations);
-  const store = buildDutyIndex(base, observations);
+  const lap = createLap();
+  // 1. Gotowa baza z poprzedniego wejścia (ten sam plik, ten sam schemat).
+  const parsed = await parsedPromise;
+  let base: ParsedArchiveBase | null = null;
+  if (
+    parsed &&
+    parsed.version === DUTY_SCHEMA_VERSION &&
+    parsed.identity === currentArchive.identity &&
+    parsed.base?.rawTrips?.length
+  ) {
+    base = parsed.base;
+  }
+  lap("gtfs:parsedCache");
+  // 2. Zimny start: rozpakowanie + CSV. Zapis gotowej bazy robimy w tle,
+  //    po pierwszym ekranie (structured clone dużego obiektu to praca CPU).
+  if (!base) {
+    base = await parseArchiveBytes(bytes, source);
+    scheduleParsedCacheWrite(currentArchive.identity, base);
+  }
+  const feedBase = base;
+  const observations = await observationsPromise;
+  archiveLap("gtfs:observations");
+  registerMissingLineSevenDuty(feedBase, observations);
+  lap("gtfs:line7");
+  const store = buildDutyIndex(feedBase, observations);
+  lap("gtfs:index");
   memoryStore = store;
+  bakedIdentity = currentArchive.identity;
   observationsDirty = false;
   emitRuntimeEvent("gtfs:updated", { version: store.feed.version });
-  await idbSetKv<StoredArchive>(ARCHIVE_KV_KEY, {
-    version: DUTY_SCHEMA_VERSION,
-    source,
-    cachedAt: Date.now(),
-    bytes,
-  });
+  // Bajty zapisujemy tylko wtedy, gdy naprawdę pochodzą z sieci — przy trafieniu
+  // w cache IndexedDB zapis byłby przepisaniem wielomegabajtowego obiektu bez powodu.
+  if (!archiveFromIndexedDb) {
+    scheduleArchiveCacheWrite(source, bytes);
+  }
+  archiveFromIndexedDb = false;
+  if (feedBase.shapesById.size === 0) scheduleIdleShapes(store);
   return store;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Leniwe kształty (shapes.txt)                                              */
+/* -------------------------------------------------------------------------- */
+
+const shapeTaskByBase = new WeakMap<ParsedArchiveBase, Promise<void>>();
+
+/** Wypełnia `base.shapesById` z paczki (raz na bazę, porcjami, bez blokady UI). */
+async function parseShapesInto(base: ParsedArchiveBase, zipBytes: Uint8Array): Promise<void> {
+  const files = unzipSync(zipBytes, { filter: (file) => file.name === "shapes.txt" });
+  const entry = files["shapes.txt"];
+  if (!entry) return;
+  const reader = createCsvReader(strFromU8(entry));
+  const col = reader.index;
+  const iId = col("shape_id");
+  const iLat = col("shape_pt_lat");
+  const iLon = col("shape_pt_lon");
+  const iSeq = col("shape_pt_sequence");
+  const buckets = new Map<string, Array<{ seq: number; lat: number; lon: number }>>();
+  let cols = reader.next();
+  let processed = 0;
+  while (cols !== null) {
+    const shapeId = iId >= 0 ? cols[iId] : "";
+    if (shapeId) {
+      const lat = iLat >= 0 ? Number.parseFloat(cols[iLat]) : Number.NaN;
+      const lon = iLon >= 0 ? Number.parseFloat(cols[iLon]) : Number.NaN;
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        const point = { seq: iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0, lat, lon };
+        const list = buckets.get(shapeId);
+        if (list) list.push(point);
+        else buckets.set(shapeId, [point]);
+        processed += 1;
+        if (processed % CSV_CHUNK_ROWS === 0) await yieldToMain();
+      }
+    }
+    cols = reader.next();
+  }
+  for (const [shapeId, points] of buckets) {
+    points.sort((a, b) => a.seq - b.seq);
+    base.shapesById.set(
+      shapeId,
+      points.map((point) => [point.lat, point.lon] as [number, number]),
+    );
+  }
+}
+
+async function archiveBytesForShapes(): Promise<Uint8Array | null> {
+  if (currentArchive) return currentArchive.bytes;
+  const cached = await idbGetKv<StoredArchive>(ARCHIVE_KV_KEY);
+  if (cached?.bytes instanceof Uint8Array && isZipArchive(cached.bytes)) {
+    currentArchive = {
+      bytes: cached.bytes,
+      source: cached.source,
+      identity: archiveIdentity(cached.bytes, cached.source),
+    };
+    return cached.bytes;
+  }
+  try {
+    const { bytes, source } = await fetchArchiveBytes(false);
+    currentArchive = { bytes, source, identity: archiveIdentity(bytes, source) };
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Geometria linii (`shapes.txt`) wczytuje się dopiero wtedy, gdy ktoś naprawdę
+ * rysuje trasę — a i wtedy porcjami. Dzięki temu pierwszy ekran nie czeka na
+ * najdroższy plik paczki.
+ */
+export function ensureShapesReady(store: GtfsMemoryStore): Promise<void> {
+  const base = store.base;
+  if (base.shapesById.size > 0) return Promise.resolve();
+  const running = shapeTaskByBase.get(base);
+  if (running) return running;
+  const task = (async () => {
+    const bytes = await archiveBytesForShapes();
+    if (!bytes) return;
+    const started = Date.now();
+    await parseShapesInto(base, bytes);
+    recordTiming("gtfs:shapes", Date.now() - started);
+  })().finally(() => {
+    shapeTaskByBase.delete(base);
+  });
+  shapeTaskByBase.set(base, task);
+  return task;
+}
+
+/** W tle, po pierwszym ekranie: pierwsze rysowanie trasy nie czeka na shapes.txt. */
+function scheduleIdleShapes(store: GtfsMemoryStore): void {
+  const prewarm = () => {
+    void ensureShapesReady(store).catch(() => undefined);
+  };
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+    .requestIdleCallback;
+  if (typeof idle === "function") setTimeout(() => idle(prewarm, { timeout: 5_000 }), 2_500);
+  else setTimeout(prewarm, 3_000);
 }
 
 export async function ensureGtfsSeeded(): Promise<GtfsMemoryStore> {
@@ -1240,6 +1528,13 @@ export async function syncWalbrzychGtfs(
     activeSync = null;
   });
   return activeSync;
+}
+
+/** Store z gotowymi kształtami tras — dla funkcji, które rysują geometrię. */
+async function seededWithShapes(): Promise<GtfsMemoryStore> {
+  const store = await ensureGtfsSeeded();
+  await ensureShapesReady(store);
+  return store;
 }
 
 export async function getGtfsStatus(): Promise<{ feed: GtfsFeedInfo }> {
@@ -1465,7 +1760,7 @@ export async function getDutyDetail(options: {
   code?: string;
   serviceId?: string;
 }): Promise<DutyDetailPayload> {
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const id = options.id?.trim() || "";
   const code = normalizeDutyCode(options.code || "");
   const rawService = options.serviceId?.trim() || "";
@@ -2058,7 +2353,7 @@ const polylineMeters = polylineLengthMeters;
 
 /** Mapa długości wszystkich kursów danego dnia w metrach. */
 export async function getTripLengthMap(): Promise<Map<string, number>> {
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const cached = tripLengthCache.get(store);
   if (cached) return cached;
   const lengths = new Map<string, number>();
@@ -2117,7 +2412,7 @@ function geometrySignature(routeId: string, shapeIds: string[]): string {
 export async function getLineRouteGeometry(
   routeShort: string,
 ): Promise<LineRouteGeometry | null> {
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const wanted = routeShort.trim().toUpperCase();
   let cache = lineGeometryCache.get(store);
   if (!cache) {
@@ -2424,7 +2719,7 @@ export async function getVehicleRouteOverlay(
   polylines: [number, number][][];
   stops: Array<{ name: string; lat: number; lon: number }>;
 } | null> {
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const match = await resolveVehicleTrip(bus);
   const tripId =
     match?.tripId ??
@@ -2460,7 +2755,7 @@ export async function getVehicleRemainingStops(
   bus: LiveBusVehicle,
 ): Promise<LiveBusVehicle["upcomingStops"]> {
   const fallback = bus.upcomingStops ?? [];
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const match = await resolveVehicleTrip(bus);
   if (!match) return fallback;
   const full = matchToRemaining(match, store);
@@ -2487,7 +2782,7 @@ export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
   stops: VehicleTripStop[];
 }> {
   const fallback = bus.upcomingStops ?? [];
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const match = await resolveVehicleTrip(bus);
   if (!match) {
     return {
@@ -2524,7 +2819,7 @@ export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
 export async function getTripStopWaypoints(
   rawTripId: string
 ): Promise<Array<{ id: string; name: string; lat: number; lon: number }>> {
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const sts = store.base.rawStopTimesByTrip.get(rawTripId) ?? [];
   const out: Array<{ id: string; name: string; lat: number; lon: number }> = [];
   for (const st of sts) {
@@ -2553,7 +2848,7 @@ export async function getBrigadeShapeOverlay(
   stops: Array<{ name: string; lat: number; lon: number }>;
 } | null> {
   if (!tripIds.length) return null;
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const seenShapes = new Set<string>();
   const polylines: Array<{ path: [number, number][]; stopChain: boolean }> = [];
   const seenStopChains = new Set<string>();
@@ -2657,7 +2952,7 @@ export async function getCoursePreview(
   const serviceDay = DateTime.fromFormat(dateId, "yyyyLLdd", { zone: ZONE });
   if (!serviceDay.isValid) return null;
 
-  const store = await ensureGtfsSeeded();
+  const store = await seededWithShapes();
   const trip = store.base.rawTripsById.get(tripId);
   if (!trip || !store.base.serviceIdsByDate.get(Number(dateId))?.has(trip.serviceId)) {
     return null;
