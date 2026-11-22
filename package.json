@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:bus": "tsx scripts/test-live-bus-progress.ts && tsx scripts/test-live-bus-card.tsx && tsx scripts/test-live-bus-route.ts",
+    "test:bus:e2e": "node scripts/test-live-bus-map.mjs",
     "test:stops": "tsx scripts/test-stop-visibility.ts && tsx scripts/test-boardable-stops.ts && tsx scripts/test-stop-fallback.ts && tsx scripts/test-schedule-fallback.ts && tsx scripts/test-stop-merging.ts && tsx scripts/test-stop-legend.ts && tsx scripts/test-stop-board.ts && tsx scripts/test-stop-board-ui.tsx",
     "test:stops:e2e": "node scripts/test-stop-map.mjs",
     "test:stops:build": "node scripts/test-stop-production.mjs",

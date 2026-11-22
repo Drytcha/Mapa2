@@ -475,3 +475,28 @@ zostaje „sierota” po wybraniu innego obiektu), a u podróżnego nie dubluje 
 karta podglądu kursu. Test regresyjny: `npm run test:bus` →
 `test-live-bus-route.ts` (pojazd bez `tripId` → kurs, dzień obsługi i polilinia
 z ≥ 2 punktami).
+
+## Klik w autobus na mapie — dlaczego nie działał (naprawa)
+
+Zgłoszenie: „klikam na autobus na mapie i nie działa”. Test w prawdziwej
+przeglądarce (`npm run test:bus:e2e`) potwierdził dwie niezależne przyczyny.
+
+1. **Klik nie dochodził do markera.** Ikona autobusu ma na opakowaniu
+   `pointer-events: none` (przezroczysty prostokąt 210×56 nie może zasłaniać
+   mapy), a kliknięcie obsługiwał wewnętrzny mechanizm Leafleta. Teraz klik jest
+   **delegowany na pane'cie pojazdów**: każda pigułka ma `data-vehicle-id`,
+   a pane łapie kliknięcie z bąbelkowania i wywołuje wybór autobusu. Nie zależy
+   to już od dispatchu Leafleta ani od kolejności warstw.
+2. **Trasa była zależna od kalendarza.** `getCoursePreview` wymaga **aktywnej
+   obsługi w wybranym dniu obsługi**. Gdy paczka GTFS nie miała bieżącego dnia
+   w `calendar_dates`/`calendar`, podgląd zwracał `null` — po cichu, więc karta
+   się otwierała, a mapy nie rysowało nic. Nowa `getVehicleRouteOverlay(bus)`
+   bierze kurs z `tripId` (albo z dopasowania po linii, przystanku i godzinie)
+   i **nie sprawdza kalendarza** — autobus jedzie tym kursem właśnie teraz.
+   Gdy trasy nie da się ustalić, aplikacja mówi to wprost w toaście, zamiast
+   milczeć.
+
+Klik w ten sam autobus zamyka kartę i usuwa trasę. Nowe testy:
+`test-live-bus-route.ts` (bez dnia w kalendarzu trasa nadal powstaje — dowód, że
+regresja nie wróci) oraz `test:bus:e2e` (Chromium: klik w pigułkę → karta
+z całym kursem → trasa na mapie z podpisem „Trasa linii 7” → drugi klik chowa).

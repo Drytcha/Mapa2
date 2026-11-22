@@ -110,7 +110,7 @@ import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText 
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
 import { liveBusTap } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
-import { ensureGtfsSeeded, getCoursePreview, getVehicleCourseTrip } from "@/lib/engine/gtfsStore";
+import { ensureGtfsSeeded, getCoursePreview, getVehicleRouteOverlay } from "@/lib/engine/gtfsStore";
 import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
 import { detectTurnaroundSpotsAlongRoute, type TurnaroundSpot } from "@/lib/engine/turnarounds";
 import {
@@ -449,6 +449,8 @@ function MapPlanerWorkspace() {
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
   /** Czy widoczna trasa pochodzi z kliknięcia autobusu (wtedy znika z kartą). */
   const [busOverlay, setBusOverlay] = useState(false);
+  /** Który autobus poprosił o trasę — chroni przed spóźnioną odpowiedzią. */
+  const busOverlayRequestRef = useRef<string | null>(null);
   // Reject previews started before a profile switch, even if they finish later.
   const overlayEpochRef = useRef(0);
   const overlayEpoch = overlayEpochRef.current;
@@ -1903,7 +1905,7 @@ function MapPlanerWorkspace() {
   const handlePreviewCourse = useCallback(async (
     tripId: string,
     dateId: string,
-    options?: { keepBusCard?: boolean; silent?: boolean; fromBus?: boolean },
+    options?: { silent?: boolean },
   ): Promise<boolean> => {
     const epoch = overlayEpochRef.current;
     try {
@@ -1923,10 +1925,9 @@ function MapPlanerWorkspace() {
         course,
       });
       setKursowkaReturnDateId(course.dateId);
-      setBusOverlay(Boolean(options?.fromBus));
+      setBusOverlay(false);
       setSelectedStop(null);
-      // Karta pojazdu zostaje otwarta, gdy przebieg jest rysowany z kliknięcia autobusu.
-      if (!options?.keepBusCard) setSelectedLiveBus(null);
+      setSelectedLiveBus(null);
       setTripOpen(false);
       setTripPick(null);
       setContextMenu(null);
@@ -1946,11 +1947,13 @@ function MapPlanerWorkspace() {
   // żeby nie zostawała „sierota” po wybraniu innego obiektu.
   useEffect(() => {
     if (selectedLiveBus || !busOverlay) return;
+    busOverlayRequestRef.current = null;
     setBusOverlay(false);
     setKursowkaOverlay(null);
   }, [selectedLiveBus, busOverlay]);
 
   const closeLiveBus = useCallback(() => {
+    busOverlayRequestRef.current = null;
     setSelectedLiveBus(null);
   }, []);
 
@@ -1964,19 +1967,27 @@ function MapPlanerWorkspace() {
     mapRef.current?.centerOn(bus.lat, bus.lon, 16);
     // myBus 3.0: klik w autobus od razu pokazuje, jak jedzie — trasa kursu na
     // mapie, a w karcie pełna lista przystanków. Kurs bierzemy z tego samego
-    // dopasowania co lista przystanków, więc trasa rysuje się także wtedy, gdy
-    // GPS nie podaje tripId (dopasowanie po linii, przystanku i godzinie).
-    void getVehicleCourseTrip(bus)
-      .then((course) => {
-        if (!course) return;
-        void handlePreviewCourse(course.tripId, course.dateId, {
-          keepBusCard: true,
-          silent: true,
-          fromBus: true,
-        });
+    // dopasowania co lista przystanków i nie wymagamy przy tym aktywnej obsługi
+    // w wybranym dniu — autobus jedzie tym kursem właśnie teraz.
+    busOverlayRequestRef.current = bus.vehicleId;
+    void getVehicleRouteOverlay(bus)
+      .then((overlay) => {
+        if (busOverlayRequestRef.current !== bus.vehicleId) return;
+        if (!overlay) {
+          showToast(
+            "Nie udało się narysować trasy tego kursu — nie ma go w rozkładzie. Przystanki w karcie pochodzą z GPS.",
+          );
+          return;
+        }
+        setKursowkaOverlay(overlay);
+        setBusOverlay(true);
       })
-      .catch(() => undefined);
-  }, [handlePreviewCourse]);
+      .catch(() => {
+        if (busOverlayRequestRef.current === bus.vehicleId) {
+          showToast("Nie udało się narysować trasy tego kursu.");
+        }
+      });
+  }, [showToast]);
 
   const handleSetOperator = useCallback(
     async (vehicleId: string, key: WalbrzychOperatorKey | null) => {
@@ -2417,6 +2428,7 @@ function MapPlanerWorkspace() {
                 <ShapeOverlayControl
                   title={kursowkaOverlay.title}
                   onClear={() => {
+                    busOverlayRequestRef.current = null;
                     setBusOverlay(false);
                     setKursowkaOverlay(null);
                   }}
