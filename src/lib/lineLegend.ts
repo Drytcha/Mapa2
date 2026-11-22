@@ -92,9 +92,10 @@ const COMBINE_ORDER: readonly string[] = ["s", "a", "d", "c", "j", "*"];
 const RULES: Record<string, readonly LineLegendRule[]> = {
   "2": [
     {
+      // Wyłącznie przystanek Stary Lesieniec: kurs NIE jedzie do Boguszowa-Gorc.
       code: "b",
-      text: "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)",
-      to: ["boguszow", "lesieniec"],
+      text: "kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez)",
+      to: ["lesieniec"],
     },
     {
       code: "d",

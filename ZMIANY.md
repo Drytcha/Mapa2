@@ -105,7 +105,7 @@ miejscach. Teraz litery pochodzą z jednej tabeli: `src/lib/lineLegend.ts`.
 
 | Linia | Legenda |
 | ----- | ------- |
-| 2  | b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec) · k – kurs przedłużony do Boguszowa-Gorc - Kuźnic · d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice · p – kurs tylko do Placu Grunwaldzkiego · v – kurs przez Galerię Victoria |
+| 2  | b – kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez) · k – kurs przedłużony do Boguszowa-Gorc - Kuźnic · d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice · p – kurs tylko do Placu Grunwaldzkiego · v – kurs przez Galerię Victoria |
 | 5  | \* – do Głuszycy Górnej przez Jedlinę-Zdrój · ^ – przez Jedlinę-Zdrój (Uzdrowisko) · e – do Głuszycy przez Jedlinę-Zdrój · u – do Jedliny-Zdroju /Uzdrowisko/ · k – do ul. Kolejowej w Szczawnie-Zdroju |
 | 8  | a – kurs przez Al. Podwale · l – kurs przedłużony do Lubiechowa · z – kurs przedłużony do Zamku Książ przez Lubiechów · d – kurs do Dworca Miasto · g – kurs przedłużony przez Stare Bogaczowice do Gostkowa · s – kurs przedłużony do Strugi · y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice |
 | 9  | \* – przesiadka na Uczniowska-US linią 18 · a – kurs przedłużony do przystanku Podwale - Forteczna · d – kurs do Dworca Szczawienko · s – kurs przez ul. Sokołowskiego /szpital/ · c – kurs przedłużony do ul. Jachimowicza · j – kurs przedłużony do ul. Jachimowicza (Faurecia) |
@@ -427,3 +427,26 @@ Logika jest czysta (`src/lib/liveBusProgress.ts`: `buildTripProgress`,
 `currentStopIndex`, `waitingForDeparture`, `tripVariantLabel`, `describeStopDelta`,
 `serviceDateId`), więc pokrywają ją szybkie testy `npm run test:bus`
 (`test-live-bus-progress.ts` + render `test-live-bus-card.tsx`).
+
+## Linia 2: litera `b` to Stary Lesieniec, nie Boguszów-Gorce
+
+Wpis `b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)` był
+nieprawdziwy: **nie ma kursu przedłużonego do Boguszowa-Gorc przez Stary
+Lesieniec**. Kursy kończą się na przystanku **Stary Lesieniec** (przez Kuźnice
+lub bez), a sam Boguszów-Gorce to zwykły kierunek podstawowy.
+
+- `src/lib/lineLegend.ts` — `b` → „kurs przedłużony do Starego Leśieńca (przez
+  Kuźnice lub bez)”, dopasowanie **tylko** po przystanku „Stary Lesieniec”
+  (`to: ["lesieniec"]`). Wcześniej reguła pasowała też do każdego kierunku
+  zawierającego „Boguszów”, więc kurs do samego Boguszowa-Gorc dostawał
+  błędną literę `b`; teraz zostaje bez litery (kurs podstawowy).
+- Skutek uboczny poprawki: kurs Boguszów-Gorce jadący przez Galerię Victoria
+  dostaje teraz właściwą literę `v`, a nie `b`.
+- Zaktualizowane testy (`test-line-legend.ts`, `test-stop-legend.ts`): kurs do
+  Starego Leśieńca = `b`, kurs do Boguszowa-Gorc = bez litery, fixture PDF
+  używa kursu do Starego Leśieńca.
+- Teksty pomocy i tabela legendy w `ZMIANY.md` mówią to samo.
+
+Uwaga eksploatacyjna: dojazd do Starego Leśieńca jest **obecnie wstrzymany
+z powodu remontu** — legenda opisuje warianty rozkładowe, a nie bieżącą
+przejezdność; aplikacja nie obiecuje, że dziś dojedziesz na ten przystanek.

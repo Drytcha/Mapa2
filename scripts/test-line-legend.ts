@@ -19,7 +19,7 @@ import type { StopDepartureItem } from "../src/lib/types";
  */
 const SPEC: Record<string, Array<[string, string]>> = {
   "2": [
-    ["b", "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)"],
+    ["b", "kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez)"],
     ["k", "kurs przedłużony do Boguszowa-Gorc - Kuźnic"],
     ["d", "kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice"],
     ["p", "kurs tylko do Placu Grunwaldzkiego"],
@@ -107,12 +107,17 @@ assert.equal(legendCodeForTrip("11", { destination: "Głuszyca" }), "");
 // 2. Rozpoznawanie wariantów po kierunku i trasie.
 const code = (line: string, destination: string, stops: string[] = []) =>
   legendCodeForTrip(line, { destination, stops });
-assert.equal(code("2", "Boguszów-Gorce Dworzec"), "b");
-assert.equal(code("2", "Stary Lesieniec"), "b", "Stary Lesieniec to kurs przedłużony do Boguszowa");
+// Kurs do samego Boguszowa-Gorc nie jest „przedłużony przez Stary Lesieniec”.
+assert.equal(code("2", "Boguszów-Gorce Dworzec"), "");
+assert.equal(code("2", "Stary Lesieniec"), "b", "Stary Lesieniec ma własną literę b");
 assert.equal(code("2", "Wałbrzych Kuźnice"), "k");
 assert.equal(code("2", "Dzikowiec"), "d");
 assert.equal(code("2", "Plac Grunwaldzki"), "p");
-assert.equal(code("2", "Boguszów-Gorce", ["Bystrzycka", "Galeria Victoria"]), "b");
+assert.equal(
+  code("2", "Boguszów-Gorce", ["Bystrzycka", "Galeria Victoria"]),
+  "v",
+  "kurs przez Galerię Victoria dostaje literę v, a nie b",
+);
 assert.equal(code("2", "Szczawienko", ["Rynek", "Galeria Victoria"]), "v");
 assert.equal(code("5", "Głuszyca Górna"), "*");
 assert.equal(code("5", "Głuszyca"), "e");
@@ -241,7 +246,7 @@ assert.deepEqual(
   line2.directions.map(({ suffix, main, legendText: text }) => [suffix, main, text ?? ""]),
   [
     ["", true, ""],
-    ["b", false, "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)"],
+    ["b", false, "kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez)"],
     ["d", false, "kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice"],
     ["v", false, "kurs przez Galerię Victoria"],
   ],
@@ -280,27 +285,37 @@ assert.equal(timetableLineLabel(struga), "8", "linia bez liter — litery mają 
 assert.equal(timetableVariantLetters(struga), "s");
 const boguszow = pdfTrip("2", "Boguszów-Gorce", ["Bystrzycka", "Boguszów-Gorce"]);
 assert.equal(timetableLineLabel(boguszow), "2");
-assert.equal(timetableVariantLetters(boguszow), "b");
+assert.equal(
+  timetableVariantLetters(boguszow),
+  "",
+  "kurs do samego Boguszowa-Gorc jest podstawowy — litera b nie może go dotyczyć",
+);
+const lesieniec = pdfTrip("2", "Stary Lesieniec", ["Bystrzycka", "Stary Lesieniec"]);
+assert.equal(
+  timetableVariantLetters(lesieniec),
+  "b",
+  "kurs przedłużony do Starego Leśieńca ma literę b",
+);
 assert.equal(timetableLineLabel(pdfTrip("11", "Głuszyca", ["A", "Głuszyca"])), "11");
 assert.equal(timetableLineLabel(pdfTrip("WY", "Zajezdnia", ["Zajezdnia", "A"])), "WY");
 const duty = {
   item: { unassigned: false } as never,
   trips: [
-    boguszow,
+    lesieniec,
     pdfTrip("8", "Struga", ["Bystrzycka", "Struga"]),
     pdfTrip("8", "Gostków", ["Chwaliszów", "Stare Bogaczowice", "Gostków"]),
     pdfTrip("8", "Bystrzycka", ["Struga", "Bystrzycka"]),
   ],
 } as TimetablePdfDuty;
 assert.deepEqual(timetableLegendRows(duty), [
-  { line: "2", code: "b", text: "kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec)" },
+  { line: "2", code: "b", text: "kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez)" },
   { line: "8", code: "s", text: "kurs przedłużony do Strugi" },
   { line: "8", code: "y", text: "kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice" },
 ]);
 
 assert.equal(
   timetableLegendText(duty),
-  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec) · 8: s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
+  "Legenda wariantów: 2: b – kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez) · 8: s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
   "stopka wydruku opisuje każdą literę użytego wariantu",
 );
 
@@ -308,7 +323,7 @@ assert.equal(
 // tylko użyte) — kierowca ma wiedzieć, dokąd jedzie każda litera.
 assert.equal(
   timetablePrintLegendText(duty),
-  "Legenda wariantów: 2: b – kurs przedłużony do Boguszowa-Gorc (przez Stary Lesieniec), k – kurs przedłużony do Boguszowa-Gorc - Kuźnic, d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice, p – kurs tylko do Placu Grunwaldzkiego, v – kurs przez Galerię Victoria · 8: a – kurs przez Al. Podwale, l – kurs przedłużony do Lubiechowa, z – kurs przedłużony do Zamku Książ przez Lubiechów, d – kurs do Dworca Miasto, g – kurs przedłużony przez Stare Bogaczowice do Gostkowa, s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
+  "Legenda wariantów: 2: b – kurs przedłużony do Starego Leśieńca (przez Kuźnice lub bez), k – kurs przedłużony do Boguszowa-Gorc - Kuźnic, d – kurs przedłużony do Boguszowa-Gorc - Dzikowca przez Kuźnice, p – kurs tylko do Placu Grunwaldzkiego, v – kurs przez Galerię Victoria · 8: a – kurs przez Al. Podwale, l – kurs przedłużony do Lubiechowa, z – kurs przedłużony do Zamku Książ przez Lubiechów, d – kurs do Dworca Miasto, g – kurs przedłużony przez Stare Bogaczowice do Gostkowa, s – kurs przedłużony do Strugi, y – kurs przedłużony do Gostkowa przez Chwaliszów i Stare Bogaczowice",
   "stopka wydruku zawiera pełną legendę każdej linii z kursówki",
 );
 assert.deepEqual(

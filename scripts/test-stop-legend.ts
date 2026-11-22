@@ -26,6 +26,7 @@ const files: Record<string, string> = {
     "i,Galeria Victoria,50.792,16.265",
     "j,Boguszów-Gorce Dworzec,50.820,16.280",
     "k,Bystrzycka,50.700,16.300",
+    "l,Stary Lesieniec,50.815,16.275",
   ].join("\n"),
   "trips.txt": [
     "route_id,service_id,trip_id,trip_headsign,block_id",
@@ -34,7 +35,7 @@ const files: Record<string, string> = {
     "r8,RS,t-z,Zamek Książ,8/01",
     "r8,RS,t-s,Struga,8/01",
     "r8,RS,t-a,Bystrzycka,8/01",
-    "r2,RS,t-2b,Boguszów-Gorce Dworzec,2/01",
+    "r2,RS,t-2b,Stary Lesieniec,2/01",
     "r2,RS,t-2base,Bystrzycka,2/01",
     "r2,RS,t-2v,Bystrzycka,2/01",
   ].join("\n"),
@@ -57,7 +58,7 @@ const files: Record<string, string> = {
     "t-a,12:05:00,12:05:00,h,2,0,0",
     "t-a,12:20:00,12:20:00,k,3,0,0",
     "t-2b,13:00:00,13:00:00,a,1,0,0",
-    "t-2b,13:30:00,13:30:00,j,2,0,0",
+    "t-2b,13:30:00,13:30:00,l,2,0,0",
     "t-2base,14:00:00,14:00:00,a,1,0,0",
     "t-2base,14:30:00,14:30:00,k,2,0,0",
     "t-2v,15:00:00,15:00:00,a,1,0,0",
@@ -150,7 +151,7 @@ const line2 = groups.find((group) => group.line === "2")!;
 assert.deepEqual(
   line2.directions.map(({ suffix }) => suffix),
   ["", "b", "v"],
-  "kurs na Bystrzycką (podstawa) bez litery, Boguszów-Gorce jako 2b, przez Victorię jako 2v",
+  "kurs na Bystrzycką (podstawa) bez litery, Stary Lesieniec jako 2b, przez Victorię jako 2v",
 );
 
 console.log("stop timetable letters come from the official line legend");
