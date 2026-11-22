@@ -170,6 +170,9 @@ try {
   assert.equal(card.passed, 0, "autobus stoi na pierwszym przystanku — nic jeszcze nie przejechał");
   assert.equal(card.current, 1, "autobus musi być zaznaczony na osi kursu");
   assert.ok(card.paths > 0, "trasa kursu musi być narysowana na mapie");
+  // Trasa to JEDNA ciągła linia (obwódka + kolor), a nie kawałki: wcześniej
+  // dłuższe odcinki kształtu dzieliły polilinię i linia urywała się w połowie.
+  assert.equal(card.paths, 2, `trasa rysowana jednym ciągiem (są ${card.paths} ścieżki)`);
   assert.ok(card.overlayTitle.includes("Trasa linii 7"), "mapa podpisuje narysowaną trasę");
   assert.equal(card.selected, 1, "wybrany autobus jest wyróżniony");
 

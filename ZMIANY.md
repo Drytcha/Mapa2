@@ -589,3 +589,60 @@ c) ta sama paczka nie jest rozpakowywana drugi raz,
 d) kształty dochodzą przy pierwszym rysowaniu trasy i tylko raz.
 Do pomiaru w przeglądarce doszło `npm run bench:load` (syntetyczna paczka w
 `scripts/lib/syntheticGtfs.ts`).
+
+## Ciągłe trasy i koniec linii 11 na pętli Kozice
+
+Zgłoszenia: „linie urywają się w połowie i pokazują od losowego miejsca” oraz
+„linia 11 kończy na pętli Kozice, a nie jakieś 300 m od pętli”.
+
+**Dlaczego linie się rwały**
+
+1. `repairShapeGaps` dzielił polilinię przy **każdym** odcinku ≥ 120 m między
+   punktami kształtu. Takie odcinki to w tej paczce zwykle rzadkie próbkowanie
+   prostej drogi (pomiar sprzed miesięcy: 2955 „luk” w 483 z 513 kształtów), a nie
+   błąd danych. Gdy OSRM nie odpowiedział w budżecie, dziura zostawała otwarta —
+   na mapie widać było kawałek trasy od przypadkowego miejsca.
+2. Kawałek złożony z jednego punktu był pomijany, więc linia potrafiła
+   „zaczynać się” dopiero ~120 m za pierwszym przystankiem.
+3. `shapes.txt` bywa opisany w kilku blokach pod tym samym `shape_id` (numeracja
+   `shape_pt_sequence` zaczyna się od nowa). Sortowanie po samym numerze mieszało
+   bloki, a linia skakała po mieście.
+
+**Poprawki**
+
+- **Kształt z paczki jest rysowany dosłownie** — jedna ciągła polilinia, bez
+  dzielenia i bez pytań do OSRM (`repairShapeGaps` dla `stopChain=false` zwraca
+  ścieżkę bez zmian). Trasa pojawia się natychmiast, także offline.
+- **Trasa z samych przystanków** (brak `shapes.txt`) jest sklejana w całość:
+  odcinki wyznaczone przez OSRM idą po drogach, nieuzupełnione — prosto między
+  przystankami. Dziur nie ma, komunikat w karcie mówi wprost
+  „…odcinków poprowadzono w linii prostej” zamiast „pominięto je na mapie”.
+- **Bloki kształtu**: punkty sortowane po (blok, numer), więc kolejność z pliku
+  jest zachowana.
+- Test `npm run test:bus:e2e` sprawdza teraz, że trasa to **jedna** linia
+  (2 ścieżki SVG: obwódka + kolor), a nie seria kawałków.
+
+**Linia 11 i pętla Kozice**
+
+Ostatni wpis `stop_times` kursu bywa **węzłem** (`location_type=1`) — pętlą.
+Parser pomijał takie wiersze w `stopsById`, więc ostatni przystanek kursu
+znikał, a rysowanie kończyło się na poprzednim („Strzegomska - na żądanie”),
+ok. 360 m przed pętlą „Strzegomska - Kozice”. Dodatkowo kształt linii 11 kończy
+się na skrzyżowaniu przed pętlą.
+
+- Nowa mapa `stationById` trzyma współrzędne węzłów, a `stopPointFor()` używa ich
+  wszędzie tam, gdzie potrzebny jest punkt do narysowania lub nazwa przystanku
+  (karta autobusu, kurs, kursówka, lista przystanków kursu, planer).
+- `connectEndsToStops()` dociąga narysowaną linię do pierwszego i ostatniego
+  przystanku kursu, gdy kształt kończy się wcześniej (do 400 m — dłuższych
+  „ogonów” nie dorysowujemy).
+- Reguła działa w podglądzie autobusu, kursu, brygady i w katalogu linii
+  (`getLineCatalogue`), więc dotyczy zarówno mapy, jak i rozkładów.
+- Wersja schematu cache → `…-v4-full` (stare kopie bez `stationById` są
+  odrzucane).
+
+**Testy:** nowy `npm run test:geometry` (`scripts/test-route-geometry.ts`) na
+paczce z pętlą jako węzłem, rzadkim próbkowaniem kształtu, częściowo działającym
+OSRM i kształtem w dwóch blokach — pilnuje, że linia jest jedna, kompletna i
+kończy się na pętli. Reszta zestawu (`tsc`, `test:bus|board|stops|duty-pdf|
+legend|arrows|perf|load`, `test:bus:e2e`, `build`) zielona.
