@@ -1,5 +1,19 @@
-/** Repair suspicious GTFS chords with road geometry. Unresolved gaps are not
- * drawn as straight lines: doing so would falsely suggest a road exists there. */
+/**
+ * Uzupełnianie geometrii tras.
+ *
+ * Zasada: **linia nigdy nie może się urwać w połowie**. Wcześniej każde
+ * podejrzane przejście (≥ 120 m między punktami kształtu) dzieliło polilinię na
+ * kawałki, a gdy OSRM nie odpowiedział w budżecie czasu, dziura zostawała —
+ * użytkownik widział trasę „od losowego miejsca”.
+ *
+ * - Ścieżka z `shapes.txt` (`stopChain = false`) jest geometrią oficjalną:
+ *   rysujemy ją w całości, bez pytań do OSRM (długi odcinek prosty to zwykle
+ *   rzadkie próbkowanie prostej drogi, nie błąd).
+ * - Ścieżka z samych przystanków (`stopChain = true`) jest przybliżeniem:
+ *   każdy odcinek próbujemy poprowadzić po drogach (OSRM), a gdy się nie uda,
+ *   łączymy przystanki prosto, żeby trasa była kompletna od pierwszego do
+ *   ostatniego przystanku.
+ */
 
 import { distanceCoords } from "../core/spatial";
 import { LruTtlCache, runDeduped } from "../core/runtimeHub";
@@ -110,6 +124,14 @@ export async function repairShapeGaps(
   stopChain = false,
   budgetMs = DEFAULT_BUDGET_MS
 ): Promise<RepairedShape> {
+  // Kształt z paczki jest kompletny i wiarygodny — rysujemy go bez zmian.
+  if (!stopChain) {
+    return {
+      polylines: path.length >= 2 ? [path] : [],
+      gapsTotal: 0,
+      gapsRepaired: 0,
+    };
+  }
   const { runs, gaps } = splitShapeAtGaps(path, stopChain ? 0 : HARD_GAP_M);
   if (!gaps.length) {
     return { polylines: path.length >= 2 ? [path] : [], gapsTotal: 0, gapsRepaired: 0 };
@@ -134,17 +156,15 @@ export async function repairShapeGaps(
   signal?.removeEventListener("abort", abort);
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-  const polylines: LatLng[][] = [];
-  let line = [...runs[0]];
+  // Jedna, ciągła linia: uzupełnione odcinki idą po drogach, nieuzupełnione
+  // łączymy tak, jak podaje je rozkład (prosto między przystankami). Dziur
+  // w trasie nie zostawiamy — to one wyglądały jak „urwana linia”.
+  const line: LatLng[] = [...runs[0]];
   for (let i = 0; i < gaps.length; i += 1) {
     const fill = fills.get(i);
-    if (fill) {
-      line.push(...fill, ...runs[i + 1]);
-    } else {
-      if (line.length >= 2) polylines.push(line);
-      line = [...runs[i + 1]];
-    }
+    if (fill) line.push(...fill);
+    line.push(...runs[i + 1]);
   }
-  if (line.length >= 2) polylines.push(line);
+  const polylines: LatLng[][] = line.length >= 2 ? [line] : [];
   return { polylines, gapsTotal: gaps.length, gapsRepaired: fills.size };
 }

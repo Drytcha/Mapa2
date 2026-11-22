@@ -2806,7 +2806,11 @@ function MapPlanerWorkspace() {
             onShowShapeOverlay={(overlay) => {
               if (overlayEpoch !== overlayEpochRef.current) return;
               setKursowkaOverlay(overlay);
-              showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
+              showToast(
+                overlay.unresolvedGaps
+                  ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
+                  : `Wyświetlono przebieg: ${overlay.title}.`,
+              );
             }}
             onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
             onLoadTripToPlanner={handleLoadTripToPlanner}
@@ -2825,7 +2829,11 @@ function MapPlanerWorkspace() {
             onShowShapeOverlay={(overlay) => {
               if (overlayEpoch !== overlayEpochRef.current) return;
               setKursowkaOverlay(overlay);
-              showToast(overlay.unresolvedGaps ? `Pominięto ${overlay.unresolvedGaps} niewyznaczonych odcinków. Spróbuj ponownie.` : `Wyświetlono przebieg: ${overlay.title}.`);
+              showToast(
+                overlay.unresolvedGaps
+                  ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
+                  : `Wyświetlono przebieg: ${overlay.title}.`,
+              );
             }}
           />
         </Suspense>

@@ -7,7 +7,12 @@
 import { DateTime } from "luxon";
 import { polylineLengthMeters } from "../core/spatial";
 import { WARSAW_ZONE } from "../core/time";
-import { ensureGtfsSeeded, ensureShapesReady } from "./gtfsStore";
+import {
+  connectEndsToStops,
+  ensureGtfsSeeded,
+  ensureShapesReady,
+  stopPointFor,
+} from "./gtfsStore";
 
 type LatLng = [number, number];
 type Store = Awaited<ReturnType<typeof ensureGtfsSeeded>>;
@@ -137,15 +142,22 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         matching.find((trip) => activeOnRef.has(trip.serviceId)) ?? matching[0] ?? group[0];
 
       const shape = representative.shapeId ? base.shapesById.get(representative.shapeId) : undefined;
+      const tripStopTimes = base.rawStopTimesByTrip.get(representative.rawTripId) ?? [];
+      const firstPoint = tripStopTimes[0] ? stopPointFor(base, tripStopTimes[0].stopId) : null;
+      const lastPoint = tripStopTimes.length
+        ? stopPointFor(base, tripStopTimes[tripStopTimes.length - 1].stopId)
+        : null;
       let path: LatLng[];
       let approximate = false;
       if (shape && shape.length >= 2) {
-        path = shape;
+        // Kształt rysujemy w całości, dociągnięty do pierwszego i ostatniego
+        // przystanku wariantu (pętla bywa dalej niż koniec kształtu).
+        path = connectEndsToStops(shape, firstPoint, lastPoint);
       } else {
         approximate = true;
         path = [];
-        for (const st of base.rawStopTimesByTrip.get(representative.rawTripId) ?? []) {
-          const stop = base.stopsById.get(st.stopId);
+        for (const st of tripStopTimes) {
+          const stop = stopPointFor(base, st.stopId);
           if (stop) path.push([stop.lat, stop.lon]);
         }
       }

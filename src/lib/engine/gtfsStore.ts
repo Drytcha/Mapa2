@@ -55,7 +55,7 @@ import {
  * w v2 mogła tkwić paczka "GTFS.zip" bez linii 30 (brygady 30/01, 30/02 od 1 grudnia)
  * i bez linii S1–S4, która nie była odświeżana przez kolejne 12 godzin.
  */
-export const DUTY_SCHEMA_VERSION = "walbrzych-eu-st-387-388-v3-full";
+export const DUTY_SCHEMA_VERSION = "walbrzych-eu-st-387-388-v4-full";
 /** Cache dopasowania kursu z GPS do rozkładu (czyszczone przy nowym feedzie). */
 const tripMatchCache = new Map<
   string,
@@ -215,6 +215,13 @@ interface ParsedArchiveBase {
   stopsById: Map<string, GtfsStopRecord>;
   /** Names are also retained for depot/technical stops without coordinates. */
   stopNamesById: Map<string, string>;
+  /**
+   * Węzły `location_type=1` (pętle, dworce) z własnymi współrzędnymi. Nie są
+   * przystankami do wsiadania, ale kursy potrafią kończyć się właśnie na nich —
+   * bez tego ostatni przystanek kursu (np. pętla Kozice na linii 11) znikał,
+   * a linia kończyła się ~300 m wcześniej.
+   */
+  stationById: Map<string, { name: string; lat: number; lon: number }>;
   services: GtfsServiceRecord[];
   dayTypeServices: Record<string, Set<string>>;
   /** Exact GTFS calendar: date (YYYYMMDD) -> active service_ids. No "forever" fallback. */
@@ -558,9 +565,21 @@ async function parseArchiveBytes(
   await yieldToMain();
   const stopsById = new Map<string, GtfsStopRecord>();
   const stopNamesById = new Map<string, string>();
+  const stationById = new Map<string, { name: string; lat: number; lon: number }>();
   for (const s of parseCsvRows(readTxt("stops.txt"))) {
     if (s.stop_id && s.stop_name?.trim()) stopNamesById.set(s.stop_id, s.stop_name.trim());
-    if (s.location_type === "1") continue;
+    if (s.location_type === "1") {
+      const stationLat = Number.parseFloat(s.stop_lat);
+      const stationLon = Number.parseFloat(s.stop_lon);
+      if (s.stop_id && Number.isFinite(stationLat) && Number.isFinite(stationLon)) {
+        stationById.set(s.stop_id, {
+          name: s.stop_name?.trim() || s.stop_id,
+          lat: stationLat,
+          lon: stationLon,
+        });
+      }
+      continue;
+    }
     const lat = Number.parseFloat(s.stop_lat);
     const lon = Number.parseFloat(s.stop_lon);
     if (!s.stop_id || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
@@ -859,6 +878,7 @@ async function parseArchiveBytes(
     stops,
     stopsById,
     stopNamesById,
+    stationById,
     services,
     dayTypeServices,
     serviceIdsByDate,
@@ -1411,7 +1431,15 @@ async function parseShapesInto(base: ParsedArchiveBase, zipBytes: Uint8Array): P
   const iLat = col("shape_pt_lat");
   const iLon = col("shape_pt_lon");
   const iSeq = col("shape_pt_sequence");
-  const buckets = new Map<string, Array<{ seq: number; lat: number; lon: number }>>();
+  const buckets = new Map<
+    string,
+    Array<{ block: number; seq: number; lat: number; lon: number }>
+  >();
+  // Ten sam `shape_id` bywa w paczce opisany w kilku blokach (np. osobno dla
+  // obu kierunków) — wtedy numeracja `shape_pt_sequence` zaczyna się od nowa.
+  // Bez rozdzielenia bloków sortowanie mieszało punkty i linia „skakała”.
+  const lastSeqByShape = new Map<string, number>();
+  const blockByShape = new Map<string, number>();
   let cols = reader.next();
   let processed = 0;
   while (cols !== null) {
@@ -1420,7 +1448,15 @@ async function parseShapesInto(base: ParsedArchiveBase, zipBytes: Uint8Array): P
       const lat = iLat >= 0 ? Number.parseFloat(cols[iLat]) : Number.NaN;
       const lon = iLon >= 0 ? Number.parseFloat(cols[iLon]) : Number.NaN;
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        const point = { seq: iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0, lat, lon };
+        const seq = iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0;
+        const previous = lastSeqByShape.get(shapeId);
+        let block = blockByShape.get(shapeId) ?? 0;
+        if (previous !== undefined && seq <= previous) {
+          block += 1;
+          blockByShape.set(shapeId, block);
+        }
+        lastSeqByShape.set(shapeId, seq);
+        const point = { block, seq, lat, lon };
         const list = buckets.get(shapeId);
         if (list) list.push(point);
         else buckets.set(shapeId, [point]);
@@ -1431,7 +1467,7 @@ async function parseShapesInto(base: ParsedArchiveBase, zipBytes: Uint8Array): P
     cols = reader.next();
   }
   for (const [shapeId, points] of buckets) {
-    points.sort((a, b) => a.seq - b.seq);
+    points.sort((a, b) => a.block - b.block || a.seq - b.seq);
     base.shapesById.set(
       shapeId,
       points.map((point) => [point.lat, point.lon] as [number, number]),
@@ -1528,6 +1564,51 @@ export async function syncWalbrzychGtfs(
     activeSync = null;
   });
   return activeSync;
+}
+
+/**
+ * Punkt przystanku do rysowania: normalny przystanek, a gdy GTFS wstawia w
+ * `stop_times` węzeł (`location_type=1`, np. pętla), bierzemy współrzędne węzła.
+ * Wcześniej taki wpis był po cichu pomijany i trasa kończyła się o ~300 m za wcześnie.
+ */
+export function stopPointFor(
+  base: ParsedArchiveBase,
+  stopId: string,
+): { id: string; name: string; lat: number; lon: number } | null {
+  const stop = base.stopsById.get(stopId);
+  if (stop) return { id: stop.id, name: stop.name, lat: stop.lat, lon: stop.lon };
+  const station = base.stationById?.get(stopId);
+  if (station) return { id: stopId, name: station.name, lat: station.lat, lon: station.lon };
+  return null;
+}
+
+/**
+ * Dociąga końcówki polilinii do pierwszego i ostatniego przystanku kursu.
+ *
+ * Kształty w paczce Wałbrzycha potrafią skończyć się na skrzyżowaniu przed
+ * pętlą (linia 11, Kozice: ostatni przystanek jest ~360 m za końcem kształtu).
+ * Linia musi dojechać do przystanku końcowego, ale nie dorysowujemy dowolnie
+ * długich „ogonów” — tylko do 400 m, żeby nie tworzyć sztucznych odcinków.
+ */
+export function connectEndsToStops(
+  path: [number, number][],
+  first: { lat: number; lon: number } | null,
+  last: { lat: number; lon: number } | null,
+  maxSpurMeters = 400,
+): [number, number][] {
+  if (path.length < 2) return path;
+  const out: [number, number][] = path.map((point) => [point[0], point[1]]);
+  const MIN_SPUR_M = 6;
+  if (first) {
+    const gap = distanceCoords(first.lat, first.lon, out[0][0], out[0][1]);
+    if (gap > MIN_SPUR_M && gap <= maxSpurMeters) out.unshift([first.lat, first.lon]);
+  }
+  if (last) {
+    const end = out[out.length - 1];
+    const gap = distanceCoords(last.lat, last.lon, end[0], end[1]);
+    if (gap > MIN_SPUR_M && gap <= maxSpurMeters) out.push([last.lat, last.lon]);
+  }
+  return out;
 }
 
 /** Store z gotowymi kształtami tras — dla funkcji, które rysują geometrię. */
@@ -1890,14 +1971,14 @@ export async function getDutyDetail(options: {
             ? Math.max(0, trips[index + 1].startMinutes - trip.endMinutes)
             : null,
         stops: rawStopTimes.map((st) => {
-          const stop = store.base.stopsById.get(st.stopId);
+          const stop = stopPointFor(store.base, st.stopId);
           return {
             tripId: trip.id,
             stopId: st.stopId,
             stopSequence: st.stopSequence,
             arrivalMinutes: st.arrivalMinutes,
             departureMinutes: st.departureMinutes,
-            stopName: stop?.name ?? st.stopId,
+            stopName: stop?.name ?? store.base.stopNamesById.get(st.stopId) ?? st.stopId,
             lat: stop?.lat ?? 0,
             lon: stop?.lon ?? 0,
             arrivalClock: clock(st.arrivalMinutes),
@@ -2730,13 +2811,15 @@ export async function getVehicleRouteOverlay(
 
   const stops: Array<{ name: string; lat: number; lon: number }> = [];
   for (const st of store.base.rawStopTimesByTrip.get(tripId) ?? []) {
-    const stop = store.base.stopsById.get(st.stopId);
+    const stop = stopPointFor(store.base, st.stopId);
     if (stop) stops.push({ name: stop.name, lat: stop.lat, lon: stop.lon });
   }
   const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
   const fromShape = Boolean(shape && shape.length >= 2);
+  // Kształt jest geometrią oficjalną: rysujemy go w całości i dociągamy do
+  // pierwszego/ostatniego przystanku kursu (pętla bywa dalej niż koniec kształtu).
   const path: [number, number][] = fromShape
-    ? (shape as [number, number][])
+    ? connectEndsToStops(shape as [number, number][], stops[0] ?? null, stops[stops.length - 1] ?? null)
     : stops.map((stop): [number, number] => [stop.lat, stop.lon]);
   if (path.length < 2) return null;
 
@@ -2799,7 +2882,8 @@ export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
   const stops: VehicleTripStop[] = [];
   for (const st of match.stops) {
     const liveItem = match.liveBySeq.get(st.stopSequence);
-    const stopRec = store.base.stopsById.get(st.stopId);
+    // Kurs może kończyć się na węźle (pętla) — nazwa musi się rozwiązać także wtedy.
+    const stopRec = stopPointFor(store.base, st.stopId);
     stops.push({
       sequence: st.stopSequence,
       name: liveItem?.name ?? stopRec?.name ?? st.stopId,
@@ -2823,7 +2907,7 @@ export async function getTripStopWaypoints(
   const sts = store.base.rawStopTimesByTrip.get(rawTripId) ?? [];
   const out: Array<{ id: string; name: string; lat: number; lon: number }> = [];
   for (const st of sts) {
-    const stop = store.base.stopsById.get(st.stopId);
+    const stop = stopPointFor(store.base, st.stopId);
     if (!stop) continue;
     out.push({
       id: stop.id,
@@ -2862,7 +2946,12 @@ export async function getBrigadeShapeOverlay(
     if (pts && pts.length >= 2 && trip.shapeId) {
       if (!seenShapes.has(trip.shapeId)) {
         seenShapes.add(trip.shapeId);
-        polylines.push({ path: pts, stopChain: false });
+        const firstPoint = sts[0] ? stopPointFor(store.base, sts[0].stopId) : null;
+        const lastPoint = sts.length ? stopPointFor(store.base, sts[sts.length - 1].stopId) : null;
+        polylines.push({
+          path: connectEndsToStops(pts, firstPoint, lastPoint),
+          stopChain: false,
+        });
       }
     } else {
       const key = JSON.stringify(sts.map((st) => st.stopId));
@@ -2870,7 +2959,7 @@ export async function getBrigadeShapeOverlay(
         seenStopChains.add(key);
         const path: [number, number][] = [];
         for (const st of sts) {
-          const stop = store.base.stopsById.get(st.stopId);
+          const stop = stopPointFor(store.base, st.stopId);
           if (stop) path.push([stop.lat, stop.lon]);
         }
         if (path.length >= 2) polylines.push({ path, stopChain: true });
@@ -2878,7 +2967,7 @@ export async function getBrigadeShapeOverlay(
     }
     for (const st of sts) {
       if (stopMap.has(st.stopId)) continue;
-      const stop = store.base.stopsById.get(st.stopId);
+      const stop = stopPointFor(store.base, st.stopId);
       if (stop) {
         stopMap.set(st.stopId, {
           name: stop.name,
@@ -2961,7 +3050,7 @@ export async function getCoursePreview(
   const dayStartMs = serviceDay.startOf("day").toMillis();
   const stops: CoursePreviewStop[] = [];
   for (const st of store.base.rawStopTimesByTrip.get(tripId) ?? []) {
-    const stop = store.base.stopsById.get(st.stopId);
+    const stop = stopPointFor(store.base, st.stopId);
     if (!stop) continue;
     stops.push({
       id: stop.id,
@@ -2978,9 +3067,15 @@ export async function getCoursePreview(
 
   const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
   const approximate = !shape || shape.length < 2;
+  // Kształt rysujemy w całości i dociągamy do przystanku początkowego/końcowego
+  // (np. pętla Kozice leży ~360 m za końcem kształtu linii 11).
   const path: [number, number][] = approximate
     ? stops.map((stop) => [stop.lat, stop.lon])
-    : shape;
+    : connectEndsToStops(
+        shape as [number, number][],
+        stops[0] ?? null,
+        stops[stops.length - 1] ?? null,
+      );
   const route = store.base.routesById.get(trip.routeId);
   const operatorKey =
     trip.operatorKey !== "other"

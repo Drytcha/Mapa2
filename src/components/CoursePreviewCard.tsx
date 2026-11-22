@@ -126,7 +126,7 @@ export default function CoursePreviewCard({
         )}
         {course.unresolvedGaps > 0 && (
           <p className="mt-1 text-[8px] leading-snug text-warning">
-            Nie udało się wyznaczyć {course.unresolvedGaps} odcinków po drogach. Pominięto je na mapie; spróbuj ponownie.
+            {course.unresolvedGaps} odcinków poprowadzono w linii prostej — nie udało się wyznaczyć ich po drogach. Trasa jest kompletna.
           </p>
         )}
 
