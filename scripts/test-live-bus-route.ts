@@ -6,6 +6,9 @@ import {
   getVehicleRouteOverlay,
   getVehicleTripStops,
 } from "../src/lib/engine/gtfsStore";
+import { buildBusMarker } from "../src/lib/busMarker";
+import { DELAY_STYLES, delayTone } from "../src/lib/delay";
+import { computeFleetSignature, type LiveFleetSnapshot } from "../src/lib/core/runtimeHub";
 import { liveBusTap } from "../src/lib/liveBusProgress";
 import type { LiveBusVehicle } from "../src/lib/types";
 
@@ -93,11 +96,25 @@ const bus: LiveBusVehicle = {
   ],
 };
 
+// Cztery kolory, włącznie z granicami, niezależnie od przewoźnika.
+for (const [seconds, tone] of [[-61, "early-big"], [-60, "early-small"], [0, "early-small"], [1, "late"], [180, "late"], [181, "late-high"]] as const) {
+  assert.equal(delayTone(seconds), tone);
+  for (const operatorKey of ["mzuk", "ska", "other"] as const) {
+    const { html } = buildBusMarker({ ...bus, delaySeconds: seconds, operatorKey }, { kursowka: false, vehicleNumber: false }, false);
+    assert.ok(html.includes(`--delay-bg:${DELAY_STYLES[tone].bg}`));
+    assert.ok(!html.includes("--operator-bg"));
+  }
+}
+const snapshot = { vehicles: [bus], traffic: { recommendedPeakPercent: 0 }, source: "test" } as LiveFleetSnapshot;
+const nextSnapshot = { ...snapshot, vehicles: [{ ...bus, upcomingStops: bus.upcomingStops.slice(1) }] };
+assert.notEqual(computeFleetSignature(snapshot), computeFleetSignature(nextSnapshot), "sam postęp przystanku wywołuje aktualizację floty");
+
 // 1. Trasa do narysowania powstaje bez pytania kalendarza o dzień obsługi.
 const overlay = await getVehicleRouteOverlay(bus);
 assert.ok(overlay, "bez trasy klik w autobus nie pokazuje nic na mapie");
 assert.match(overlay.title, /Trasa linii 9/);
 assert.equal(overlay.stops.length, 3);
+assert.deepEqual(overlay.stops.map((stop) => stop.sequence), [1, 2, 3]);
 assert.ok(overlay.polylines.length > 0, "trasa musi mieć co najmniej jedną polilinię");
 assert.ok(overlay.polylines.some((line) => line.length >= 2), "polilinia musi mieć ≥ 2 punkty");
 assert.ok(

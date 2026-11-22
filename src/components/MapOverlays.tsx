@@ -67,7 +67,6 @@ import { OPERATOR_STYLES } from "@/lib/transit";
 import BusSearch from "./BusSearch";
 import {
   DELAY_STYLES,
-  WAITING_STYLE,
   delayTone,
   describeDelay,
   formatDelay,
@@ -87,7 +86,7 @@ export type { StopDisplayMode };
 import GtfsSchedule from "./GtfsSchedule";
 import LiveBusRunPanel from "./LiveBusRunPanel";
 import { getVehicleTripStops } from "@/lib/engine/gtfsStore";
-import { pastRouteColor } from "@/lib/routeProgress";
+import { FUTURE_ROUTE_COLOR, pastRouteColor } from "@/lib/routeProgress";
 import {
   tripVariantLabel,
   vehicleChipLabel,
@@ -335,12 +334,6 @@ export function LiveFleetControl({
                 )}
               >
                 <span className="flex items-center gap-1">
-                  {item.id !== "all" && (
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ background: OPERATOR_STYLES[item.id].bg }}
-                    />
-                  )}
                   {item.label}
                 </span>
               </button>
@@ -457,14 +450,12 @@ export function ShapeOverlayControl({
   title,
   onClear,
   progress,
-  lineColor,
   dark,
 }: {
   title: string;
   onClear: () => void;
   /** Kurs autobusu z GPS: pokaż legendę „przejechane / przed nami”. */
   progress?: boolean;
-  lineColor?: string;
   dark?: boolean;
 }) {
   return (
@@ -481,7 +472,7 @@ export function ShapeOverlayControl({
           <span>przejechane</span>
           <span
             className="h-[3px] w-4 rounded-full"
-            style={{ background: lineColor || "#0d4f3b" }}
+            style={{ background: FUTURE_ROUTE_COLOR }}
             title="Odcinek przed autobusem"
           />
           <span>przed nami</span>
@@ -608,8 +599,8 @@ export function LiveBusCard({
         <span
           className="metric mt-px grid h-8 min-w-[34px] shrink-0 place-items-center rounded-lg px-1.5 text-[12px] font-extrabold shadow-xs"
           style={{
-            backgroundColor: OPERATOR_STYLES[bus.operatorKey].bg,
-            color: OPERATOR_STYLES[bus.operatorKey].fg,
+            backgroundColor: style.bg,
+            color: style.fg,
           }}
         >
           {bus.routeName || "?"}
@@ -690,8 +681,8 @@ export function LiveBusCard({
                   <span
                     className="metric inline-grid min-w-[34px] place-items-center rounded px-1.5 py-1 text-[9px] font-extrabold text-on-brand"
                     style={{
-                      backgroundColor: OPERATOR_STYLES[bus.operatorKey].bg,
-                      color: OPERATOR_STYLES[bus.operatorKey].fg,
+                      backgroundColor: style.bg,
+                      color: style.fg,
                     }}
                   >
                     {bus.routeName || "?"}
@@ -769,11 +760,7 @@ export function LiveBusCard({
         <div className="mt-1 flex flex-wrap items-center gap-1 text-[7.5px] font-bold">
           <span
             className="rounded-full px-1.5 py-0.5"
-            style={
-              waiting.waiting
-                ? { background: WAITING_STYLE.bg, color: WAITING_STYLE.fg }
-                : { background: style.bg, color: style.fg }
-            }
+            style={{ background: style.bg, color: style.fg }}
           >
             {waiting.waiting ? waiting.label : describeDelay(bus.delaySeconds)}
           </span>

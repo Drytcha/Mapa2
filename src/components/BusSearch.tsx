@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { BusFront, Search, X } from "lucide-react";
 import type { LiveBusVehicle } from "@/lib/types";
 import { formatDutyCode, isSameDutyLine } from "@/lib/core/text";
-import { describeDelay, formatDelay, formatVehicleNumber } from "@/lib/delay";
+import { DELAY_STYLES, delayTone, describeDelay, formatDelay, formatVehicleNumber } from "@/lib/delay";
 import { dutyLabel } from "@/lib/engine/brigadeVerification";
 import { findBuses, OPERATOR_STYLES } from "@/lib/transit";
 import { cn } from "@/utils/cn";
@@ -121,6 +121,7 @@ export default function BusSearch({
           {results.length ? (
             results.map((bus, index) => {
               const company = OPERATOR_STYLES[bus.operatorKey];
+              const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
               const duty = dutyLabel(bus);
               return (
                 <button
@@ -138,7 +139,7 @@ export default function BusSearch({
                 >
                   <span
                     className="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
-                    style={{ background: company.bg, color: company.fg }}
+                    style={{ background: style.bg, color: style.fg }}
                   >
                     <BusFront className="h-4 w-4" />
                   </span>

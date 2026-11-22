@@ -62,7 +62,7 @@ assert.match(html, /końcowy/);
 // 4. Godzina planowa i prognoza GPS (10:22 planowo → 10:24 z +2 min opóźnienia).
 assert.match(html, /11:22/);
 assert.match(html, /11:24/);
-const predictedChip = html.match(/background:#fb923c[^>]*>11:24</);
+const predictedChip = html.match(/background:#fca5a5[^>]*>11:24</);
 assert.ok(predictedChip, "prognoza powinna dostać kolor punktualności");
 
 // 5. Legenda kolorów pod listą, razem ze stanem „czeka na odjazd”.

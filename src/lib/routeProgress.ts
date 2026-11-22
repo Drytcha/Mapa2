@@ -2,7 +2,7 @@
  * Podział przebiegu kursu na część **już przejechaną** przez autobus i część
  * **przed autobusem**. Dzięki temu na mapie widać jednym spojrzeniem, gdzie
  * pojazd jest w trasie: odcinek za nim rysujemy na szaro, a odcinek przed nim
- * kolorem linii (jak w myBus 3.0).
+ * na zielono.
  *
  * Podział liczymy na geometrii, a nie na przystankach: autobus bywa między
  * przystankami, a przy rzadkim próbkowaniu kształtu (`shapes.txt`) wierzchołki
@@ -168,4 +168,13 @@ export const PAST_ROUTE_COLOR = { light: "#b0bcb4", dark: "#6b7b72" } as const;
 
 export function pastRouteColor(dark: boolean): string {
   return dark ? PAST_ROUTE_COLOR.dark : PAST_ROUTE_COLOR.light;
+}
+
+/** Ten sam zielony kolor trasy i nieprzejechanych przystanków. */
+export const FUTURE_ROUTE_COLOR = "#16803c";
+
+/** GPS podaje numer kolejnego przystanku; bez niego nie zgadujemy postępu. */
+export function liveStopProgress(sequence: number | undefined, nextSequence: number | undefined): "passed" | "upcoming" | "unknown" {
+  if (sequence == null || nextSequence == null || !Number.isFinite(sequence) || !Number.isFinite(nextSequence)) return "unknown";
+  return sequence < nextSequence ? "passed" : "upcoming";
 }

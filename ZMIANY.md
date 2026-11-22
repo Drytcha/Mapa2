@@ -735,3 +735,22 @@ kreskowana.
 - `test:perf` — nowy warunek: `dashArray` wolno używać tylko dla odcinków
   pieszych w planerze (`2 7`) i szkicu własnej trasy (`5 7`). Trasa kursu nie
   może wrócić do linii przerywanej (`9 6` z poprzedniej wersji).
+
+## Kolory punktualności oraz postępu kursu GPS
+
+- Kolor znacznika autobusu, jego karty, wyniku wyszukiwania i prognoz oznacza
+  punktualność, a nie firmę: planowo do 60 s przyspieszenia — jasnozielony;
+  powyżej 60 s przyspieszenia — ciemnozielony; opóźnienie od 1 do 180 s —
+  jasnoczerwony; powyżej 180 s — czerwony. Opisy i legenda są zgodne z kolorami.
+  Nazwy przewoźników i filtry pozostają dostępne bez kolorowania według firmy.
+- Trasa wybranego autobusu jest zielona przed pojazdem i szara za nim. Kropki
+  przystanków tego kursu są zielone przed autobusem, szare za nim; zmieniają się
+  na podstawie numeru następnego przystanku z GPS, zgodnie z kartą kursu. Gdy
+  numer kolejnego przystanku nie jest znany, postęp przystanków nie jest zgadywany
+  (szaroniebieskie oznaczenie i wyjaśnienie po najechaniu). Granicę kolorów trasy
+  nadal wyznacza rzut pozycji pojazdu na geometrię, nie czas rozkładowy.
+- Poprawiono pamięć przypisania brygad: przechowuje przypisanie, ale nie może
+  zastępować bieżących odczytów położenia, punktualności i przystanków danymi z
+  poprzedniego odświeżenia. Zmiana samego kolejnego przystanku wyzwala aktualizację.
+- Test przeglądarkowy obejmuje zmianę przystanku bez zmiany pozycji, zmianę
+  wszystkich czterech kolorów autobusu, ruch granicy trasy oraz brak kreskowania.

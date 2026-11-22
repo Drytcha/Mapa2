@@ -466,8 +466,8 @@ button {
   height: 28px;
   padding: 0 10px 0 17px;
   border-radius: 999px;
-  background: var(--operator-bg, #cbd5e1);
-  color: var(--operator-fg, #273449);
+  background: var(--delay-bg, #cbd5e1);
+  color: var(--delay-fg, #273449);
   border: 2px solid #ffffff;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -530,17 +530,9 @@ button {
   font-weight: 900;
   box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
 }
-.live-bus-op--mzuk {
-  background: #86efac;
-  color: #10351e;
-}
-.live-bus-op--ska {
-  background: #c084fc;
-  color: #1b0734;
-}
-.live-bus-op--other {
-  background: #cbd5e1;
-  color: #1e293b;
+.live-bus-op {
+  background: var(--delay-bg, #cbd5e1);
+  color: var(--delay-fg, #273449);
 }
 .live-bus-arrow {
   display: inline-flex;

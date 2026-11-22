@@ -8,7 +8,7 @@ import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
-import { pastRouteColor, splitRouteAtBus } from "@/lib/routeProgress";
+import { FUTURE_ROUTE_COLOR, liveStopProgress, pastRouteColor, splitRouteAtBus } from "@/lib/routeProgress";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
 import {
   routeArrowIconHtml,
@@ -59,12 +59,12 @@ export interface KursowkaShapeOverlay {
   color: string;
   polylines: [number, number][][];
   unresolvedGaps?: number;
-  stops: Array<{ name: string; lat: number; lon: number }>;
+  stops: Array<{ name: string; lat: number; lon: number; sequence?: number }>;
   /** Present only when previewing one scheduled course, not a whole brigade. */
   course?: CoursePreview;
   /**
    * Autobus, którego kurs właśnie oglądamy. Gdy jest podany, część trasy za
-   * pojazdem rysujemy na szaro (już przejechana), a część przed nim kolorem linii.
+   * pojazdem rysujemy na szaro (już przejechana), a część przed nim na zielono.
    */
   liveVehicleId?: string | null;
 }
@@ -724,7 +724,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!kursowkaOverlay) return;
 
     // Stop-chain routing is approximate; unresolved gaps are intentionally omitted.
-    const lineColor = kursowkaOverlay.color || "#0d4f3b";
+    const lineColor = kursowkaOverlay.liveVehicleId ? FUTURE_ROUTE_COLOR : kursowkaOverlay.color || "#0d4f3b";
     const casingWeight = kursowkaOverlay.course ? 9 : 8;
     const lineWeight = kursowkaOverlay.course ? 5 : 4.5;
     const lineOpacity = kursowkaOverlay.course?.approximate ? 0.72 : 0.96;
@@ -786,7 +786,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       });
     }
     // Podgląd całej linii / brygady: kropki przystanków z nazwą po najechaniu.
-    if (!kursowkaOverlay.course) {
+    if (!kursowkaOverlay.course && !kursowkaOverlay.liveVehicleId) {
       for (const stop of kursowkaOverlay.stops) {
         L.circleMarker([stop.lat, stop.lon], {
           pane: "courseStops",
@@ -808,6 +808,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     fitOverlayMap();
   }, [kursowkaOverlay]);
 
+  // Indeksy dotyczą konkretnej geometrii, nie tylko numeru pojazdu.
+  useEffect(() => {
+    routeDoneIndexRef.current.clear();
+  }, [kursowkaOverlay]);
+
   /* Postęp kursu autobusu: odcinek już przejechany rysujemy na szaro.
      Warstwa jest osobna (własny pane), więc nie rusza trasy kursu ani jej
      dopasowania do ekranu — aktualizuje się przy każdej pozycji GPS. */
@@ -820,16 +825,32 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!overlay || !vehicleId || !overlay.polylines.length) return;
     const bus = liveBuses.find((item) => item.vehicleId === vehicleId);
     if (!bus) return;
+    // Te same numery stop_sequence są używane w karcie kursu. Bez informacji
+    // z GPS nie zgadujemy, które przystanki autobus już minął.
+    const nextSequence = bus.upcomingStops[0]?.sequence;
+    for (const stop of overlay.stops) {
+      const status = liveStopProgress(stop.sequence, nextSequence);
+      const fillColor = status === "passed" ? pastRouteColor(theme === "dark")
+        : status === "upcoming" ? FUTURE_ROUTE_COLOR : "#94a3b8";
+      const label = status === "passed" ? "przejechany" : status === "upcoming" ? "przed autobusem" : "brak danych o postępie";
+      L.circleMarker([stop.lat, stop.lon], {
+        pane: "courseStops", radius: 6, weight: 2, color: "#ffffff",
+        fillColor, fillOpacity: 1, bubblingMouseEvents: false,
+      }).bindTooltip(`${escapeHtml(stop.name)} · ${label}`, {
+        direction: "top", offset: [0, -8], className: "waypoint-tooltip",
+      }).addTo(group);
+    }
     const path = overlay.polylines[0];
     const split = splitRouteAtBus(path, bus, {
       nearIndex: routeDoneIndexRef.current.get(vehicleId) ?? null,
     });
-    if (!split || split.passed.length < 2) return;
+    if (!split) return;
     routeDoneIndexRef.current.set(vehicleId, split.index);
+    if (split.passed.length < 2) return;
     // Sam kolor, bez białej obwódki: obwódka trasy kursu zostaje nienaruszona,
     // a szary odcinek dokładnie przykrywa kolor sprzed autobusu.
     L.polyline(split.passed, {
-      color: pastRouteColor(theme !== "light"),
+      color: pastRouteColor(theme === "dark"),
       weight: 5,
       opacity: 1,
       lineCap: "round",

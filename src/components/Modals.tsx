@@ -826,7 +826,7 @@ export function SettingsDialog({
             ],
             [
               "GPS autobusów Wałbrzych (MZUK, ŚKA)",
-              "Pozycje GPS, numery taborowe, kursówki i opóźnienia na żywo z zbiorkom.live. Przewoźnik wynika z numeru taborowego: MZUK 01–20 (wodorowe) i 201–204, ŚKA 3xx–5xx; ZDKiUM został zlikwidowany (1.01.2025) i nie prowadzi pojazdów. Błędne przypisanie można poprawić ręcznie na karcie autobusu (zapisywane w localStorage). Prędkość jest liczona z kolejnych pozycji GPS. Kolor pojazdu oznacza firmę: jasnozielony MZUK, fioletowy ŚKA. Pasek punktualności: minus oznacza opóźnienie (czerwony > 3 min, pomarańczowy do 3 min), plus przyspieszenie (jasnozielony do 1 min, ciemnozielony > 1 min).",
+              "Pozycje GPS, numery taborowe, kursówki i opóźnienia na żywo z zbiorkom.live. Przewoźnik wynika z numeru taborowego: MZUK 01–20 (wodorowe) i 201–204, ŚKA 3xx–5xx; ZDKiUM został zlikwidowany (1.01.2025) i nie prowadzi pojazdów. Błędne przypisanie można poprawić ręcznie na karcie autobusu (zapisywane w localStorage). Prędkość jest liczona z kolejnych pozycji GPS. Kolor pojazdu oznacza punktualność: minus oznacza opóźnienie (czerwony > 3 min, jasnoczerwony do 3 min), plus przyspieszenie (jasnozielony do 1 min, ciemnozielony > 1 min).",
             ],
             [
               "Kursówki i brygady według daty",

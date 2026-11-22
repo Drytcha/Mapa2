@@ -58,6 +58,7 @@ try {
     ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),
   });
   const page = await context.newPage();
+  const feed = { nextSequence: 2, delay: 0, location: [16.2883, 50.771] };
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -109,15 +110,15 @@ try {
                 // Autobus w połowie odcinka między przystankami 1 i 2 — dzięki
                 // temu test sprawdza też podział trasy na przejechaną i przed nami.
                 // API zbiorkom podaje `location` jako [lon, lat] (GeoJSON).
-                location: [16.2883, 50.771],
+                location: feed.location,
                 timestamp: at(9, 55),
                 bearing: 45,
-                delay: 0,
+                delay: feed.delay,
                 headsign: "Koniec",
                 upcomingStops: [
                   { sequence: 2, name: "Północ", scheduledArrival: at(10, 10), scheduledDeparture: at(10, 10) },
                   { sequence: 3, name: "Koniec", scheduledArrival: at(10, 20), scheduledDeparture: at(10, 20) },
-                ],
+                ].filter((stop) => stop.sequence >= feed.nextSequence),
               },
             ],
           },
@@ -130,10 +131,10 @@ try {
 
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".live-bus", { timeout: 25000 });
-  return { page, context, errors };
+  return { page, context, errors, feed };
   }
 
-  const { page, context, errors } = await openApp({ viewport: { width: 1200, height: 850 } });
+  const { page, context, errors, feed } = await openApp({ viewport: { width: 1200, height: 850 } });
   assert.equal(await page.locator('[data-testid="bus-run-panel"]').count(), 0, "karta zamknięta przed kliknięciem");
   assert.equal(await page.locator(".leaflet-kursowka-pane path").count(), 0, "brak trasy przed kliknięciem");
 
@@ -191,6 +192,7 @@ try {
       doneLength: done[0] ? done[0].getTotalLength() : 0,
       futureStrokes: strokeOf(".leaflet-kursowka-pane path"),
       pattern: done[0]?.getAttribute("stroke-dasharray") ?? null,
+      linePatterns: Array.from(document.querySelectorAll(".leaflet-kursowka-pane path")).map((path) => getComputedStyle(path).strokeDasharray),
       total,
     };
   });
@@ -202,6 +204,38 @@ try {
   );
   assert.ok(progress.doneLength > 0, "przejechany odcinek ma długość");
   assert.equal(progress.pattern, null, "linia jest ciągła — bez kresek i przerywania");
+  assert.ok(progress.linePatterns.every((pattern) => pattern === "none"), "przyszła trasa i obwódka nie mają kreskowania CSS");
+
+  // Kolory znacznika, trasy i kolejnych przystanków wynikają z GPS, nie z firmy ani koloru linii.
+  assert.equal(progress.futureStrokes[0], "#16803c", "trasa przed autobusem jest zielona");
+  const colors = () => page.locator(".leaflet-courseStops-pane path").evaluateAll((paths) => paths.map((p) => p.getAttribute("fill")));
+  let stopColors = await colors();
+  assert.equal(stopColors.length, 3);
+  assert.notEqual(stopColors[0], "#16803c", "pierwszy przystanek jest szary");
+  assert.deepEqual(stopColors.slice(1), ["#16803c", "#16803c"]);
+  assert.equal(await page.locator(".live-bus").evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(134, 239, 172)");
+
+  // Nieruchomy autobus, ale nowe informacje GPS: postęp musi się odświeżyć
+  // również wtedy, gdy współrzędne w ogóle się nie zmieniły.
+  feed.nextSequence = 3;
+  await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
+  await page.waitForFunction(() => {
+    const stops = document.querySelectorAll(".leaflet-courseStops-pane path");
+    return stops.length === 3 && stops[0].getAttribute("fill") === stops[1].getAttribute("fill") && stops[2].getAttribute("fill") === "#16803c";
+  }, undefined, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="trip-stop"][data-status="passed"]').length === 2);
+  assert.equal(await page.locator(".live-bus").evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(134, 239, 172)");
+  for (const [delay, expected] of [[120000, "rgb(252, 165, 165)"], [181000, "rgb(220, 38, 38)"], [-61000, "rgb(21, 128, 61)"], [-60000, "rgb(134, 239, 172)"]]) {
+    feed.delay = delay;
+    await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
+    await page.waitForFunction((color) => getComputedStyle(document.querySelector(".live-bus")).backgroundColor === color, expected, { timeout: 15000 });
+  }
+
+  const beforeMovement = await page.locator(".leaflet-routeDone-pane path").getAttribute("d");
+  feed.location = [16.292, 50.779];
+  await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
+  await page.waitForFunction((previous) => document.querySelector(".leaflet-routeDone-pane path")?.getAttribute("d") !== previous, beforeMovement, { timeout: 15000 });
+  assert.ok((await page.locator(".leaflet-routeDone-pane path").evaluate((path) => path.getTotalLength())) > progress.doneLength, "szary odcinek rośnie wraz z pozycją pojazdu");
 
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // Drugi klik w ten sam autobus zamyka kartę i chowa trasę.

@@ -2898,7 +2898,7 @@ export async function getVehicleRouteOverlay(
   title: string;
   color: string;
   polylines: [number, number][][];
-  stops: Array<{ name: string; lat: number; lon: number }>;
+  stops: Array<{ name: string; lat: number; lon: number; sequence: number }>;
 } | null> {
   const store = await seededWithShapes();
   const match = await resolveVehicleTrip(bus);
@@ -2909,10 +2909,10 @@ export async function getVehicleRouteOverlay(
   const trip = store.base.rawTripsById.get(tripId);
   if (!trip) return null;
 
-  const stops: Array<{ name: string; lat: number; lon: number }> = [];
+  const stops: Array<{ name: string; lat: number; lon: number; sequence: number }> = [];
   for (const st of store.base.rawStopTimesByTrip.get(tripId) ?? []) {
     const stop = stopPointFor(store.base, st.stopId);
-    if (stop) stops.push({ name: stop.name, lat: stop.lat, lon: stop.lon });
+    if (stop) stops.push({ name: stop.name, lat: stop.lat, lon: stop.lon, sequence: st.stopSequence });
   }
   const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
   const fromShape = Boolean(shape && shape.length >= 2);

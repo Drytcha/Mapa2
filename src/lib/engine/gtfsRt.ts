@@ -404,7 +404,28 @@ function dutySignature(vehicles: LiveBusVehicle[]): string {
 
 function resolveFleetDutiesMemo(vehicles: LiveBusVehicle[]) {
   const signature = dutySignature(vehicles);
-  if (dutyMemo && dutyMemo.signature === signature) return dutyMemo.fleet;
+  if (dutyMemo && dutyMemo.signature === signature) {
+    // Cache zawiera wyłącznie wynik przypisania, nigdy starą pozycję GPS,
+    // opóźnienie ani listę przystanków z poprzedniego odczytu.
+    const assignments = new Map(dutyMemo.fleet.vehicles.map((bus) => [bus.vehicleId, bus]));
+    return {
+      missingDates: dutyMemo.fleet.missingDates,
+      vehicles: vehicles.map((bus) => {
+        const assigned = assignments.get(bus.vehicleId);
+        if (!assigned) return bus;
+        return {
+          ...bus,
+          dutyCode: assigned.dutyCode,
+          dutyStatus: assigned.dutyStatus,
+          dutyLine: assigned.dutyLine,
+          dutySource: assigned.dutySource,
+          dutyNote: assigned.dutyNote,
+          dutyTripStartMs: assigned.dutyTripStartMs,
+          kursowka: assigned.kursowka,
+        };
+      }),
+    };
+  }
   const fleet = resolveFleetDuties(vehicles);
   // Gdy rozkład brygad na dany dzień jeszcze się wczytuje, wyniku nie
   // zapamiętujemy — następne odświeżenie ma go policzyć na kompletnym rozkładzie.
