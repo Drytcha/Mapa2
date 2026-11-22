@@ -62,12 +62,12 @@ import {
 import { isWaypointSet } from "@/lib/data";
 import { formatDistance, formatDuration, formatDurationShort } from "@/lib/geo";
 import { dedupeLines, filterLinesForRole, formatDutyCode, isSameDutyLine } from "@/lib/core/text";
-import { formatWarsawClock } from "@/lib/core/time";
 import { cn } from "@/utils/cn";
 import { OPERATOR_STYLES } from "@/lib/transit";
 import BusSearch from "./BusSearch";
 import {
   DELAY_STYLES,
+  WAITING_STYLE,
   delayTone,
   describeDelay,
   formatDelay,
@@ -85,7 +85,13 @@ import {
 
 export type { StopDisplayMode };
 import GtfsSchedule from "./GtfsSchedule";
-import { getVehicleRemainingStops } from "@/lib/engine/gtfsStore";
+import LiveBusRunPanel from "./LiveBusRunPanel";
+import { getVehicleTripStops } from "@/lib/engine/gtfsStore";
+import {
+  tripVariantLabel,
+  vehicleChipLabel,
+  waitingForDeparture,
+} from "@/lib/liveBusProgress";
 import { journeyClock, journeyDateTime } from "@/lib/schedule";
 
 export function MapRouteCard({
@@ -491,11 +497,13 @@ export function LiveBusCard({
     { key: "other", label: "Inny" },
   ];
 
-  const [fullStops, setFullStops] = useState<LiveBusVehicle["upcomingStops"]>(
-    bus.upcomingStops,
-  );
+  const [tripStops, setTripStops] = useState<Awaited<
+    ReturnType<typeof getVehicleTripStops>
+  >>({ complete: false, stops: [] });
   const [stopsLoading, setStopsLoading] = useState(false);
   const [identityHelp, setIdentityHelp] = useState(false);
+  /** myBus 3.0: dolne zakładki karty pojazdu. */
+  const [pane, setPane] = useState<"odjazdy" | "szczegoly">("odjazdy");
 
   useEffect(() => {
     setIdentityHelp(false);
@@ -505,12 +513,16 @@ export function LiveBusCard({
   const firstDep = bus.upcomingStops[0]?.scheduledDeparture ?? 0;
 
   useEffect(() => {
-    setFullStops(bus.upcomingStops);
+    // Najpierw to, co wie GPS, żeby karta nigdy nie była pusta.
+    setTripStops({
+      complete: false,
+      stops: bus.upcomingStops.map((item) => ({ ...item, passed: false })),
+    });
     let cancelled = false;
     setStopsLoading(true);
-    getVehicleRemainingStops(bus)
-      .then((stops) => {
-        if (!cancelled && stops.length > 0) setFullStops(stops);
+    getVehicleTripStops(bus)
+      .then((result) => {
+        if (!cancelled && result.stops.length > 0) setTripStops(result);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -532,6 +544,12 @@ export function LiveBusCard({
   const duty = dutyLabel(bus);
   const cleanDutyCode = duty.code ? formatDutyCode(duty.code, "/") : null;
   const sameLineDuty = isSameDutyLine(bus.routeName, cleanDutyCode);
+  const variant = tripVariantLabel(bus.routeName, tripStops.stops, bus.headsign);
+  const waiting = waitingForDeparture(tripStops.stops, {
+    delaySeconds: bus.delaySeconds,
+    isRealtime: true,
+    nowMs: bus.timestamp || Date.now(),
+  });
 
   return (
     <div className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93">
@@ -674,7 +692,91 @@ export function LiveBusCard({
         </button>
       </div>
 
+      {/* myBus 3.0: kierunek, stan pojazdu, zadanie i zakładki Odjazdy/Szczegóły */}
+      <div className="shrink-0 border-b border-line/70 px-3 pb-1 pt-1.5">
+        <p className="flex min-w-0 items-center gap-1 text-[10.5px] font-extrabold leading-tight text-ink">
+          <span className="min-w-0 truncate">
+            {bus.headsign || "Kurs techniczny"}
+          </span>
+          {variant.code && (
+            <span className="metric shrink-0 rounded bg-brand-soft px-1 text-[8px] font-extrabold text-brand-ink ring-1 ring-brand/25">
+              {variant.code}
+            </span>
+          )}
+        </p>
+        {variant.text && (
+          <p className="truncate text-[8px] leading-snug text-mute" title={variant.text}>
+            {variant.text}
+          </p>
+        )}
+        <div className="mt-1 flex flex-wrap items-center gap-1 text-[7.5px] font-bold">
+          <span
+            className="rounded-full px-1.5 py-0.5"
+            style={
+              waiting.waiting
+                ? { background: WAITING_STYLE.bg, color: WAITING_STYLE.fg }
+                : { background: style.bg, color: style.fg }
+            }
+          >
+            {waiting.waiting ? waiting.label : describeDelay(bus.delaySeconds)}
+          </span>
+          <span className="rounded-full bg-raised px-1.5 py-0.5 text-ink-soft ring-1 ring-line">
+            {vehicleChipLabel(bus.vehicleId)}
+          </span>
+          {cleanDutyCode && (
+            <span className="rounded-full bg-raised px-1.5 py-0.5 text-ink-soft ring-1 ring-line">
+              Zadanie {cleanDutyCode}
+            </span>
+          )}
+          {bus.model && (
+            <span className="truncate rounded-full bg-raised px-1.5 py-0.5 text-ink-soft ring-1 ring-line">
+              {bus.model}
+            </span>
+          )}
+        </div>
+        <div className="mt-1.5 flex items-center gap-2.5 text-[8px] font-bold">
+          <button
+            type="button"
+            aria-pressed={pane === "odjazdy"}
+            data-testid="bus-pane-odjazdy"
+            onClick={() => setPane("odjazdy")}
+            className={cn(
+              "border-b-2 pb-0.5",
+              pane === "odjazdy"
+                ? "border-brand text-brand-ink"
+                : "border-transparent text-mute",
+            )}
+          >
+            Odjazdy
+          </button>
+          <button
+            type="button"
+            aria-pressed={pane === "szczegoly"}
+            data-testid="bus-pane-szczegoly"
+            onClick={() => setPane("szczegoly")}
+            className={cn(
+              "border-b-2 pb-0.5",
+              pane === "szczegoly"
+                ? "border-brand text-brand-ink"
+                : "border-transparent text-mute",
+            )}
+          >
+            Szczegóły
+          </button>
+        </div>
+      </div>
+
       <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-3 py-2.5 text-[10px]">
+        {pane === "odjazdy" ? (
+          <LiveBusRunPanel
+            stops={tripStops.stops}
+            complete={tripStops.complete}
+            loading={stopsLoading}
+            delaySeconds={bus.delaySeconds}
+            isRealtime
+          />
+        ) : (
+        <>
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-mute">Końcowy:</span>
           <span className="truncate font-bold text-ink">
@@ -794,69 +896,11 @@ export function LiveBusCard({
           </div>
         )}
 
-        {(fullStops.length > 0 || stopsLoading) && (
-          <div className="mt-2 border-t border-line/70 pt-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[8px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                Przystanki do końcowego ({fullStops.length})
-              </span>
-              {stopsLoading && (
-                <Loader2 className="h-3 w-3 animate-spin text-mute" />
-              )}
-            </div>
-            <ul
-              className="scroll-area mt-1.5 max-h-[200px] space-y-1 overflow-y-auto pr-1"
-              aria-label="Lista wszystkich przystanków aż do końcowego"
-            >
-              {fullStops.map((st, idx) => {
-                const clock = formatWarsawClock(
-                  st.scheduledDeparture + bus.delaySeconds * 1000
-                );
-                const isNext = idx === 0;
-                const isFinal = idx === fullStops.length - 1;
-                return (
-                  <li
-                    key={`${st.sequence}-${st.name}`}
-                    className={cn(
-                      "flex items-center gap-2 rounded px-2 py-1 text-[9px]",
-                      isFinal
-                        ? "border border-brand/30 bg-brand-soft/75"
-                        : isNext
-                          ? "border border-line-strong bg-raised"
-                          : "bg-raised/70",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "metric grid h-4 min-w-[18px] shrink-0 place-items-center rounded px-1 text-[8px] font-bold",
-                        isFinal
-                          ? "bg-brand text-on-brand"
-                          : isNext
-                            ? "bg-highlight text-[#16240f]"
-                            : "bg-surface text-mute",
-                      )}
-                    >
-                      {idx + 1}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-semibold text-ink">
-                      {st.name}
-                    </span>
-                    {isFinal && (
-                      <span className="shrink-0 rounded bg-brand/15 px-1 py-0.5 text-[7px] font-extrabold uppercase tracking-wide text-brand-ink">
-                        Końcowy
-                      </span>
-                    )}
-                    <span className="metric shrink-0 font-bold text-brand-ink">
-                      {clock}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+        </>
         )}
+      </div>
 
-        <div className="mt-2.5 flex gap-1.5">
+      <div className="mt-0 flex shrink-0 gap-1.5 border-t border-line/70 px-3 pb-2.5 pt-2">
           {bus.dutyStatus === "confirmed" && bus.dutyCode && (
             <button
               type="button"
@@ -876,7 +920,6 @@ export function LiveBusCard({
           >
             <Crosshair className="h-3.5 w-3.5" />
           </button>
-        </div>
       </div>
     </div>
   );

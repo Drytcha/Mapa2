@@ -108,6 +108,7 @@ import PerfHud from "@/components/PerfHud";
 import { isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
+import { serviceDateId } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
 import { ensureGtfsSeeded, getCoursePreview } from "@/lib/engine/gtfsStore";
 import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
@@ -1897,13 +1898,19 @@ function MapPlanerWorkspace() {
     setKursowkiOpen(true);
   }, []);
 
-  const handlePreviewCourse = useCallback(async (tripId: string, dateId: string): Promise<boolean> => {
+  const handlePreviewCourse = useCallback(async (
+    tripId: string,
+    dateId: string,
+    options?: { keepBusCard?: boolean; silent?: boolean },
+  ): Promise<boolean> => {
     const epoch = overlayEpochRef.current;
     try {
       const course = await getCoursePreview(tripId, dateId);
       if (epoch !== overlayEpochRef.current) return false;
       if (!course) {
-        showToast("Ten kurs nie jest dostępny w rozkładzie na wybrany dzień.");
+        if (!options?.silent) {
+          showToast("Ten kurs nie jest dostępny w rozkładzie na wybrany dzień.");
+        }
         return false;
       }
       setKursowkaOverlay({
@@ -1915,11 +1922,14 @@ function MapPlanerWorkspace() {
       });
       setKursowkaReturnDateId(course.dateId);
       setSelectedStop(null);
-      setSelectedLiveBus(null);
+      // Karta pojazdu zostaje otwarta, gdy przebieg jest rysowany z kliknięcia autobusu.
+      if (!options?.keepBusCard) setSelectedLiveBus(null);
       setTripOpen(false);
       setTripPick(null);
       setContextMenu(null);
-      showToast(`Pokazuję przebieg kursu linii ${course.routeShort} i ${course.stops.length} przystanków.`);
+      if (!options?.silent) {
+        showToast(`Pokazuję przebieg kursu linii ${course.routeShort} i ${course.stops.length} przystanków.`);
+      }
       return true;
     } catch {
       if (epoch === overlayEpochRef.current) {
@@ -1937,7 +1947,15 @@ function MapPlanerWorkspace() {
     setKursowkiOpen(false);
     setMobileExpanded(false);
     mapRef.current?.centerOn(bus.lat, bus.lon, 16);
-  }, []);
+    // myBus 3.0: klik w autobus od razu pokazuje, jak jedzie — trasa kursu na
+    // mapie, a w karcie pełna lista przystanków. Nie zamyka karty pojazdu.
+    if (bus.tripId) {
+      void handlePreviewCourse(bus.tripId, serviceDateId(bus.tripStartMs ?? bus.timestamp), {
+        keepBusCard: true,
+        silent: true,
+      });
+    }
+  }, [handlePreviewCourse]);
 
   const handleSetOperator = useCallback(
     async (vehicleId: string, key: WalbrzychOperatorKey | null) => {

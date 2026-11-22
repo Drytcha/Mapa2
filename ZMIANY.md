@@ -392,3 +392,38 @@ wyjaśnienia oznaczeń. Nasza karta przystanku robi to samo:
 test `npm run test:board` (dołączony też do `npm run test:stops`). Domyślnie
 karta otwiera się na „Cały dzień”, żeby dotychczasowe nawigacje i testy
 przeglądarkowe działały bez zmian.
+
+## Klik w autobus: cały przebieg kursu i każdy przystanek (wzór: myBus 3.0)
+
+W myBus 3.0 kliknięcie pojazdu na ekranie „Pojazdy na żywo” pokazuje jego
+kierunek, stan („Czeka na odjazd o 10:01”, „Pojazd 1”, „Zadanie 9/01”), legendę
+punktualności i zakładki **Odjazdy / Szczegóły**, a pod nimi cały kurs. Nasza
+karta pojazdu robi teraz to samo:
+
+- **Cały kurs, nie tylko pozostałe przystanki.** Nowa `getVehicleTripStops(bus)`
+  (`src/lib/engine/gtfsStore.ts`) dopasowuje pojazd do kursu w paczce GTFS i
+  zwraca **wszystkie** przystanki od początku do końcowego z flagą „przebyty”.
+  Dopasowanie kursu wydzielono do wspólnego `resolveVehicleTrip`, więc lista
+  „do końcowego” i pełny przebieg korzystają z jednej logiki (w tym kursy po
+  północy i różne numeracje `stop_sequence`).
+- **Oś przebiegu** (`src/components/LiveBusRunPanel.tsx`): przebyte przystanki
+  wyszarzone i przekreślone, bieżący z ikoną autobusu i podpisem „tu jest”,
+  następny wyróżniony, końcowy z flagą. Obok godzina z rozkładu i **prognoza
+  GPS** w kolorze punktualności.
+- **Nagłówek karty** jak w myBus: kierunek, litera wariantu z oficjalnej legendy
+  linii (np. `s` – przez Sokołowskiego) z opisem, chipsy `Czeka na odjazd o …` /
+  `Pojazd #…` / `Zadanie 9/01` / model wozu.
+- **Zakładki „Odjazdy” (domyślnie) i „Szczegóły”** — szczegóły (dopasowanie
+  brygady, prędkość, edycja przewoźnika) zostały bez zmian, tylko schowane pod
+  drugą zakładką; przyciski „Wszystkie kursy …” i centrowanie są widoczne zawsze.
+- **Klik w autobus rysuje od razu trasę kursu na mapie** — bez zamykania karty
+  (nowe opcje `keepBusCard` / `silent` w `handlePreviewCourse`). Gdy kursu nie ma
+  w paczce, karta mówi to wprost („pokazano tylko przystanki z GPS”) i nie
+  wymyśla wcześniejszej trasy.
+- **Nowy stan punktualności „Czeka na odjazd”** (`WAITING_STYLE` w `src/lib/delay.ts`)
+  — w legendzie karty i w chipsie nagłówka.
+
+Logika jest czysta (`src/lib/liveBusProgress.ts`: `buildTripProgress`,
+`currentStopIndex`, `waitingForDeparture`, `tripVariantLabel`, `describeStopDelta`,
+`serviceDateId`), więc pokrywają ją szybkie testy `npm run test:bus`
+(`test-live-bus-progress.ts` + render `test-live-bus-card.tsx`).

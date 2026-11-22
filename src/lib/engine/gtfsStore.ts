@@ -2226,9 +2226,25 @@ export async function searchGtfsStops(
   return merged.slice(0, limit);
 }
 
-export async function getVehicleRemainingStops(
-  bus: LiveBusVehicle,
-): Promise<LiveBusVehicle["upcomingStops"]> {
+interface VehicleTripMatch {
+  tripId: string;
+  /** Początek dnia obsługi kursu (ms); obsługuje kursy po północy (>24:00). */
+  dayStartMs: number;
+  /** Przesunięcie numeracji przystanków między GPS a GTFS (0 lub 1). */
+  seqOffset: number;
+  /** Numer przystanku, na którym autobus jest teraz (lub tuż przed nim). */
+  minSeq: number;
+  stops: GtfsStopTimeRecord[];
+  liveBySeq: Map<number, LiveBusVehicle["upcomingStops"][number]>;
+}
+
+/**
+ * Dopasowuje pojazd GPS do kursu w paczce GTFS (albo po `tripId`, albo po
+ * linii + przystanku + godzinie) i zwraca **cały** kurs: przebyte przystanki,
+ * bieżący i pozostałe. Wspólne źródło dla karty „Przystanki do końcowego”
+ * i dla pełnego przebiegu kursu (jak w myBus 3.0).
+ */
+async function resolveVehicleTrip(bus: LiveBusVehicle): Promise<VehicleTripMatch | null> {
   const fallback = bus.upcomingStops ?? [];
   const store = await ensureGtfsSeeded();
 
@@ -2341,15 +2357,15 @@ export async function getVehicleRemainingStops(
     });
   }
 
-  if (!matchedTripId) return fallback;
+  if (!matchedTripId) return null;
 
-  const sts = store.base.rawStopTimesByTrip.get(matchedTripId);
-  if (!sts || !sts.length) return fallback;
+  const stops = store.base.rawStopTimesByTrip.get(matchedTripId);
+  if (!stops || !stops.length) return null;
 
   const seqOffset =
-    sts[0].stopSequence === 1 &&
+    stops[0].stopSequence === 1 &&
     firstLive &&
-    sts.some(
+    stops.some(
       (item) =>
         item.stopSequence === firstLive.sequence + 1 &&
         store.base.stopsById.get(item.stopId)?.normalizedName ===
@@ -2357,29 +2373,104 @@ export async function getVehicleRemainingStops(
     )
       ? 1
       : 0;
-  const minSeq = firstLive ? firstLive.sequence + seqOffset : sts[0].stopSequence;
-  const liveBySeq = new Map(
-    fallback.map((item) => [item.sequence + seqOffset, item] as const),
-  );
 
+  return {
+    tripId: matchedTripId,
+    dayStartMs: matchedDayStartMs,
+    seqOffset,
+    minSeq: firstLive ? firstLive.sequence + seqOffset : stops[0].stopSequence,
+    stops,
+    liveBySeq: new Map(
+      fallback.map((item) => [item.sequence + seqOffset, item] as const),
+    ),
+  };
+}
+
+function matchToRemaining(
+  match: VehicleTripMatch,
+  store: Awaited<ReturnType<typeof ensureGtfsSeeded>>,
+): LiveBusVehicle["upcomingStops"] {
   const full: LiveBusVehicle["upcomingStops"] = [];
-  for (const st of sts) {
-    if (st.stopSequence < minSeq) continue;
-    const liveItem = liveBySeq.get(st.stopSequence);
+  for (const st of match.stops) {
+    if (st.stopSequence < match.minSeq) continue;
+    const liveItem = match.liveBySeq.get(st.stopSequence);
     const stopRec = store.base.stopsById.get(st.stopId);
     full.push({
       sequence: st.stopSequence,
       name: liveItem?.name ?? stopRec?.name ?? st.stopId,
       scheduledArrival:
         liveItem?.scheduledArrival ??
-        matchedDayStartMs + st.arrivalMinutes * 60_000,
+        match.dayStartMs + st.arrivalMinutes * 60_000,
       scheduledDeparture:
         liveItem?.scheduledDeparture ??
-        matchedDayStartMs + st.departureMinutes * 60_000,
+        match.dayStartMs + st.departureMinutes * 60_000,
     });
   }
+  return full;
+}
 
+export async function getVehicleRemainingStops(
+  bus: LiveBusVehicle,
+): Promise<LiveBusVehicle["upcomingStops"]> {
+  const fallback = bus.upcomingStops ?? [];
+  const store = await ensureGtfsSeeded();
+  const match = await resolveVehicleTrip(bus);
+  if (!match) return fallback;
+  const full = matchToRemaining(match, store);
   return full.length >= fallback.length ? full : fallback;
+}
+
+export interface VehicleTripStop {
+  sequence: number;
+  name: string;
+  scheduledArrival: number;
+  scheduledDeparture: number;
+  /** Przystanek już za autobusem (na podstawie numeru przystanku z GPS). */
+  passed: boolean;
+}
+
+/**
+ * Pełny przebieg kursu autobusu — **wszystkie** przystanki od początku do
+ * końcowego, także przebyte (myBus 3.0: „jak jedzie, każdy przystanek”).
+ * Gdy kursu nie da się dopasować do paczki, zwraca `complete: false` i tylko
+ * znane przystanki z GPS — nigdy nie wymyśla wcześniejszej trasy.
+ */
+export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
+  complete: boolean;
+  stops: VehicleTripStop[];
+}> {
+  const fallback = bus.upcomingStops ?? [];
+  const store = await ensureGtfsSeeded();
+  const match = await resolveVehicleTrip(bus);
+  if (!match) {
+    return {
+      complete: false,
+      stops: fallback.map((item) => ({
+        sequence: item.sequence,
+        name: item.name,
+        scheduledArrival: item.scheduledArrival,
+        scheduledDeparture: item.scheduledDeparture,
+        passed: false,
+      })),
+    };
+  }
+  const stops: VehicleTripStop[] = [];
+  for (const st of match.stops) {
+    const liveItem = match.liveBySeq.get(st.stopSequence);
+    const stopRec = store.base.stopsById.get(st.stopId);
+    stops.push({
+      sequence: st.stopSequence,
+      name: liveItem?.name ?? stopRec?.name ?? st.stopId,
+      scheduledArrival:
+        liveItem?.scheduledArrival ??
+        match.dayStartMs + st.arrivalMinutes * 60_000,
+      scheduledDeparture:
+        liveItem?.scheduledDeparture ??
+        match.dayStartMs + st.departureMinutes * 60_000,
+      passed: st.stopSequence < match.minSeq,
+    });
+  }
+  return { complete: stops.length >= fallback.length, stops };
 }
 
 /** Zwraca uporządkowaną listę przystanków pojedynczego kursu do wczytania w Planerze tras. */

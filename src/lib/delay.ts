@@ -13,6 +13,13 @@ export const DELAY_STYLES: Record<DelayTone, DelayStyle> = {
   "early-big": { bg: "#15803d", fg: "#ffffff", label: "Przyspieszenie powyżej 1 min" },
 };
 
+/** Stan „czeka na odjazd” — autobus stoi na przystanku początkowym (myBus 3.0). */
+export const WAITING_STYLE: DelayStyle = {
+  bg: "#cbd5e1",
+  fg: "#0f172a",
+  label: "Czeka na odjazd",
+};
+
 export function delayTone(delaySeconds: number): DelayTone {
   if (delaySeconds > 180) return "late-high";
   if (delaySeconds > 0) return "late";
