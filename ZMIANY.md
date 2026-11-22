@@ -754,3 +754,23 @@ kreskowana.
   poprzedniego odświeżenia. Zmiana samego kolejnego przystanku wyzwala aktualizację.
 - Test przeglądarkowy obejmuje zmianę przystanku bez zmiany pozycji, zmianę
   wszystkich czterech kolorów autobusu, ruch granicy trasy oraz brak kreskowania.
+
+## Poprawka kolorów trasy po kliknięciu autobusu
+
+- Odcinek przejechany i przyszły są rysowane jako dwie rzeczywiste, ciągłe
+  polilinie (szara i zielona), a nie jako szara nakładka na całą zieloną trasę.
+  Zielony jest na wierzchu w miejscach, w których fragmenty kursu się pokrywają.
+  Szary ma neutralny odcień dopasowany do jasnego i ciemnego motywu.
+- Pozycja jest dopasowywana do odcinka między przystankami, o ile udało się
+  wiarygodnie przyporządkować przystanki do geometrii; pomaga to przy pętlach
+  i przejazdach tą samą ulicą w obu kierunkach. Poprawiono też wybór nitki
+  przy niewielkich wahaniach GPS i białą przerwę przy samym początku/końcu.
+- Gdy GPS jest dalej niż 250 m od odpowiedniej geometrii, granica jest
+  szacowana do ostatniego potwierdzonego przystanku i widać odpowiedni komunikat.
+  Gdy nie można ustalić postępu, trasa pozostaje neutralna i pojawia się
+  komunikat o braku danych, zamiast pozornie całej zielonej trasy.
+- Uwzględniono różnicę numeracji przystanków GPS (od 0) i GTFS (od 1).
+  Przy wyborze nowego autobusu znika stara trasa, a spóźniona odpowiedź z
+  poprzedniego wyboru nie może jej przywrócić.
+- Testy obejmują dwukolorową linię, różne systemy numeracji, przesunięty GPS,
+  brak danych, pętlę i ciągłość na krańcach oraz zmianę położenia na żywo.

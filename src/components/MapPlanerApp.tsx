@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Route as RouteIcon } from "lucide-react";
-import type { KursowkaShapeOverlay, MapHandle } from "./MapView";
+import type { KursowkaShapeOverlay, LiveRouteProgressStatus, MapHandle } from "./MapView";
 import TopBar from "./TopBar";
 import UserLocationHud from "./UserLocationHud";
 import StopFinder from "./StopFinder";
@@ -449,8 +449,9 @@ function MapPlanerWorkspace() {
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
   /** Czy widoczna trasa pochodzi z kliknięcia autobusu (wtedy znika z kartą). */
   const [busOverlay, setBusOverlay] = useState(false);
+  const [routeProgressStatus, setRouteProgressStatus] = useState<LiveRouteProgressStatus | null>(null);
   /** Który autobus poprosił o trasę — chroni przed spóźnioną odpowiedzią. */
-  const busOverlayRequestRef = useRef<string | null>(null);
+  const busOverlayRequestRef = useRef<object | null>(null);
   // Reject previews started before a profile switch, even if they finish later.
   const overlayEpochRef = useRef(0);
   const overlayEpoch = overlayEpochRef.current;
@@ -1947,8 +1948,9 @@ function MapPlanerWorkspace() {
   // Karta pojazdu zamknięta (dowolną drogą) → jej trasa też znika z mapy,
   // żeby nie zostawała „sierota” po wybraniu innego obiektu.
   useEffect(() => {
-    if (selectedLiveBus || !busOverlay) return;
+    if (selectedLiveBus) return;
     busOverlayRequestRef.current = null;
+    if (!busOverlay) return;
     setBusOverlay(false);
     setKursowkaOverlay(null);
   }, [selectedLiveBus, busOverlay]);
@@ -1963,6 +1965,10 @@ function MapPlanerWorkspace() {
     updateVisibility({ liveBuses: true });
     setSelectedStop(null);
     setSelectedLiveBus(bus);
+    // Nigdy nie zostawiaj poprzedniej trasy pod nowo wybranym pojazdem.
+    setKursowkaOverlay(null);
+    setBusOverlay(false);
+    setRouteProgressStatus(null);
     setKursowkiOpen(false);
     setMobileExpanded(false);
     mapRef.current?.centerOn(bus.lat, bus.lon, 16);
@@ -1970,10 +1976,11 @@ function MapPlanerWorkspace() {
     // mapie, a w karcie pełna lista przystanków. Kurs bierzemy z tego samego
     // dopasowania co lista przystanków i nie wymagamy przy tym aktywnej obsługi
     // w wybranym dniu — autobus jedzie tym kursem właśnie teraz.
-    busOverlayRequestRef.current = bus.vehicleId;
+    const request = {};
+    busOverlayRequestRef.current = request;
     void getVehicleRouteOverlay(bus)
       .then((overlay) => {
-        if (busOverlayRequestRef.current !== bus.vehicleId) return;
+        if (busOverlayRequestRef.current !== request) return;
         if (!overlay) {
           showToast(
             "Nie udało się narysować trasy tego kursu — nie ma go w rozkładzie. Przystanki w karcie pochodzą z GPS.",
@@ -1985,7 +1992,7 @@ function MapPlanerWorkspace() {
         setBusOverlay(true);
       })
       .catch(() => {
-        if (busOverlayRequestRef.current === bus.vehicleId) {
+        if (busOverlayRequestRef.current === request) {
           showToast("Nie udało się narysować trasy tego kursu.");
         }
       });
@@ -2340,6 +2347,7 @@ function MapPlanerWorkspace() {
               turnaroundSpots={turnaroundSpots}
               showTurnarounds={showTurnarounds}
               kursowkaOverlay={kursowkaOverlay}
+              onRouteProgressStatusChange={setRouteProgressStatus}
               bottomSheetOpen={Boolean(selectedLiveBus) && busOverlay}
               tripPlan={kursowkaOverlay ? null : tripMapPlan}
               tripOriginEditing={tripPick === "origin"}
@@ -2431,6 +2439,7 @@ function MapPlanerWorkspace() {
                 <ShapeOverlayControl
                   title={kursowkaOverlay.title}
                   progress={Boolean(kursowkaOverlay.liveVehicleId)}
+                  progressStatus={routeProgressStatus}
                   dark={theme === "dark"}
                   onClear={() => {
                     busOverlayRequestRef.current = null;
@@ -2561,7 +2570,7 @@ function MapPlanerWorkspace() {
                     <LiveBusCard
                       isPlanner={isPlanner}
                       bus={selectedLiveBus}
-                      onClose={() => setSelectedLiveBus(null)}
+                      onClose={closeLiveBus}
                       onOpenKursowka={(code) => handleOpenKursowkaFromItem("", code)}
                       onSetOperator={handleSetOperator}
                       onCenter={() =>

@@ -450,16 +450,18 @@ export function ShapeOverlayControl({
   title,
   onClear,
   progress,
+  progressStatus,
   dark,
 }: {
   title: string;
   onClear: () => void;
   /** Kurs autobusu z GPS: pokaż legendę „przejechane / przed nami”. */
   progress?: boolean;
+  progressStatus?: "gps" | "stops" | "unknown" | null;
   dark?: boolean;
 }) {
   return (
-    <div className="pointer-events-auto flex max-w-full items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 py-1.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
+    <div className="pointer-events-auto flex max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-brand/40 bg-brand-soft px-2.5 py-1.5 text-[8.5px] font-extrabold text-brand-ink shadow-md">
       <BusFront className="h-3 w-3 shrink-0" />
       <span className="min-w-0 break-words">{title}</span>
       {progress && (
@@ -476,6 +478,16 @@ export function ShapeOverlayControl({
             title="Odcinek przed autobusem"
           />
           <span>przed nami</span>
+        </span>
+      )}
+      {progress && progressStatus === "stops" && (
+        <span className="text-[8px] font-bold text-mute" data-testid="route-progress-status">
+          Szacunkowo do ostatniego przystanku (GPS poza trasą)
+        </span>
+      )}
+      {progress && progressStatus === "unknown" && (
+        <span className="text-[8px] font-bold text-mute" data-testid="route-progress-status">
+          Brak danych o postępie trasy
         </span>
       )}
       <button

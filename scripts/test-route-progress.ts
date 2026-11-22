@@ -5,7 +5,7 @@
 // inny kolor niż ta, która ma być wykonana w przyszłości”.
 import assert from "node:assert/strict";
 
-const { splitRouteAtBus, pastRouteColor, PAST_ROUTE_COLOR, FUTURE_ROUTE_COLOR, liveStopProgress } = await import(
+const { splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange, pastRouteColor, PAST_ROUTE_COLOR, FUTURE_ROUTE_COLOR, liveStopProgress } = await import(
   "../src/lib/routeProgress"
 );
 
@@ -58,13 +58,13 @@ const lengthMeters = (path: Array<[number, number]>) => {
   const atStart = splitRouteAtBus(path, bus(2), {});
   assert.ok(atStart, "start kursu daje podział z pustą częścią przejechaną");
   assert.equal(atStart!.passed.length, 0, "na starcie nic nie jest jeszcze przejechane");
-  assert.ok(lengthMeters(atStart!.remaining) > 990, "cała trasa jest przed autobusem");
+  assert.deepEqual(atStart!.remaining, path, "na starcie kolor obejmuje całą geometrię bez białej przerwy");
 
   // Koniec kursu: wszystko już przejechane — trasa w całości szara.
   const atEnd = splitRouteAtBus(path, bus(998), {});
   assert.ok(atEnd, "koniec kursu daje podział z pustą częścią przed nami");
   assert.equal(atEnd!.remaining.length, 0, "na końcu nic nie zostało przed autobusem");
-  assert.ok(lengthMeters(atEnd!.passed) > 990, "cała trasa jest już za autobusem");
+  assert.deepEqual(atEnd!.passed, path, "na końcu kolor obejmuje całą geometrię bez białej przerwy");
 }
 
 // ── 3. Trasa „tam i z powrotem”: ciągłość granicy, bez skoku na drugą nitkę ──
@@ -82,6 +82,30 @@ const lengthMeters = (path: Array<[number, number]>) => {
   assert.ok(back!.passed.length > forward!.passed.length, "przejechany odcinek rośnie, nie maleje");
 }
 
+// Pętla: przy pierwszym kliknięciu kolejny przystanek wyznacza nitkę powrotną.
+{
+  const path = [...line(0, 1000, 100), ...line(900, 0, 100)];
+  const stops = [0, 1000, 0].map((meters, index) => ({ ...bus(meters), sequence: index + 1 }));
+  const anchors = routeStopAnchors(path, stops);
+  assert.ok(anchors);
+  const range = stopSegmentRange(stops, anchors, 3);
+  assert.ok(range);
+  const firstRead = splitRouteAtBus(path, bus(600), range!);
+  assert.ok(firstRead && firstRead.index >= 10, "GPS wybrany na nitce powrotnej od pierwszego kliknięcia");
+  assert.ok(lengthMeters(firstRead!.passed) > 1300, "większość trasy już przejechana");
+}
+
+// Szum GPS: przy podobnej odległości zachowujemy poprzednią nitkę nawet
+// wtedy, gdy druga geometria jest minimalnie bliżej.
+{
+  const outbound = line(0, 1000, 100);
+  const inbound = line(1000, 0, 100).map(([lat, lon]): [number, number] => [lat + 5 / 111320, lon]);
+  const path = [...outbound, ...inbound];
+  const jitteredBus = { ...bus(600), lat: LAT + 4 / 111320 };
+  const split = splitRouteAtBus(path, jitteredBus, { nearIndex: 6 });
+  assert.ok(split && split.index < outbound.length, "bliższy o kilka metrów powrót nie przeskakuje granicy");
+}
+
 // ── 4. Kolor odcinka przejechanego jest inny i neutralny ────────────────────
 {
   assert.notEqual(pastRouteColor(false), pastRouteColor(true), "inny odcień na jasnych i ciemnych kafelkach");
@@ -93,6 +117,19 @@ const lengthMeters = (path: Array<[number, number]>) => {
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
     assert.ok(Math.max(r, g, b) - Math.min(r, g, b) <= 24, `szary odcień przejechanej trasy (${color})`);
   }
+}
+
+// GPS poza trasą: szacujemy tylko do ostatniego potwierdzonego przystanku.
+{
+  const path = line(0, 1000, 50);
+  const stops = [0, 300, 800, 1000].map((meters, index) => ({ ...bus(meters), sequence: index + 1 }));
+  const estimated = splitRouteAtLastPassedStop(path, stops, 3);
+  assert.ok(estimated);
+  assert.ok(Math.abs(lengthMeters(estimated.passed) - 300) < 2);
+  assert.ok(Math.abs(lengthMeters(estimated.remaining) - 700) < 2);
+  assert.equal(splitRouteAtLastPassedStop(path, stops, undefined), null, "bez następnego przystanku brak zgadywania");
+  assert.equal(splitRouteAtLastPassedStop(path, stops, 99), null, "nieznany następny przystanek nie wyznacza postępu");
+  assert.equal(splitRouteAtLastPassedStop(path, stops, 1)?.passed.length, 0);
 }
 
 // Postęp przystanków pochodzi z numeru kolejnego przystanku GPS, nie z czasu zegara.

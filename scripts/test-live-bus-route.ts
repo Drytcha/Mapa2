@@ -115,6 +115,13 @@ assert.ok(overlay, "bez trasy klik w autobus nie pokazuje nic na mapie");
 assert.match(overlay.title, /Trasa linii 9/);
 assert.equal(overlay.stops.length, 3);
 assert.deepEqual(overlay.stops.map((stop) => stop.sequence), [1, 2, 3]);
+assert.equal(overlay.liveSequenceOffset, 0);
+const zeroBased = { ...bus, upcomingStops: bus.upcomingStops.map((stop) => ({ ...stop, sequence: stop.sequence - 1 })) };
+const shiftedOverlay = await getVehicleRouteOverlay(zeroBased);
+assert.ok(shiftedOverlay);
+assert.equal(shiftedOverlay.liveSequenceOffset, 1, "numeracja GPS od zera jest przesunięta względem GTFS");
+const shiftedRun = await getVehicleTripStops(zeroBased);
+assert.deepEqual(shiftedRun.stops.map((stop) => stop.passed), [true, false, false]);
 assert.ok(overlay.polylines.length > 0, "trasa musi mieć co najmniej jedną polilinię");
 assert.ok(overlay.polylines.some((line) => line.length >= 2), "polilinia musi mieć ≥ 2 punkty");
 assert.ok(

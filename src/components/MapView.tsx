@@ -8,7 +8,7 @@ import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
-import { FUTURE_ROUTE_COLOR, liveStopProgress, pastRouteColor, splitRouteAtBus } from "@/lib/routeProgress";
+import { FUTURE_ROUTE_COLOR, liveStopProgress, pastRouteColor, splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange } from "@/lib/routeProgress";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
 import {
   routeArrowIconHtml,
@@ -67,7 +67,11 @@ export interface KursowkaShapeOverlay {
    * pojazdem rysujemy na szaro (już przejechana), a część przed nim na zielono.
    */
   liveVehicleId?: string | null;
+  /** Różnica numeracji GPS i rozkładu dla wybranego kursu. */
+  liveSequenceOffset?: number;
 }
+
+export type LiveRouteProgressStatus = "gps" | "stops" | "unknown";
 
 export interface TripMapPoint {
   lat: number;
@@ -126,6 +130,7 @@ interface MapViewProps {
   turnaroundSpots?: TurnaroundSpot[];
   showTurnarounds?: boolean;
   kursowkaOverlay?: KursowkaShapeOverlay | null;
+  onRouteProgressStatusChange?: (status: LiveRouteProgressStatus | null) => void;
   /** Na telefonie karta autobusu zajmuje dół ekranu — dopasowanie trasy musi to uwzględnić. */
   bottomSheetOpen?: boolean;
   tripPlan?: TripMapPlan | null;
@@ -220,6 +225,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     turnaroundSpots = [],
     showTurnarounds = true,
     kursowkaOverlay = null,
+    onRouteProgressStatusChange,
     bottomSheetOpen = false,
     tripPlan = null,
     tripOriginEditing = false,
@@ -242,6 +248,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   },
   ref
 ) {
+  const stopAnchors = useMemo(() => {
+    if (!kursowkaOverlay?.liveVehicleId || !kursowkaOverlay.polylines[0]) return null;
+    return routeStopAnchors(kursowkaOverlay.polylines[0], kursowkaOverlay.stops);
+  }, [kursowkaOverlay]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileRef = useRef<L.TileLayer[]>([]);
@@ -747,7 +757,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         interactive: false,
       }).addTo(group);
     }
-    for (const { path, opacity } of strokes) {
+    for (const { path, opacity } of kursowkaOverlay.liveVehicleId ? [] : strokes) {
       L.polyline(path, {
         color: lineColor,
         weight: lineWeight,
@@ -813,23 +823,23 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     routeDoneIndexRef.current.clear();
   }, [kursowkaOverlay]);
 
-  /* Postęp kursu autobusu: odcinek już przejechany rysujemy na szaro.
-     Warstwa jest osobna (własny pane), więc nie rusza trasy kursu ani jej
-     dopasowania do ekranu — aktualizuje się przy każdej pozycji GPS. */
+  /* Osobne odcinki na jednym pane: zielony rysowany po szarym, dzięki czemu
+     przejechany fragment nie zakrywa przyszłej trasy na wspólnej ulicy. */
   useEffect(() => {
     const group = routeDoneGroupRef.current;
     if (!group) return;
     group.clearLayers();
     const overlay = kursowkaOverlay;
     const vehicleId = overlay?.liveVehicleId;
-    if (!overlay || !vehicleId || !overlay.polylines.length) return;
+    if (!overlay || !vehicleId || !overlay.polylines.length) {
+      onRouteProgressStatusChange?.(null);
+      return;
+    }
     const bus = liveBuses.find((item) => item.vehicleId === vehicleId);
-    if (!bus) return;
-    // Te same numery stop_sequence są używane w karcie kursu. Bez informacji
-    // z GPS nie zgadujemy, które przystanki autobus już minął.
-    const nextSequence = bus.upcomingStops[0]?.sequence;
+    const nextSequence = bus?.upcomingStops[0]?.sequence;
+    const adjustedSequence = nextSequence == null ? undefined : nextSequence + (overlay.liveSequenceOffset ?? 0);
     for (const stop of overlay.stops) {
-      const status = liveStopProgress(stop.sequence, nextSequence);
+      const status = liveStopProgress(stop.sequence, adjustedSequence);
       const fillColor = status === "passed" ? pastRouteColor(theme === "dark")
         : status === "upcoming" ? FUTURE_ROUTE_COLOR : "#94a3b8";
       const label = status === "passed" ? "przejechany" : status === "upcoming" ? "przed autobusem" : "brak danych o postępie";
@@ -840,25 +850,35 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         direction: "top", offset: [0, -8], className: "waypoint-tooltip",
       }).addTo(group);
     }
+
     const path = overlay.polylines[0];
-    const split = splitRouteAtBus(path, bus, {
-      nearIndex: routeDoneIndexRef.current.get(vehicleId) ?? null,
+    const range = stopSegmentRange(overlay.stops, stopAnchors, adjustedSequence);
+    const options = { nearIndex: routeDoneIndexRef.current.get(vehicleId) ?? null, ...(range ?? {}) };
+    const gpsSplit = bus ? splitRouteAtBus(path, bus, options) : null;
+    const stopSplit = gpsSplit ? null : splitRouteAtLastPassedStop(path, overlay.stops, adjustedSequence, {
+      nearIndex: range?.minIndex ?? options.nearIndex,
     });
-    if (!split) return;
-    routeDoneIndexRef.current.set(vehicleId, split.index);
-    if (split.passed.length < 2) return;
-    // Sam kolor, bez białej obwódki: obwódka trasy kursu zostaje nienaruszona,
-    // a szary odcinek dokładnie przykrywa kolor sprzed autobusu.
-    L.polyline(split.passed, {
-      color: pastRouteColor(theme === "dark"),
-      weight: 5,
-      opacity: 1,
-      lineCap: "round",
-      lineJoin: "round",
-      pane: "routeDone",
-      interactive: false,
-    }).addTo(group);
-  }, [kursowkaOverlay, liveBuses, theme]);
+    const split = gpsSplit ?? stopSplit;
+    onRouteProgressStatusChange?.(gpsSplit ? "gps" : stopSplit ? "stops" : "unknown");
+    if (gpsSplit) routeDoneIndexRef.current.set(vehicleId, gpsSplit.index);
+
+    const draw = (points: [number, number][], color: string) => {
+      if (points.length < 2) return;
+      L.polyline(points, {
+        color, weight: 5, opacity: 1, lineCap: "round", lineJoin: "round",
+        pane: "routeDone", interactive: false,
+      }).addTo(group);
+    };
+    if (split) {
+      draw(split.passed, pastRouteColor(theme === "dark"));
+      draw(split.remaining, FUTURE_ROUTE_COLOR);
+    } else {
+      // Bez wiarygodnego podziału nie oznaczamy całej trasy jako przyszłej.
+      draw(path, "#94a3b8");
+    }
+    // Dodatkowych niepołączonych fragmentów nie da się pewnie przyporządkować.
+    for (const extra of overlay.polylines.slice(1)) draw(extra, "#94a3b8");
+  }, [kursowkaOverlay, liveBuses, theme, onRouteProgressStatusChange, stopAnchors]);
 
   /* Planer podróży pasażera: start, odcinki piesze/autobusowe, przesiadki i cel */
   useEffect(() => {
