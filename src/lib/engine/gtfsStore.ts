@@ -1611,6 +1611,91 @@ export function connectEndsToStops(
   return out;
 }
 
+function nearestVertexIndex(
+  path: [number, number][],
+  target: { lat: number; lon: number },
+): { index: number; meters: number } {
+  let index = -1;
+  let meters = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < path.length; i += 1) {
+    const d = distanceCoords(target.lat, target.lon, path[i][0], path[i][1]);
+    if (d < meters) {
+      meters = d;
+      index = i;
+    }
+  }
+  return { index, meters };
+}
+
+function pathLengthMeters(path: [number, number][], from = 0, to = path.length - 1): number {
+  let sum = 0;
+  for (let i = from; i < to; i += 1) {
+    sum += distanceCoords(path[i][0], path[i][1], path[i + 1][0], path[i + 1][1]);
+  }
+  return sum;
+}
+
+/**
+ * Przycina kształt do łańcucha przystanków kursu.
+ *
+ * `shapes.txt` bywa wspólny dla kilku wariantów linii: kształt linii 11 sięga
+ * dalej niż przystanek końcowy kursu (np. do wcześniejszego końca trasy), więc
+ * rysowana linia „jechała” poza faktyczną pętlę. Tu obcinamy ogon (i początek)
+ * kształtu, gdy poza skrajnym przystankiem kursu zostaje więcej niż
+ * `maxOvershootMeters` trasy, a sam przystanek leży przy kształcie (≤ `maxSpurMeters`).
+ * Pętla na końcu trasy (kilkadziesiąt metrów) zostaje nietknięta, podobnie jak
+ * kształt, który kończy się *przed* przystankiem — ten dociąga `connectEndsToStops`.
+ */
+export function trimShapeToStops(
+  shape: [number, number][],
+  first: { lat: number; lon: number } | null,
+  last: { lat: number; lon: number } | null,
+  maxSpurMeters = 400,
+  maxOvershootMeters = 120,
+): [number, number][] {
+  if (shape.length < 3) return shape;
+  const total = pathLengthMeters(shape);
+  if (!(total > 0)) return shape;
+  let points: [number, number][] = shape.map((point) => [point[0], point[1]]);
+
+  if (last) {
+    const near = nearestVertexIndex(points, last);
+    if (near.index > 0 && near.index < points.length - 1 && near.meters <= maxSpurMeters) {
+      const tail = pathLengthMeters(points, near.index);
+      const kept = pathLengthMeters(points, 0, near.index);
+      // Zostawiamy sensowną większość kształtu — inaczej przy pętli startującej
+      // blisko końca obcięlibyśmy całą trasę.
+      if (tail > maxOvershootMeters && kept >= total * 0.25) points = points.slice(0, near.index + 1);
+    }
+  }
+
+  if (first) {
+    const near = nearestVertexIndex(points, first);
+    if (near.index > 0 && near.index < points.length - 1 && near.meters <= maxSpurMeters) {
+      const head = pathLengthMeters(points, 0, near.index);
+      const kept = pathLengthMeters(points, near.index);
+      if (head > maxOvershootMeters && kept >= total * 0.25) points = points.slice(near.index);
+    }
+  }
+
+  return points;
+}
+
+/**
+ * Kształt gotowy do rysowania: przycięty do przystanków kursu i dociągnięty do
+ * pierwszego/ostatniego przystanku. Wszystkie widoki trasy (karta autobusu,
+ * kursówka, katalog linii, kurs w planerze) muszą rysować przez tę funkcję,
+ * żeby linia nigdy nie wybiegała poza swój przystanek końcowy.
+ */
+export function shapeForTripStops(
+  shape: [number, number][],
+  first: { lat: number; lon: number } | null,
+  last: { lat: number; lon: number } | null,
+  maxSpurMeters = 400,
+): [number, number][] {
+  return connectEndsToStops(trimShapeToStops(shape, first, last, maxSpurMeters), first, last, maxSpurMeters);
+}
+
 /** Store z gotowymi kształtami tras — dla funkcji, które rysują geometrię. */
 async function seededWithShapes(): Promise<GtfsMemoryStore> {
   const store = await ensureGtfsSeeded();
@@ -2260,8 +2345,11 @@ export async function getStopDepartures(options: {
         );
       }
 
+      // Kierunek odjazdu = **ostatni przystanek kursu z rozkładu**. `trip_headsign`
+      // z paczki bywa nieaktualny (linia 11: „Nowy Julianów”, choć kurs kończy na
+      // pętli Strzegomska – Kozice), a to on trafiał na tablicę odjazdów.
       const finalStop =
-        row.headsign || row.lastStopName || route?.longName || "Końcowy";
+        row.lastStopName || row.headsign || route?.longName || "Końcowy";
       const legend = tripLegend(store.base, row.rawTripId, routeShort, finalStop, row.headsign);
 
       results.push({
@@ -2511,7 +2599,19 @@ export async function getLineRouteGeometry(
     cache.set(wanted, null);
     return null;
   }
-  const trips = base.rawTrips.filter((trip) => trip.routeId === route.id);
+  const allTrips = base.rawTrips.filter((trip) => trip.routeId === route.id);
+  // Paczka zawiera kilka okresów rozkładowych. Geometria linii ma pokazywać
+  // trasę z aktualnego rozkładu, a nie sumę kształtów z całej paczki — inaczej
+  // linia jechała do przystanku, którego już nie obsługuje (linia 11 → Julianów).
+  const today = Number(DateTime.now().setZone(ZONE).toFormat("yyyyLLdd"));
+  const refDateKey = [...base.serviceIdsByDate.keys()].sort(
+    (a, b) => Math.abs(a - today) - Math.abs(b - today) || a - b,
+  )[0];
+  const refServices = refDateKey === undefined ? undefined : base.serviceIdsByDate.get(refDateKey);
+  const activeTrips = refServices?.size
+    ? allTrips.filter((trip) => refServices.has(trip.serviceId))
+    : [];
+  const trips = activeTrips.length ? activeTrips : allTrips;
   const shapeIds = [
     ...new Set(
       trips
@@ -2819,7 +2919,7 @@ export async function getVehicleRouteOverlay(
   // Kształt jest geometrią oficjalną: rysujemy go w całości i dociągamy do
   // pierwszego/ostatniego przystanku kursu (pętla bywa dalej niż koniec kształtu).
   const path: [number, number][] = fromShape
-    ? connectEndsToStops(shape as [number, number][], stops[0] ?? null, stops[stops.length - 1] ?? null)
+    ? shapeForTripStops(shape as [number, number][], stops[0] ?? null, stops[stops.length - 1] ?? null)
     : stops.map((stop): [number, number] => [stop.lat, stop.lon]);
   if (path.length < 2) return null;
 
@@ -2845,6 +2945,27 @@ export async function getVehicleRemainingStops(
   return full.length >= fallback.length ? full : fallback;
 }
 
+/**
+ * Kierunek (ostatni przystanek z rozkładu) dla wielu autobusów naraz — używane
+ * przez podpowiedzi na mapie. Tablica kierunkowa GPS bywa nieaktualna, więc
+ * każdy widok pokazuje kierunek z rozkładu, gdy kurs da się dopasować.
+ */
+export async function getVehicleDestinations(
+  buses: LiveBusVehicle[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!buses.length) return out;
+  const store = await ensureGtfsSeeded();
+  for (const bus of buses) {
+    const match = await resolveVehicleTrip(bus);
+    const stops = match?.stops;
+    if (!stops?.length) continue;
+    const last = stopPointFor(store.base, stops[stops.length - 1].stopId);
+    if (last?.name) out.set(bus.vehicleId, last.name);
+  }
+  return out;
+}
+
 export interface VehicleTripStop {
   sequence: number;
   name: string;
@@ -2863,6 +2984,8 @@ export interface VehicleTripStop {
 export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
   complete: boolean;
   stops: VehicleTripStop[];
+  /** Ostatni przystanek kursu z rozkładu (kierunek pewniejszy niż tablica GPS). */
+  destination: string | null;
 }> {
   const fallback = bus.upcomingStops ?? [];
   const store = await seededWithShapes();
@@ -2877,6 +3000,8 @@ export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
         scheduledDeparture: item.scheduledDeparture,
         passed: false,
       })),
+      // Kurs nierozpoznany w rozkładzie: zostaje to, co podaje GPS.
+      destination: fallback.length ? fallback[fallback.length - 1].name : null,
     };
   }
   const stops: VehicleTripStop[] = [];
@@ -2896,7 +3021,11 @@ export async function getVehicleTripStops(bus: LiveBusVehicle): Promise<{
       passed: st.stopSequence < match.minSeq,
     });
   }
-  return { complete: stops.length >= fallback.length, stops };
+  // Kierunek bierzemy z rozkładu (ostatni przystanek kursu), a nie z tablicy
+  // kierunkowej GPS: ta potrafi pokazywać nieaktualny kierunek (np. linię 11
+  // „do Nowego Julianowa”, choć kurs kończy na pętli Kozice).
+  const destination = stops.length ? stops[stops.length - 1].name : null;
+  return { complete: stops.length >= fallback.length, stops, destination };
 }
 
 /** Zwraca uporządkowaną listę przystanków pojedynczego kursu do wczytania w Planerze tras. */
@@ -2949,7 +3078,8 @@ export async function getBrigadeShapeOverlay(
         const firstPoint = sts[0] ? stopPointFor(store.base, sts[0].stopId) : null;
         const lastPoint = sts.length ? stopPointFor(store.base, sts[sts.length - 1].stopId) : null;
         polylines.push({
-          path: connectEndsToStops(pts, firstPoint, lastPoint),
+          // Ten sam kurs = ten sam przystanek końcowy; kształt nie może biec dalej.
+          path: shapeForTripStops(pts, firstPoint, lastPoint),
           stopChain: false,
         });
       }
@@ -3071,7 +3201,7 @@ export async function getCoursePreview(
   // (np. pętla Kozice leży ~360 m za końcem kształtu linii 11).
   const path: [number, number][] = approximate
     ? stops.map((stop) => [stop.lat, stop.lon])
-    : connectEndsToStops(
+    : shapeForTripStops(
         shape as [number, number][],
         stops[0] ?? null,
         stops[stops.length - 1] ?? null,
@@ -3098,7 +3228,9 @@ export async function getCoursePreview(
     dateId,
     routeShort: route?.shortName ?? trip.routeShort,
     routeLong: route?.longName ?? trip.routeShort,
-    headsign: trip.headsign || stops[stops.length - 1].name,
+    // Kurs kończy się na ostatnim przystanku z rozkładu — `trip_headsign`
+    // z paczki bywa nieaktualny (linia 11: „Nowy Julianów” zamiast Kozic).
+    headsign: stops[stops.length - 1].name || trip.headsign,
     dutyCode: trip.kursowkaCode,
     operatorKey,
     operatorName: OPERATOR_NAMES[operatorKey],

@@ -366,7 +366,8 @@ function buildTimetable(
     pattern.trips.push({
       tripId: trip.rawTripId,
       runKey: `${trip.rawTripId}@${offsetSec}`,
-      headsign: trip.headsign || trip.lastStopName,
+      // Kierunek = ostatni przystanek kursu (trip_headsign bywa nieaktualny).
+      headsign: trip.lastStopName || trip.headsign,
       shapeId: trip.shapeId,
       arr,
       dep,

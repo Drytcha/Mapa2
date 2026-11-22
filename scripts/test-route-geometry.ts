@@ -8,12 +8,24 @@
 //  2. „linia 11 kończy na pętli Kozice, a nie ~300 m od niej” — ostatni wpis
 //     `stop_times` bywa węzłem (`location_type=1`), który był po cichu pomijany,
 //     a kształt kończył się przed pętlą.
+//  3. „linia 11 pokazuje, że leci aż do Nowego Julianowa, a leci tylko na
+//     Strzegomska – Kozice” — `trip_headsign` i wspólny `shape_id` z paczki
+//     potrafią pamiętać dawny koniec trasy, a katalog mieszał okresy rozkładowe.
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
+
+// Stała „dzisiaj” — katalog linii wybiera dzień odniesienia, a test musi być
+// powtarzalny niezależnie od dnia uruchomienia.
+const FIXED_NOW = Date.parse("2026-11-20T09:00:00+01:00");
+const realNow = Date.now;
+Date.now = () => FIXED_NOW;
 
 const loop = { lat: 50.77238, lon: 16.32741, name: "Strzegomska - Kozice" };
 const beforeLoop = { lat: 50.76983, lon: 16.32433, name: "Strzegomska - na żądanie" };
 // ~250 m prostego odcinka (rzadkie próbkowanie drogi) w środku kształtu linii 7.
+// Dawny koniec trasy (nieobsługiwany przez linię 11) — ~2,5 km za pętlą Kozice.
+const julianow = { lat: 50.795, lon: 16.33, name: "Nowy Julianów" };
+const julianowFar = { lat: 50.7975, lon: 16.3315 };
 const sparseA = { lat: 50.76697, lon: 16.28661 };
 const sparseB = { lat: 50.76697, lon: 16.28958 };
 const sparseC = { lat: 50.7692, lon: 16.2921 };
@@ -33,6 +45,8 @@ const files: Record<string, string> = {
     `s1,Piłsudskiego - Plac Tuwima,${beforeLoop.lat},${beforeLoop.lon},0\n` +
     `s2,${beforeLoop.name},${beforeLoop.lat},${beforeLoop.lon},0\n` +
     `st-loop,${loop.name},${loop.lat},${loop.lon},1\n` +
+    `s-jul,${julianow.name},${julianow.lat},${julianow.lon},0\n` +
+    `s-loop,${loop.name},${loop.lat},${loop.lon},0\n` +
     "s7a,Podzamcze,50.76697,16.28661,0\n" +
     "s7b,Północ,50.7692,16.2921,0\n" +
     "s9a,Sobięcin,50.76000,16.25000,0\n" +
@@ -44,20 +58,38 @@ const files: Record<string, string> = {
     "s5d,Koniec,50.77000,16.31000,0\n" +
     "s6a,A,50.76000,16.31000,0\n" +
     "s6d,D,50.76300,16.31300,0\n",
-  "calendar_dates.txt": "service_id,date,exception_type\ndaily,20261120,1\ndaily,20261121,1\n",
+  // `2026_RS` = bieżący okres rozkładowy, `old_RS` = wygasły (dawna trasa linii 11).
+  "calendar_dates.txt":
+    "service_id,date,exception_type\n" +
+    "2026_RS,20261120,1\n" +
+    "2026_RS,20261121,1\n" +
+    "old_RS,20260102,1\n",
   "trips.txt":
     "route_id,service_id,trip_id,trip_headsign,block_id,shape_id,direction_id\n" +
-    "r11,daily,t11,Jedlina-Zdrój,11/01,sh11,0\n" +
-    "r7,daily,t7,Podzamcze,7/01,sh7,0\n" +
-    "r9,daily,t9,Sobięcin,9/01,,0\n" +
-    "r5,daily,t5,Głuszyca,5/01,sh5,0\n" +
-    "r6,daily,t6,Książ,6/01,sh6,0\n",
+    "r11,2026_RS,t11,Kozice,11/01,sh11,0\n" +
+    // Bieżący kurs z nieaktualną tablicą kierunkową („Nowy Julianów”) i kształtem
+    // współdzielonym z dawnym wariantem — trasa nie może biec dalej niż Kozice.
+    "r11,2026_RS,t11b,Nowy Julianów,11/02,sh11b,0\n" +
+    // Kurs z wygasłego okresu rozkładowego: jedzie do Julinowa i nie może się
+    // pojawić ani w katalogu linii, ani na mapie.
+    "r11,old_RS,t11old,Nowy Julianów,11/09,sh11old,0\n" +
+    "r7,2026_RS,t7,Podzamcze,7/01,sh7,0\n" +
+    "r9,2026_RS,t9,Sobięcin,9/01,,0\n" +
+    "r5,2026_RS,t5,Głuszyca,5/01,sh5,0\n" +
+    "r6,2026_RS,t6,Książ,6/01,sh6,0\n",
   // stop_times linii 11 kończą się węzłem (pętla) — tak jak w prawdziwej paczce.
   "stop_times.txt":
     "trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\n" +
     "t11,10:00:00,10:00:00,s1,1,0,0\n" +
     "t11,10:05:00,10:05:00,s2,2,0,0\n" +
     "t11,10:09:00,10:09:00,st-loop,3,1,0\n" +
+    "t11b,10:30:00,10:30:00,s1,1,0,0\n" +
+    "t11b,10:35:00,10:35:00,s2,2,0,0\n" +
+    "t11b,10:39:00,10:39:00,s-loop,3,1,0\n" +
+    "t11old,08:00:00,08:00:00,s1,1,0,0\n" +
+    "t11old,08:10:00,08:10:00,s2,2,0,0\n" +
+    "t11old,08:20:00,08:20:00,s-loop,3,0,0\n" +
+    "t11old,08:30:00,08:30:00,s-jul,4,0,0\n" +
     "t7,11:00:00,11:00:00,s7a,1,0,0\n" +
     "t7,11:06:00,11:06:00,s7b,2,0,0\n" +
     "t9,12:00:00,12:00:00,s9a,1,0,0\n" +
@@ -74,6 +106,18 @@ const files: Record<string, string> = {
     "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
     "sh11,50.76500,16.32000,1\n" +
     `sh11,${beforeLoop.lat},${beforeLoop.lon},2\n` +
+    // Wspólny kształt z dawnym wariantem: po pętli Kozice leci jeszcze 2,5 km
+    // do „Nowego Julianowa”. Kurs kończy się na pętli, więc ogon musi zostać ucięty.
+    "sh11b,50.76500,16.32000,1\n" +
+    `sh11b,${beforeLoop.lat},${beforeLoop.lon},2\n` +
+    `sh11b,${loop.lat},${loop.lon},3\n` +
+    `sh11b,${julianow.lat},${julianow.lon},4\n` +
+    `sh11b,${julianowFar.lat},${julianowFar.lon},5\n` +
+    // Kształt wygasłego kursu — do Julinowa, bez powrotu.
+    "sh11old,50.76500,16.32000,1\n" +
+    `sh11old,${beforeLoop.lat},${beforeLoop.lon},2\n` +
+    `sh11old,${loop.lat},${loop.lon},3\n` +
+    `sh11old,${julianow.lat},${julianow.lon},4\n` +
     `sh7,${sparseA.lat},${sparseA.lon},1\n` +
     `sh7,${sparseB.lat},${sparseB.lon},2\n` +
     `sh7,${sparseC.lat},${sparseC.lon},3\n` +
@@ -138,10 +182,12 @@ const realFetch = globalThis.fetch;
 
 const {
   getCoursePreview,
+  getStopDepartures,
   getVehicleRouteOverlay,
   syncWalbrzychGtfs,
   ensureGtfsSeeded,
 } = await import("../src/lib/engine/gtfsStore");
+const { getLineCatalogue } = await import("../src/lib/engine/lineRoutes");
 
 await syncWalbrzychGtfs();
 await ensureGtfsSeeded();
@@ -263,7 +309,97 @@ const closeTo = (a: [number, number], b: { lat: number; lon: number }, meters: n
   });
 }
 
+// ── 7. Linia 11: wspólny kształt nie może ciągnąć kursu do Nowego Julianowa ──
+{
+  const course = await getCoursePreview("t11b", "20261120");
+  assert.ok(course, "kurs linii 11 z bieżącego okresu musi istnieć");
+  assert.equal(course.stops[course.stops.length - 1].name, loop.name, "kurs kończy na pętli Kozice");
+  assert.equal(
+    course.headsign,
+    loop.name,
+    "kierunek kursu bierzemy z rozkładu, a nie z nieaktualnego trip_headsign („Nowy Julianów”)",
+  );
+  for (const line of course.polylines) {
+    assert.ok(
+      line.every((point) => !closeTo(point, julianow, 400)),
+      "rysowana trasa nie może sięgać do Nowego Julianowa",
+    );
+    assert.ok(closeTo(line[line.length - 1], loop, 5), "trasa kończy się dokładnie na pętli");
+  }
+
+  const overlay = await getVehicleRouteOverlay({
+    vehicleId: "11b",
+    routeName: "11",
+    routeColor: "#1e6fbf",
+    headsign: "Nowy Julianów",
+    lat: beforeLoop.lat,
+    lon: beforeLoop.lon,
+    bearing: 90,
+    timestamp: FIXED_NOW,
+    delaySeconds: 0,
+    speedKmh: 20,
+    operatorKey: "mzuk",
+    operatorName: "MZUK",
+    brigade: "11/02",
+    tripId: "t11b",
+    upcomingStops: [],
+  } as never);
+  assert.ok(overlay, "trasa autobusu linii 11 musi się narysować");
+  for (const line of overlay.polylines) {
+    assert.ok(
+      line.every((point) => !closeTo(point, julianow, 400)),
+      "trasa autobusu nie może jechać do Nowego Julianowa",
+    );
+    assert.ok(closeTo(line[line.length - 1], loop, 5), "trasa autobusu kończy na pętli");
+  }
+}
+
+// ── 8. Tablica odjazdów: kierunek oddjazdu to przystanek końcowy z rozkładu ──
+{
+  const { departures } = await getStopDepartures({
+    stopId: "s1",
+    lat: beforeLoop.lat,
+    lon: beforeLoop.lon,
+    fromMs: Date.parse("2026-11-20T10:20:00+01:00"),
+    toMs: Date.parse("2026-11-20T10:45:00+01:00"),
+    includeLive: false,
+  });
+  const departure = departures.find((item) => item.tripId === "t11b");
+  assert.ok(departure, "odjazd kursu linii 11 musi być na tablicy");
+  assert.equal(
+    departure.finalStop,
+    loop.name,
+    "tablica odjazdów pokazuje pętlę Kozice, nie „Nowy Julianów”",
+  );
+  assert.ok(
+    !departure.finalStop.toLowerCase().includes("julian"),
+    "nigdzie na tablicy nie ma nieaktualnego kierunku",
+  );
+}
+
+// ── 9. Katalog linii: tylko bieżący okres rozkładowy i tylko mapa ─────────────
+{
+  const entries = await getLineCatalogue();
+  const line = entries.find((entry) => entry.shortName === "11");
+  assert.ok(line, "linia 11 musi być w katalogu");
+  assert.ok(line.variants.length >= 1, "linia 11 ma co najmniej jeden wariant");
+  for (const variant of line.variants) {
+    assert.equal(variant.activeOnRef, true, `wariant ${variant.key} musi kursować w dniu odniesienia`);
+    assert.ok(
+      !variant.headsign.toLowerCase().includes("julian"),
+      `kierunek wariantu to przystanek z mapy, jest: ${variant.headsign}`,
+    );
+    assert.equal(variant.lastStop, loop.name, "przystanek końcowy wariantu to pętla Kozice");
+    assert.ok(
+      variant.path.every((point) => !closeTo(point, julianow, 400)),
+      "żaden wariant linii 11 nie sięga do Nowego Julianowa",
+    );
+    assert.ok(closeTo(variant.path[variant.path.length - 1], loop, 10), "wariant kończy się na pętli");
+  }
+}
+
 (globalThis as { fetch: typeof fetch }).fetch = realFetch;
+Date.now = realNow;
 console.log(
-  "OK: trasy są ciągłe (kształt w całości, brak dziur), a linia 11 kończy na pętli Kozice",
+  "OK: trasy są ciągłe (kształt w całości, brak dziur), a linia 11 kończy na pętli Kozice i nigdzie nie jedzie do Nowego Julianowa",
 );

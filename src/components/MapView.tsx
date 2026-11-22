@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import { coordKey } from "@/lib/core/spatial";
 import { escapeHtml } from "@/lib/core/text";
@@ -24,6 +24,7 @@ import type {
   Waypoint,
 } from "@/lib/types";
 import type { TurnaroundSpot } from "@/lib/engine/turnarounds";
+import { getVehicleDestinations } from "@/lib/engine/gtfsStore";
 import type { CoursePreview } from "@/lib/engine/gtfsStore";
 import { formatWarsawClock } from "@/lib/core/time";
 
@@ -1048,6 +1049,41 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
   }, [turnaroundSpots, showTurnarounds]);
 
+  /**
+   * Kierunek autobusów z rozkładu (ostatni przystanek kursu), a nie z tablicy
+   * kierunkowej GPS. Liczone raz na zmianę zestawu kursów, poza cyklem rysowania
+   * markera, żeby aktualizacje GPS co 10 s nie odpytywały rozkładu od nowa.
+   */
+  const tripDestinationKey = useMemo(
+    () =>
+      liveBuses
+        .map((bus) => `${bus.vehicleId}:${bus.tripId ?? ""}`)
+        .sort()
+        .join(","),
+    [liveBuses],
+  );
+  const [tripDestinations, setTripDestinations] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!showLiveBuses || !liveBuses.length) {
+      setTripDestinations((prev) => (prev.size ? new Map() : prev));
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void getVehicleDestinations(liveBuses)
+        .then((next) => {
+          if (!cancelled) setTripDestinations(next);
+        })
+        .catch(() => undefined);
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // Zależymy wyłącznie od sygnatury kursów — kolejne pozycje GPS nie zmieniają kierunku.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripDestinationKey, showLiveBuses]);
+
   /* Live GPS Wałbrzych buses (reconciled in-place so 10s updates never tear down DOM nodes) */
   useEffect(() => {
     const group = vehicleGroupRef.current;
@@ -1071,7 +1107,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       const selected = bus.vehicleId === selectedLiveBusId;
       const { html, tooltip } = buildBusMarker(
         bus,
-        { kursowka: busLabelKursowka, vehicleNumber: busLabelVehicleNumber },
+        {
+          kursowka: busLabelKursowka,
+          vehicleNumber: busLabelVehicleNumber,
+          destination: tripDestinations.get(bus.vehicleId) ?? null,
+        },
         selected
       );
 
@@ -1129,7 +1169,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         existing.delete(id);
       }
     }
-  }, [liveBuses, showLiveBuses, selectedLiveBusId, busLabelKursowka, busLabelVehicleNumber]);
+  }, [
+    liveBuses,
+    showLiveBuses,
+    selectedLiveBusId,
+    busLabelKursowka,
+    busLabelVehicleNumber,
+    tripDestinations,
+  ]);
 
   /* Klik w autobus: delegacja na pane'cie pojazdów.
      Ikona ma `pointer-events: none` na opakowaniu (żeby przezroczysty prostokąt

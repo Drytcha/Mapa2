@@ -499,7 +499,7 @@ export function LiveBusCard({
 
   const [tripStops, setTripStops] = useState<Awaited<
     ReturnType<typeof getVehicleTripStops>
-  >>({ complete: false, stops: [] });
+  >>({ complete: false, stops: [], destination: null });
   const [stopsLoading, setStopsLoading] = useState(false);
   const [identityHelp, setIdentityHelp] = useState(false);
   /** myBus 3.0: dolne zakładki karty pojazdu. */
@@ -519,6 +519,7 @@ export function LiveBusCard({
     setTripStops({
       complete: false,
       stops: bus.upcomingStops.map((item) => ({ ...item, passed: false })),
+      destination: bus.headsign ?? null,
     });
     let cancelled = false;
     setStopsLoading(true);
@@ -546,7 +547,11 @@ export function LiveBusCard({
   const duty = dutyLabel(bus);
   const cleanDutyCode = duty.code ? formatDutyCode(duty.code, "/") : null;
   const sameLineDuty = isSameDutyLine(bus.routeName, cleanDutyCode);
-  const variant = tripVariantLabel(bus.routeName, tripStops.stops, bus.headsign);
+  // Kierunek z rozkładu ma pierwszeństwo nad tablicą kierunkową GPS (ta bywa
+  // nieaktualna i pokazuje np. „Nowy Julianów” dla linii 11 jadącej do Kozic).
+  const destination = tripStops.destination || bus.headsign || "";
+
+  const variant = tripVariantLabel(bus.routeName, tripStops.stops, destination);
   const waiting = waitingForDeparture(tripStops.stops, {
     delaySeconds: bus.delaySeconds,
     isRealtime: true,
@@ -699,7 +704,7 @@ export function LiveBusCard({
                 </dd>
               </dl>
               <p className="mt-2 border-t border-line/70 pt-1.5 text-[7.5px] font-semibold text-mute">
-                Końcowy: {bus.headsign || "kurs techniczny"} · {duty.detail}
+                Końcowy: {destination || "kurs techniczny"} · {duty.detail}
               </p>
             </div>
           </div>
@@ -718,7 +723,7 @@ export function LiveBusCard({
       <div className="shrink-0 border-b border-line/70 px-3 pb-1 pt-1.5">
         <p className="flex min-w-0 items-center gap-1 text-[10.5px] font-extrabold leading-tight text-ink">
           <span className="min-w-0 truncate">
-            {bus.headsign || "Kurs techniczny"}
+            {destination || "Kurs techniczny"}
           </span>
           {variant.code && (
             <span className="metric shrink-0 rounded bg-brand-soft px-1 text-[8px] font-extrabold text-brand-ink ring-1 ring-brand/25">
@@ -807,7 +812,7 @@ export function LiveBusCard({
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-mute">Końcowy:</span>
           <span className="truncate font-bold text-ink">
-            {bus.headsign || "Kurs techniczny / brak"}
+            {destination || "Kurs techniczny / brak"}
           </span>
         </div>
         {isPlanner && (

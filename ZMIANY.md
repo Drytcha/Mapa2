@@ -646,3 +646,51 @@ paczce z pętlą jako węzłem, rzadkim próbkowaniem kształtu, częściowo dzi
 OSRM i kształtem w dwóch blokach — pilnuje, że linia jest jedna, kompletna i
 kończy się na pętli. Reszta zestawu (`tsc`, `test:bus|board|stops|duty-pdf|
 legend|arrows|perf|load`, `test:bus:e2e`, `build`) zielona.
+
+## Linia 11 nigdy nie jedzie do Nowego Julianowa
+
+Zgłoszenie: „linia 11 na mapie pokazuje, że leci aż do Nowego Julianowa, a leci
+tylko i wyłącznie na Strzegomska – Kozice”. Poprzednia poprawka naprawiła koniec
+trasy (pętla), ale **kierunek** nadal pochodził z `trip_headsign` z paczki,
+a katalog linii mieszał okresy rozkładowe.
+
+**Przyczyny**
+
+1. `trip_headsign` w paczce jest nieaktualny (pamięta dawny koniec trasy), a był
+   używany jako kierunek w karcie autobusu, tablicy odjazdów, planerze i katalogu
+   linii. Nazwa ostatniego przystanku z `stop_times` była dopiero drugim wyborem.
+2. `shapes.txt` ma **wspólny** `shape_id` dla kursów kończących na Kozicach i dla
+   dawnego wariantu do Julinowa — rysowana linia biegła za pętlę, bo kształt
+   rysowano w całości.
+3. `getLineCatalogue()` budowało warianty ze **wszystkich** kursów w paczce
+   (okresy 387 i 388), a `getLineRouteGeometry()` składało geometrię linii ze
+   wszystkich kształtów w historii paczki.
+
+**Poprawki**
+
+- `gtfsStore.ts`: nowe `trimShapeToStops()` / `shapeForTripStops()` — kształt jest
+  **przycinany do łańcucha przystanków kursu** (ogon i początek dłuższe niż 120 m
+  poza skrajnym przystankiem są obcinane, a pętla na końcu trasy zostaje), potem
+  dociągany do przystanków przez `connectEndsToStops()`. Wszystkie widoki trasy
+  (karta autobusu, kurs, kursówka, katalog linii) rysują przez tę funkcję.
+- `gtfsStore.ts`: kierunek = **ostatni przystanek kursu** w tablicy odjazdów
+  (`finalStop`), w podglądzie kursu (`headsign`) i w karcie pojazdu
+  (`getVehicleTripStops()` zwraca teraz `destination`).
+- `gtfsStore.ts`: `getVehicleDestinations()` + `MapView.tsx` — podpowiedź na mapie
+  („Kierunek”) bierze kierunek z rozkładu, nie z tablicy kierunkowej GPS; wynik
+  liczony raz na zmianę zestawu kursów.
+- `lineRoutes.ts`: katalog pokazuje **tylko warianty kursujące w dniu
+  odniesienia** (`activeOnRef`), a kierunek i skrajne przystanki wariantu pochodzą
+  z rozkładu przypisanego do mapy (`stopPointFor`). Dzień odniesienia działa też
+  dla paczek bez nazw `*_RS`.
+- `gtfsStore.ts`: `getLineRouteGeometry()` filtruje kursy do najbliższego dnia z
+  rozkładem (wcześniej: suma wszystkich okresów).
+- `journeyPlanner.ts`: kierunek odcinka w planerze to ostatni przystanek kursu.
+
+**Testy:** `npm run test:geometry` ma nowe przypadki na paczce, w której kształt
+linii 11 biegnie jeszcze 2,5 km za pętlę, `trip_headsign` mówi „Nowy Julianów”,
+a w paczce jest też wygasły kurs do Julinowa: trasa autobusu i kursu kończy się na
+pętli i nigdzie nie sięga Julinowa, tablica odjazdów pokazuje „Strzegomska -
+Kozice”, a katalog linii zawiera wyłącznie warianty z dnia odniesienia. Reszta
+zestawu (`tsc`, `test:bus|board|stops|duty-pdf|legend|arrows|perf|load`,
+`test:bus:e2e`, `build`) zielona.

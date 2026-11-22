@@ -8,9 +8,9 @@ import { DateTime } from "luxon";
 import { polylineLengthMeters } from "../core/spatial";
 import { WARSAW_ZONE } from "../core/time";
 import {
-  connectEndsToStops,
   ensureGtfsSeeded,
   ensureShapesReady,
+  shapeForTripStops,
   stopPointFor,
 } from "./gtfsStore";
 
@@ -22,6 +22,7 @@ export interface LineVariant {
   /** shape_id (albo para przystanków, gdy kurs nie ma kształtu). */
   key: string;
   directionId: number;
+  /** Kierunek = ostatni przystanek kursu z rozkładu (nie `trip_headsign`). */
   headsign: string;
   firstStop: string;
   lastStop: string;
@@ -30,6 +31,8 @@ export interface LineVariant {
   tripCount: number;
   /** Kursy tego wariantu w dniu odniesienia linii (dzień roboczy). */
   refCount: number;
+  /** Czy wariant w ogóle kursuje w dniu odniesienia (a nie tylko w innym okresie). */
+  activeOnRef: boolean;
   lengthMeters: number;
   /** Kurs, z którego pochodzi geometria i lista przystanków. */
   representativeTripId: string;
@@ -122,12 +125,27 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
     if (!Number.isFinite(from)) from = 0;
 
     // Linia 30 działa dopiero od grudnia — dzień odniesienia nie może być wcześniejszy.
+    // Gdy w paczce nie ma nazw `*_RS` (inny przewoźnik/format), bierzemy datę
+    // najbliższą dzisiejszej, żeby katalog nadal pokazywał jeden okres rozkładowy.
+    const nearestDate = [...base.serviceIdsByDate.keys()].sort(
+      (a, b) => Math.abs(a - today) - Math.abs(b - today) || a - b,
+    )[0];
     const refDate =
-      workdays.find((day) => day >= Math.max(today, from)) ?? workdays[workdays.length - 1] ?? from;
+      workdays.find((day) => day >= Math.max(today, from)) ??
+      workdays[workdays.length - 1] ??
+      nearestDate ??
+      from;
     const activeOnRef = base.serviceIdsByDate.get(refDate) ?? new Set<string>();
 
+    // Warianty liczymy z kursów, które w dniu odniesienia naprawdę jadą.
+    // Paczka obejmuje kilka okresów rozkładowych (np. 387 i 388) i bez tego
+    // filtra na liście (oraz na mapie) zostawały warianty z wygasłego okresu —
+    // tak „linia 11 jechała” do przystanku, którego już nie obsługuje.
+    const activeTrips = trips.filter((trip) => activeOnRef.has(trip.serviceId));
+    const tripsForVariants = activeTrips.length ? activeTrips : trips;
+
     const groups = new Map<string, RawTrip[]>();
-    for (const trip of trips) {
+    for (const trip of tripsForVariants) {
       const key = trip.shapeId || `${trip.firstStopId}>${trip.lastStopId}`;
       const list = groups.get(key);
       if (list) list.push(trip);
@@ -150,9 +168,9 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
       let path: LatLng[];
       let approximate = false;
       if (shape && shape.length >= 2) {
-        // Kształt rysujemy w całości, dociągnięty do pierwszego i ostatniego
-        // przystanku wariantu (pętla bywa dalej niż koniec kształtu).
-        path = connectEndsToStops(shape, firstPoint, lastPoint);
+        // Kształt przycięty do przystanków wariantu i dociągnięty do nich:
+        // wspólny `shape_id` nie może ciągnąć linii poza jej przystanek końcowy.
+        path = shapeForTripStops(shape, firstPoint, lastPoint);
       } else {
         approximate = true;
         path = [];
@@ -163,15 +181,21 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
       }
       if (path.length < 2) continue;
 
+      // Nazwy skrajnych przystanków bierzemy z rozkładu **przypisanego do mapy**
+      // (`stopPointFor`), a nie z `trip_headsign` — ten bywa nieaktualny.
+      const terminus = lastPoint?.name || representative.lastStopName || headsign;
+      const origin = firstPoint?.name || representative.firstStopName;
+
       variants.push({
         key,
         directionId: representative.directionId,
-        headsign: headsign || representative.lastStopName,
-        firstStop: representative.firstStopName,
-        lastStop: representative.lastStopName,
+        headsign: terminus,
+        firstStop: origin,
+        lastStop: terminus,
         stopCount: Math.max(...group.map((trip) => trip.stopCount)),
         tripCount: group.length,
         refCount: group.filter((trip) => activeOnRef.has(trip.serviceId)).length,
+        activeOnRef: activeTrips.length > 0 && group.some((trip) => activeOnRef.has(trip.serviceId)),
         lengthMeters: polylineLengthMeters(path),
         representativeTripId: representative.rawTripId,
         main: false,
@@ -181,7 +205,14 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
     }
     if (!variants.length) continue;
 
-    variants.sort(
+    // Katalog pokazuje wyłącznie warianty z dnia odniesienia. Warianty z innych
+    // okresów rozkładowych (np. dawny koniec linii 11) nie mogą się rysować ani
+    // pojawiać na liście.
+    const shown = variants.some((variant) => variant.activeOnRef)
+      ? variants.filter((variant) => variant.activeOnRef)
+      : variants;
+
+    shown.sort(
       (a, b) =>
         a.directionId - b.directionId ||
         b.refCount - a.refCount ||
@@ -189,7 +220,7 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         a.headsign.localeCompare(b.headsign, "pl")
     );
     const seenDirections = new Set<number>();
-    for (const variant of variants) {
+    for (const variant of shown) {
       if (variant.refCount > 0 && !seenDirections.has(variant.directionId)) {
         seenDirections.add(variant.directionId);
         variant.main = true;
@@ -204,8 +235,8 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
       from,
       to,
       refDate,
-      refTrips: variants.reduce((sum, variant) => sum + variant.refCount, 0),
-      variants,
+      refTrips: shown.reduce((sum, variant) => sum + variant.refCount, 0),
+      variants: shown,
     });
   }
 
