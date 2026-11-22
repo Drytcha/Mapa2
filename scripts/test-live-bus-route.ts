@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { strToU8, zipSync } from "fflate";
-import { ensureGtfsSeeded, getCoursePreview, getVehicleCourseTrip, getVehicleTripStops } from "../src/lib/engine/gtfsStore";
+import {
+  ensureGtfsSeeded,
+  getCoursePreview,
+  getVehicleRouteOverlay,
+  getVehicleTripStops,
+} from "../src/lib/engine/gtfsStore";
 import { liveBusTap } from "../src/lib/liveBusProgress";
 import type { LiveBusVehicle } from "../src/lib/types";
 
@@ -24,7 +29,8 @@ const files: Record<string, string> = {
     "route_id,service_id,trip_id,trip_headsign,block_id,shape_id",
     "r9,RS,t-bus,Kozice,9/01,",
   ].join("\n"),
-  "calendar_dates.txt": "service_id,date,exception_type\nRS,20261120,1\n",
+  // Celowo BEZ dnia kursu: trasa autobusu nie może zależeć od kalendarza.
+  "calendar_dates.txt": "service_id,date,exception_type\nRS,20261201,1\n",
   "stop_times.txt": [
     "trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type",
     "t-bus,10:00:00,10:00:00,a,1,0,0",
@@ -87,19 +93,24 @@ const bus: LiveBusVehicle = {
   ],
 };
 
-// 1. Pojazd da się przypisać do kursu i dnia obsługi.
-const course = await getVehicleCourseTrip(bus);
-assert.ok(course, "bez kursu nie ma czego narysować na mapie");
-assert.equal(course.tripId, "t-bus");
-assert.equal(course.dateId, "20261120");
+// 1. Trasa do narysowania powstaje bez pytania kalendarza o dzień obsługi.
+const overlay = await getVehicleRouteOverlay(bus);
+assert.ok(overlay, "bez trasy klik w autobus nie pokazuje nic na mapie");
+assert.match(overlay.title, /Trasa linii 9/);
+assert.equal(overlay.stops.length, 3);
+assert.ok(overlay.polylines.length > 0, "trasa musi mieć co najmniej jedną polilinię");
+assert.ok(overlay.polylines.some((line) => line.length >= 2), "polilinia musi mieć ≥ 2 punkty");
+assert.ok(
+  overlay.polylines[0].every(([lat, lon]) => Math.abs(lat - 50.79) < 1 && Math.abs(lon - 16.29) < 1),
+  "punkty trasy są w rejonie Wałbrzycha",
+);
 
-// 2. Podgląd kursu zwraca polilinię do narysowania (bez shapes.txt — po przystankach).
-const preview = await getCoursePreview(course.tripId, course.dateId);
-assert.ok(preview, "podgląd kursu musi istnieć, inaczej mapa zostaje pusta");
-assert.ok(preview.polylines.length > 0, "trasa musi mieć co najmniej jedną polilinię");
-assert.ok(preview.polylines.some((line) => line.length >= 2), "polilinia musi mieć ≥ 2 punkty");
-assert.equal(preview.stops.length, 3);
-assert.equal(preview.approximate, true, "bez shapes.txt trasa idzie po przystankach");
+// 2. Dlaczego nie używamy podglądu kursu: bez obsługi w danym dniu zwraca null.
+assert.equal(
+  await getCoursePreview("t-bus", "20261120"),
+  null,
+  "podgląd kursu wymaga aktywnej obsługi dnia — dlatego trasa autobusu idzie inną drogą",
+);
 
 // 3. Ta sama trasa jest podstawą listy przystanków w karcie — oba widoki są spójne.
 const run = await getVehicleTripStops(bus);
@@ -119,7 +130,13 @@ assert.equal(liveBusTap("1234", "1234"), "close");
 assert.equal(liveBusTap("1234", "5678"), "select");
 
 // 5. Pojazd bez dopasowania nie dostaje wymyślonej trasy.
-const unknown = { ...bus, routeName: "77", headsign: "Nigdzie", upcomingStops: [] };
-assert.equal(await getVehicleCourseTrip(unknown), null);
+const unknown = { ...bus, tripId: null, routeName: "77", headsign: "Nigdzie", upcomingStops: [] };
+assert.equal(await getVehicleRouteOverlay(unknown), null);
+
+// 6. Gdy GPS podaje tripId, trasa powstaje nawet bez dopasowania po godzinie.
+const byTripId = { ...bus, tripId: "t-bus", routeName: "77", upcomingStops: [] };
+const direct = await getVehicleRouteOverlay(byTripId);
+assert.ok(direct, "tripId z GPS wystarcza do narysowania trasy");
+assert.equal(direct.stops.length, 3);
 
 console.log("OK: klik w autobus daje kurs i polilinię do narysowania na mapie");

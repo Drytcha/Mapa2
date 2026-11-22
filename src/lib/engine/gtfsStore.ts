@@ -2410,31 +2410,50 @@ function matchToRemaining(
 }
 
 /**
- * Kurs, którym jedzie autobus: identyfikator z paczki GTFS **i** dzień obsługi.
- * Używa tego samego dopasowania co lista przystanków, więc jeśli karta potrafi
- * pokazać przebieg kursu, to potrafi też narysować jego trasę na mapie —
- * również wtedy, gdy GPS nie podaje `tripId`, a kurs trzeba dopasować po
- * linii, przystanku i godzinie.
+ * Trasa kursu, którym jedzie autobus — do narysowania na mapie po kliknięciu
+ * pojazdu (myBus 3.0). **Nie wymaga aktywnej obsługi w wybranym dniu**: autobus
+ * jedzie tym kursem teraz, więc wystarczy kurs w paczce GTFS. Dopasowanie idzie
+ * po `tripId`, a gdy GPS go nie podaje — po linii, przystanku i godzinie
+ * (to samo `resolveVehicleTrip` co lista przystanków w karcie).
  */
-export async function getVehicleCourseTrip(
+export async function getVehicleRouteOverlay(
   bus: LiveBusVehicle,
-): Promise<{ tripId: string; dateId: string } | null> {
-  const match = await resolveVehicleTrip(bus);
-  if (!match) return null;
+): Promise<{
+  title: string;
+  color: string;
+  polylines: [number, number][][];
+  stops: Array<{ name: string; lat: number; lon: number }>;
+} | null> {
   const store = await ensureGtfsSeeded();
-  const trip = store.base.rawTripsById.get(match.tripId);
+  const match = await resolveVehicleTrip(bus);
+  const tripId =
+    match?.tripId ??
+    (bus.tripId && store.base.rawStopTimesByTrip.has(bus.tripId) ? bus.tripId : null);
+  if (!tripId) return null;
+  const trip = store.base.rawTripsById.get(tripId);
   if (!trip) return null;
-  // Kurs po północy należy do poprzedniego dnia obsługi — sprawdzamy oba dni,
-  // bo bez aktywnej obsługi podgląd trasy zwróciłby pustkę.
-  let day = DateTime.fromMillis(match.dayStartMs, { zone: ZONE }).startOf("day");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const dateId = day.toFormat("yyyyMMdd");
-    if (store.base.serviceIdsByDate.get(Number(dateId))?.has(trip.serviceId)) {
-      return { tripId: match.tripId, dateId };
-    }
-    day = day.minus({ days: 1 });
+
+  const stops: Array<{ name: string; lat: number; lon: number }> = [];
+  for (const st of store.base.rawStopTimesByTrip.get(tripId) ?? []) {
+    const stop = store.base.stopsById.get(st.stopId);
+    if (stop) stops.push({ name: stop.name, lat: stop.lat, lon: stop.lon });
   }
-  return null;
+  const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
+  const fromShape = Boolean(shape && shape.length >= 2);
+  const path: [number, number][] = fromShape
+    ? (shape as [number, number][])
+    : stops.map((stop): [number, number] => [stop.lat, stop.lon]);
+  if (path.length < 2) return null;
+
+  const repaired = await repairShapeGaps(path, undefined, !fromShape);
+  const polylines = repaired.polylines.length > 0 ? repaired.polylines : [path];
+  const route = store.base.routesById.get(trip.routeId);
+  return {
+    title: `Trasa linii ${bus.routeName || trip.routeShort}`,
+    color: route?.color || bus.routeColor || "#0d4f3b",
+    polylines,
+    stops,
+  };
 }
 
 export async function getVehicleRemainingStops(

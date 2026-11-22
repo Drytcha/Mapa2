@@ -478,6 +478,10 @@ button {
     0 5px 14px rgb(0 0 0 / 48%);
   transition: box-shadow 0.16s ease;
 }
+.leaflet-vehicles-pane .live-bus,
+.leaflet-vehicles-pane .live-bus-chip {
+  cursor: pointer;
+}
 .live-bus:hover {
   z-index: 5;
   box-shadow:

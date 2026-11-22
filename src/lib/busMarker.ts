@@ -109,7 +109,7 @@ export function buildBusMarker(
   const pill = `${operatorBadge}${direction}<span class="live-bus-label">${labelHtml}</span>`;
 
   const html = [
-    `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};--operator-bg:${company.bg};--operator-fg:${company.fg}">`,
+    `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" data-vehicle-id="${escapeHtml(bus.vehicleId)}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};--operator-bg:${company.bg};--operator-fg:${company.fg}">`,
     `<div class="live-bus${compact ? " live-bus--compact" : ""}${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
     pill,
     `</div>`,

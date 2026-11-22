@@ -1102,12 +1102,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           offset: [0, -12],
           className: "waypoint-tooltip live-bus-tooltip",
         });
-        const id = bus.vehicleId;
-        marker.on("click", (event: L.LeafletMouseEvent) => {
-          L.DomEvent.stopPropagation(event.originalEvent);
-          const current = liveBusByIdRef.current.get(id);
-          if (current) liveBusClickRef.current?.(current);
-        });
+        // Klik obsługuje delegowany listener na pane'cie pojazdów
+        // (patrz efekt niżej): działa nawet gdy sam element ikony ma
+        // `pointer-events: none`, a klik trafia w widoczną pigułkę.
         marker.addTo(group);
         existing.set(bus.vehicleId, { marker, html, tooltip, selected });
       }
@@ -1120,6 +1117,30 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       }
     }
   }, [liveBuses, showLiveBuses, selectedLiveBusId, busLabelKursowka, busLabelVehicleNumber]);
+
+  /* Klik w autobus: delegacja na pane'cie pojazdów.
+     Ikona ma `pointer-events: none` na opakowaniu (żeby przezroczysty prostokąt
+     210×56 nie zasłaniał mapy), więc polegamy na bąbelkowaniu z widocznej
+     pigułki do kontenera panu — a nie na wewnętrznym dispatchcie Leafleta. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const pane = map.getPane("vehicles");
+    if (!pane) return;
+    const onPaneClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const holder = target?.closest?.("[data-vehicle-id]") as HTMLElement | null;
+      if (!holder) return;
+      const id = holder.dataset.vehicleId;
+      const bus = id ? liveBusByIdRef.current.get(id) : null;
+      if (!bus) return;
+      L.DomEvent.stopPropagation(event);
+      event.preventDefault();
+      liveBusClickRef.current?.(bus);
+    };
+    pane.addEventListener("click", onPaneClick);
+    return () => pane.removeEventListener("click", onPaneClick);
+  }, []);
 
   /* Draggable waypoint pins */
   useEffect(() => {
