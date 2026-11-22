@@ -7,7 +7,7 @@
 import { DateTime } from "luxon";
 import { polylineLengthMeters } from "../core/spatial";
 import { WARSAW_ZONE } from "../core/time";
-import { ensureGtfsSeeded } from "./gtfsStore";
+import { ensureGtfsSeeded, ensureShapesReady } from "./gtfsStore";
 
 type LatLng = [number, number];
 type Store = Awaited<ReturnType<typeof ensureGtfsSeeded>>;
@@ -67,6 +67,9 @@ function mostCommon(values: string[]): string {
 
 export async function getLineCatalogue(): Promise<LineEntry[]> {
   const store = await ensureGtfsSeeded();
+  // Warianty linii rysują się po `shapes.txt`; bez tego pierwszą geometrię
+  // powstałaby z samych przystanków (linia łamana przez budynki).
+  await ensureShapesReady(store);
   const base = store.base;
   if (cache && cache.base === base) return cache.entries;
 

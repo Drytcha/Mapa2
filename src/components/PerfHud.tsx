@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getTimings, onTimings, type PerfTiming } from "@/lib/core/perfMarks";
 
 /**
  * Opt-in licznik płynności (FPS + najdłuższa klatka + liczba węzłów DOM).
@@ -23,15 +24,32 @@ interface PerfSample {
   nodes: number;
 }
 
+function loadSummary(all: PerfTiming[]): { total: number; slowest: PerfTiming | null } {
+  const load = all.filter((timing) => timing.name.startsWith("gtfs:"));
+  const total = load.reduce((sum, timing) => sum + timing.ms, 0);
+  const slowest = load.reduce<PerfTiming | null>(
+    (worst, timing) => (!worst || timing.ms > worst.ms ? timing : worst),
+    null
+  );
+  return { total, slowest };
+}
+
 const EMPTY: PerfSample = { fps: 0, worstFrameMs: 0, longFrames: 0, nodes: 0 };
 
 export default function PerfHud() {
   const [enabled, setEnabled] = useState(false);
   const [sample, setSample] = useState<PerfSample>(EMPTY);
+  const [timings, setTimings] = useState<PerfTiming[]>(() => getTimings());
 
   useEffect(() => {
     setEnabled(isEnabled());
   }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    setTimings(getTimings());
+    return onTimings(setTimings);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -93,6 +111,16 @@ export default function PerfHud() {
         klatka max {sample.worstFrameMs} ms · cięcia {sample.longFrames}/s
       </div>
       <div>DOM {sample.nodes}</div>
+      {(() => {
+        const { total, slowest } = loadSummary(timings);
+        if (total <= 0) return null;
+        const stage = slowest?.name ?? "—";
+        return (
+          <div data-testid="perf-load">
+            dane {Math.round(total)} ms · najdłużej {stage} {slowest ? Math.round(slowest.ms) : 0} ms
+          </div>
+        );
+      })()}
     </div>
   );
 }

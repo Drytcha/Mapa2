@@ -17,7 +17,9 @@
     "test:legend": "tsx scripts/test-line-legend.ts",
     "test:board": "tsx scripts/test-stop-board.ts && tsx scripts/test-stop-board-ui.tsx",
     "test:arrows": "tsx scripts/test-route-arrows.ts",
-    "test:perf": "tsx scripts/test-map-perf.ts"
+    "test:perf": "tsx scripts/test-map-perf.ts",
+    "test:load": "tsx scripts/test-gtfs-load.ts",
+    "bench:load": "tsx scripts/bench-load.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",
