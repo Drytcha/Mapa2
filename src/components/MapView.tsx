@@ -119,6 +119,8 @@ interface MapViewProps {
   turnaroundSpots?: TurnaroundSpot[];
   showTurnarounds?: boolean;
   kursowkaOverlay?: KursowkaShapeOverlay | null;
+  /** Na telefonie karta autobusu zajmuje dół ekranu — dopasowanie trasy musi to uwzględnić. */
+  bottomSheetOpen?: boolean;
   tripPlan?: TripMapPlan | null;
   tripOriginEditing?: boolean;
   onTripOriginPick?: () => void;
@@ -211,6 +213,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     turnaroundSpots = [],
     showTurnarounds = true,
     kursowkaOverlay = null,
+    bottomSheetOpen = false,
     tripPlan = null,
     tripOriginEditing = false,
     onTripOriginPick,
@@ -342,12 +345,22 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     const allCoords: [number, number][] = [...overlay.polylines.flat(), ...overlay.stops.map((stop): [number, number] => [stop.lat, stop.lon])];
     if (allCoords.length < 2) return;
-    const width = map.getSize().x;
+    const size = map.getSize();
+    // Na telefonie trasa musi zmieścić się NAD dolną kartą autobusu, inaczej
+    // po kliknięciu w pojazd widać tylko panel, a nie jego trasę.
+    const narrow = size.x < 640;
+    const sheetInset = narrow && bottomSheetOpen ? Math.round(size.y * 0.5) : 0;
     map.fitBounds(L.latLngBounds(allCoords), {
-      paddingTopLeft: overlay.course
-        ? [width >= 760 ? Math.min(340, Math.round(width * 0.34)) : 36, 90]
-        : [56, 56],
-      paddingBottomRight: overlay.course ? [56, 100] : [56, 56],
+      paddingTopLeft: narrow
+        ? [16, 72]
+        : overlay.course
+          ? [size.x >= 760 ? Math.min(340, Math.round(size.x * 0.34)) : 36, 90]
+          : [56, 56],
+      paddingBottomRight: narrow
+        ? [16, 24 + sheetInset]
+        : overlay.course
+          ? [56, 100]
+          : [56, 56],
       maxZoom: 15,
       animate: true,
       duration: 0.8,

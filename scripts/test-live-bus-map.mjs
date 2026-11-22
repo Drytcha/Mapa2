@@ -52,7 +52,11 @@ try {
     args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", ...(process.env.CHROMIUM_ARGS?.split(" ").filter(Boolean) ?? [])],
     env: { ...process.env, ...(process.env.CHROMIUM_LIBS ? { LD_LIBRARY_PATH: process.env.CHROMIUM_LIBS } : {}) },
   });
-  const context = await browser.newContext({ viewport: { width: 1200, height: 850 } });
+  async function openApp({ viewport, mobile = false }) {
+  const context = await browser.newContext({
+    viewport,
+    ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
   const errors = [];
@@ -124,6 +128,10 @@ try {
 
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".live-bus", { timeout: 25000 });
+  return { page, context, errors };
+  }
+
+  const { page, context, errors } = await openApp({ viewport: { width: 1200, height: 850 } });
   assert.equal(await page.locator('[data-testid="bus-run-panel"]').count(), 0, "karta zamknięta przed kliknięciem");
   assert.equal(await page.locator(".leaflet-kursowka-pane path").count(), 0, "brak trasy przed kliknięciem");
 
@@ -179,7 +187,84 @@ try {
 
   assert.deepEqual(errors, []);
   await context.close();
-  console.log("OK: klik w autobus otwiera kartę i rysuje trasę kursu na mapie");
+
+  // ---------------------------- telefon ----------------------------
+  // Karta autobusu nie może zasłaniać mapy: na telefonie jest dolną kartą,
+  // lista pojazdów chowa się, a trasa dopasowuje się NAD kartą.
+  const mobile = await openApp({ viewport: { width: 390, height: 844 }, mobile: true });
+  await mobile.page.evaluate(() => {
+    const label = document.querySelector(".live-bus-label") ?? document.querySelector(".live-bus");
+    label.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  });
+  await mobile.page.waitForSelector('[data-testid="bus-run-panel"]', { timeout: 15000 });
+  await mobile.page.waitForFunction(
+    () => document.querySelectorAll(".leaflet-kursowka-pane path").length > 0,
+    undefined,
+    { timeout: 15000 },
+  );
+  await mobile.page.waitForTimeout(1200);
+  const layout = await mobile.page.evaluate(() => {
+    const sheet = document.querySelector('[data-mobile-sheet="bus"]');
+    const rect = sheet.getBoundingClientRect();
+    const fleet = Array.from(document.querySelectorAll("div")).find((el) =>
+      /^GPS \(\d+\)/.test(el.textContent || ""),
+    );
+    const paths = Array.from(document.querySelectorAll(".leaflet-kursowka-pane path")).map((path) => {
+      const box = path.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom };
+    });
+    return {
+      sheet: {
+        position: getComputedStyle(sheet).position,
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        bottom: Math.round(innerHeight - rect.bottom),
+        height: Math.round(rect.height),
+      },
+      fleetHeight: fleet ? Math.round(fleet.getBoundingClientRect().height) : null,
+      pathBottom: Math.round(Math.max(...paths.map((box) => box.bottom))),
+      pathTop: Math.round(Math.min(...paths.map((box) => box.top))),
+      viewport: { width: innerWidth, height: innerHeight },
+    };
+  });
+  assert.equal(layout.sheet.position, "fixed", "na telefonie karta autobusu jest dolna kartą");
+  assert.ok(layout.sheet.bottom <= 12, `karta przylega do dołu (${layout.sheet.bottom} px)`);
+  assert.ok(layout.sheet.left <= 12 && layout.sheet.right >= layout.viewport.width - 12, "karta wykorzystuje szerokość ekranu");
+  assert.ok(layout.sheet.height <= Math.round(layout.viewport.height * 0.56), `karta nie zabiera całego ekranu (${layout.sheet.height} px)`);
+  assert.equal(layout.fleetHeight, 0, "lista pojazdów jest schowana, gdy otwarta jest karta autobusu");
+  assert.ok(layout.pathTop > 0, "trasa zaczyna się w widocznym obszarze mapy");
+  assert.ok(
+    layout.pathBottom < layout.sheet.top,
+    `cała trasa jest nad dolną kartą (trasa do ${layout.pathBottom} px, karta od ${layout.sheet.top} px)`,
+  );
+  // Zwijanie dolnej karty: zostaje pasek z kierunkiem i stanem, mapa odsłonięta.
+  await mobile.page.locator('[data-testid="bus-sheet-handle"]').click();
+  await mobile.page.waitForTimeout(400);
+  const collapsed = await mobile.page.evaluate(() => {
+    const sheet = document.querySelector('[data-mobile-sheet="bus"]');
+    const list = sheet.querySelector(".scroll-area");
+    return {
+      height: Math.round(sheet.getBoundingClientRect().height),
+      listVisible: Boolean(list && list.getBoundingClientRect().height > 0),
+      text: sheet.innerText,
+    };
+  });
+  assert.equal(collapsed.listVisible, false, "zwinięta karta nie pokazuje listy przystanków");
+  assert.ok(collapsed.height < layout.sheet.height * 0.75, `zwinięta karta jest niższa (${collapsed.height} px)`);
+  assert.match(collapsed.text, /7/, "zwinięta karta nadal pokazuje linię");
+  await mobile.page.locator('[data-testid="bus-sheet-handle"]').click();
+  await mobile.page.waitForTimeout(300);
+  assert.equal(
+    await mobile.page.locator('[data-testid="bus-run-panel"]').count(),
+    1,
+    "po rozwinięciu lista przystanków wraca",
+  );
+
+  assert.deepEqual(mobile.errors, []);
+  await mobile.context.close();
+
+  console.log("OK: klik w autobus otwiera kartę i rysuje trasę kursu na mapie (desktop + telefon)");
 } finally {
   if (browser) await browser.close();
   await server.close();

@@ -2338,6 +2338,7 @@ function MapPlanerWorkspace() {
               turnaroundSpots={turnaroundSpots}
               showTurnarounds={showTurnarounds}
               kursowkaOverlay={kursowkaOverlay}
+              bottomSheetOpen={Boolean(selectedLiveBus) && busOverlay}
               tripPlan={kursowkaOverlay ? null : tripMapPlan}
               tripOriginEditing={tripPick === "origin"}
               onTripOriginPick={() => {
@@ -2457,7 +2458,7 @@ function MapPlanerWorkspace() {
                 />
               ) : (
                 <div className="pointer-events-none flex min-h-0 flex-col items-start gap-2">
-                  <div className={selectedStop ? "hidden sm:contents" : "contents"}>
+                  <div className={selectedStop || selectedLiveBus ? "hidden sm:contents" : "contents"}>
                     <LiveFleetControl
                       isPlanner={isPlanner}
                       showLiveBuses={showLiveBuses}
