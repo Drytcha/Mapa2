@@ -146,3 +146,16 @@ export const TRIP_LEGEND: Array<{ label: string; style: DelayStyle }> = [
 export function serviceDateId(ms: number): string {
   return DateTime.fromMillis(ms, { zone: WARSAW_ZONE }).toFormat("yyyyMMdd");
 }
+
+/**
+ * Co robi klik w autobus: ten sam pojazd zamyka kartę, inny — otwiera go
+ * i rysuje trasę jego kursu (myBus 3.0).
+ */
+export function liveBusTap(
+  selectedVehicleId: string | null,
+  clickedVehicleId: string,
+): "close" | "select" {
+  return selectedVehicleId && selectedVehicleId === clickedVehicleId
+    ? "close"
+    : "select";
+}

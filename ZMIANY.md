@@ -450,3 +450,28 @@ lub bez), a sam Boguszów-Gorce to zwykły kierunek podstawowy.
 Uwaga eksploatacyjna: dojazd do Starego Leśieńca jest **obecnie wstrzymany
 z powodu remontu** — legenda opisuje warianty rozkładowe, a nie bieżącą
 przejezdność; aplikacja nie obiecuje, że dziś dojedziesz na ten przystanek.
+
+## Klik w autobus rysuje jego trasę na mapie (poprawka)
+
+Karta pojazdu odświeżała się poprawnie, ale **trasa kursu nie pojawiała się na
+mapie**. Trzy przyczyny, wszystkie usunięte:
+
+1. **Klik w marker autobusu na mapie nie korzystał z `handleSelectBus`** — inline
+   handler tylko otwierał kartę, więc podgląd trasy w ogóle nie był wywoływany.
+   Teraz klik w inny autobus wybiera go (karta + trasa), a klik w ten sam zamyka
+   kartę i chowa trasę (`liveBusTap`).
+2. **Kurs brany z surowego `bus.tripId`**, którego GPS często nie podaje albo
+   podaje w innym formacie. Nowa `getVehicleCourseTrip(bus)` używa tego samego
+   dopasowania co lista przystanków (`resolveVehicleTrip`), sprawdza dzień obsługi
+   (także kursy po północy) i zwraca `{tripId, dateId}` gotowe dla
+   `getCoursePreview`.
+3. **Pusta polilinia, gdy naprawa luk OSRM nie odpowiedziała** — `repairShapeGaps`
+   zwracało zero linii, więc mapa nie rysowała nic. Teraz, gdy naprawa nic nie
+   dała, rysowana jest surowa linia po kształcie/przystankach. Trasa jest widoczna
+   zawsze, także offline i bez `shapes.txt`.
+
+Dodatkowo: trasa pochodząca z kliknięcia autobusu znika razem z kartą (nie
+zostaje „sierota” po wybraniu innego obiektu), a u podróżnego nie dubluje się
+karta podglądu kursu. Test regresyjny: `npm run test:bus` →
+`test-live-bus-route.ts` (pojazd bez `tripId` → kurs, dzień obsługi i polilinia
+z ≥ 2 punktami).

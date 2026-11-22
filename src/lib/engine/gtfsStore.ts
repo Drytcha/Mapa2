@@ -2409,6 +2409,34 @@ function matchToRemaining(
   return full;
 }
 
+/**
+ * Kurs, którym jedzie autobus: identyfikator z paczki GTFS **i** dzień obsługi.
+ * Używa tego samego dopasowania co lista przystanków, więc jeśli karta potrafi
+ * pokazać przebieg kursu, to potrafi też narysować jego trasę na mapie —
+ * również wtedy, gdy GPS nie podaje `tripId`, a kurs trzeba dopasować po
+ * linii, przystanku i godzinie.
+ */
+export async function getVehicleCourseTrip(
+  bus: LiveBusVehicle,
+): Promise<{ tripId: string; dateId: string } | null> {
+  const match = await resolveVehicleTrip(bus);
+  if (!match) return null;
+  const store = await ensureGtfsSeeded();
+  const trip = store.base.rawTripsById.get(match.tripId);
+  if (!trip) return null;
+  // Kurs po północy należy do poprzedniego dnia obsługi — sprawdzamy oba dni,
+  // bo bez aktywnej obsługi podgląd trasy zwróciłby pustkę.
+  let day = DateTime.fromMillis(match.dayStartMs, { zone: ZONE }).startOf("day");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const dateId = day.toFormat("yyyyMMdd");
+    if (store.base.serviceIdsByDate.get(Number(dateId))?.has(trip.serviceId)) {
+      return { tripId: match.tripId, dateId };
+    }
+    day = day.minus({ days: 1 });
+  }
+  return null;
+}
+
 export async function getVehicleRemainingStops(
   bus: LiveBusVehicle,
 ): Promise<LiveBusVehicle["upcomingStops"]> {
@@ -2646,7 +2674,15 @@ export async function getCoursePreview(
       : resolveDutyOperator(trip.serviceId, trip.kursowkaCode);
   const lengths = await getTripLengthMap();
   const repaired = await repairShapeGaps(path, undefined, approximate);
-  const polylines = repaired.polylines;
+  // Naprawa luk idzie przez OSRM (sieć). Gdy serwer nie odpowie, nie rysujemy
+  // NIC — a wtedy klik w autobus nie pokazuje trasy. W takim razie rysujemy
+  // surową linię po przystankach/kształcie, żeby trasa była widoczna zawsze.
+  const polylines =
+    repaired.polylines.length > 0
+      ? repaired.polylines
+      : path.length >= 2
+        ? [path]
+        : [];
 
   return {
     tripId,

@@ -108,9 +108,9 @@ import PerfHud from "@/components/PerfHud";
 import { isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
-import { serviceDateId } from "@/lib/liveBusProgress";
+import { liveBusTap } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
-import { ensureGtfsSeeded, getCoursePreview } from "@/lib/engine/gtfsStore";
+import { ensureGtfsSeeded, getCoursePreview, getVehicleCourseTrip } from "@/lib/engine/gtfsStore";
 import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
 import { detectTurnaroundSpotsAlongRoute, type TurnaroundSpot } from "@/lib/engine/turnarounds";
 import {
@@ -447,6 +447,8 @@ function MapPlanerWorkspace() {
   }>({});
   const [kursowkaReturnDateId, setKursowkaReturnDateId] = useState<string | null>(null);
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
+  /** Czy widoczna trasa pochodzi z kliknięcia autobusu (wtedy znika z kartą). */
+  const [busOverlay, setBusOverlay] = useState(false);
   // Reject previews started before a profile switch, even if they finish later.
   const overlayEpochRef = useRef(0);
   const overlayEpoch = overlayEpochRef.current;
@@ -1901,7 +1903,7 @@ function MapPlanerWorkspace() {
   const handlePreviewCourse = useCallback(async (
     tripId: string,
     dateId: string,
-    options?: { keepBusCard?: boolean; silent?: boolean },
+    options?: { keepBusCard?: boolean; silent?: boolean; fromBus?: boolean },
   ): Promise<boolean> => {
     const epoch = overlayEpochRef.current;
     try {
@@ -1921,6 +1923,7 @@ function MapPlanerWorkspace() {
         course,
       });
       setKursowkaReturnDateId(course.dateId);
+      setBusOverlay(Boolean(options?.fromBus));
       setSelectedStop(null);
       // Karta pojazdu zostaje otwarta, gdy przebieg jest rysowany z kliknięcia autobusu.
       if (!options?.keepBusCard) setSelectedLiveBus(null);
@@ -1939,6 +1942,18 @@ function MapPlanerWorkspace() {
     }
   }, [showToast]);
 
+  // Karta pojazdu zamknięta (dowolną drogą) → jej trasa też znika z mapy,
+  // żeby nie zostawała „sierota” po wybraniu innego obiektu.
+  useEffect(() => {
+    if (selectedLiveBus || !busOverlay) return;
+    setBusOverlay(false);
+    setKursowkaOverlay(null);
+  }, [selectedLiveBus, busOverlay]);
+
+  const closeLiveBus = useCallback(() => {
+    setSelectedLiveBus(null);
+  }, []);
+
   const handleSelectBus = useCallback((bus: LiveBusVehicle) => {
     setOperatorFilter("all");
     updateVisibility({ liveBuses: true });
@@ -1948,13 +1963,19 @@ function MapPlanerWorkspace() {
     setMobileExpanded(false);
     mapRef.current?.centerOn(bus.lat, bus.lon, 16);
     // myBus 3.0: klik w autobus od razu pokazuje, jak jedzie — trasa kursu na
-    // mapie, a w karcie pełna lista przystanków. Nie zamyka karty pojazdu.
-    if (bus.tripId) {
-      void handlePreviewCourse(bus.tripId, serviceDateId(bus.tripStartMs ?? bus.timestamp), {
-        keepBusCard: true,
-        silent: true,
-      });
-    }
+    // mapie, a w karcie pełna lista przystanków. Kurs bierzemy z tego samego
+    // dopasowania co lista przystanków, więc trasa rysuje się także wtedy, gdy
+    // GPS nie podaje tripId (dopasowanie po linii, przystanku i godzinie).
+    void getVehicleCourseTrip(bus)
+      .then((course) => {
+        if (!course) return;
+        void handlePreviewCourse(course.tripId, course.dateId, {
+          keepBusCard: true,
+          silent: true,
+          fromBus: true,
+        });
+      })
+      .catch(() => undefined);
   }, [handlePreviewCourse]);
 
   const handleSetOperator = useCallback(
@@ -2293,8 +2314,13 @@ function MapPlanerWorkspace() {
               busLabelVehicleNumber={visibility.busVehicleNumber}
               selectedLiveBusId={selectedLiveBus?.vehicleId ?? null}
               onLiveBusClick={(bus) => {
-                setSelectedStop(null);
-                setSelectedLiveBus((prev) => (prev?.vehicleId === bus.vehicleId ? null : bus));
+                // Klik w ten sam autobus zamyka kartę i chowa jego trasę;
+                // klik w inny otwiera kartę i rysuje trasę jego kursu.
+                if (liveBusTap(selectedLiveBus?.vehicleId ?? null, bus.vehicleId) === "close") {
+                  closeLiveBus();
+                  return;
+                }
+                handleSelectBus(bus);
               }}
               trafficSignals={trafficSignals}
               showTrafficSignals={showTrafficSignals}
@@ -2388,7 +2414,13 @@ function MapPlanerWorkspace() {
                 </div>
               )}
               {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
-                <ShapeOverlayControl title={kursowkaOverlay.title} onClear={() => setKursowkaOverlay(null)} />
+                <ShapeOverlayControl
+                  title={kursowkaOverlay.title}
+                  onClear={() => {
+                    setBusOverlay(false);
+                    setKursowkaOverlay(null);
+                  }}
+                />
               )}
               {addMode ? (
                 <MapDrawingBanner
@@ -2432,7 +2464,7 @@ function MapPlanerWorkspace() {
                       onToggleTurnarounds={() => toggleVisibility("turnarounds")}
                       onSelectBus={handleSelectBus}
                     />
-                    {!isPlanner && kursowkaOverlay?.course && (
+                    {!isPlanner && kursowkaOverlay?.course && !busOverlay && (
                       <Suspense fallback={null}>
                         <CoursePreviewCard
                           key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
