@@ -106,13 +106,15 @@ try {
                 routeName: "7",
                 routeColor: "#1e6fbf",
                 brigade: "01",
-                location: [50.76697, 16.28661],
+                // Autobus w połowie odcinka między przystankami 1 i 2 — dzięki
+                // temu test sprawdza też podział trasy na przejechaną i przed nami.
+                // API zbiorkom podaje `location` jako [lon, lat] (GeoJSON).
+                location: [16.2883, 50.771],
                 timestamp: at(9, 55),
                 bearing: 45,
                 delay: 0,
                 headsign: "Koniec",
                 upcomingStops: [
-                  { sequence: 1, name: "Piłsudskiego - Plac Tuwima", scheduledArrival: at(10, 0), scheduledDeparture: at(10, 0) },
                   { sequence: 2, name: "Północ", scheduledArrival: at(10, 10), scheduledDeparture: at(10, 10) },
                   { sequence: 3, name: "Koniec", scheduledArrival: at(10, 20), scheduledDeparture: at(10, 20) },
                 ],
@@ -167,7 +169,7 @@ try {
     };
   });
   assert.ok(card.rows >= 2, `karta ma pokazać cały kurs (jest ${card.rows})`);
-  assert.equal(card.passed, 0, "autobus stoi na pierwszym przystanku — nic jeszcze nie przejechał");
+  assert.equal(card.passed, 1, "przystanek za autobusem jest oznaczony jako przejechany");
   assert.equal(card.current, 1, "autobus musi być zaznaczony na osi kursu");
   assert.ok(card.paths > 0, "trasa kursu musi być narysowana na mapie");
   // Trasa to JEDNA ciągła linia (obwódka + kolor), a nie kawałki: wcześniej
@@ -176,13 +178,41 @@ try {
   assert.ok(card.overlayTitle.includes("Trasa linii 7"), "mapa podpisuje narysowaną trasę");
   assert.equal(card.selected, 1, "wybrany autobus jest wyróżniony");
 
+  // Odcinek już przejechany ma inny kolor niż ten przed autobusem (myBus 3.0).
+  const progress = await page.evaluate(() => {
+    const strokeOf = (selector) =>
+      Array.from(document.querySelectorAll(selector))
+        .map((path) => String(path.getAttribute("stroke") || "").toLowerCase())
+        .filter((stroke) => stroke && stroke !== "#ffffff");
+    const done = Array.from(document.querySelectorAll(".leaflet-routeDone-pane path"));
+    const total = document.querySelectorAll(".leaflet-kursowka-pane path").length;
+    return {
+      doneStrokes: strokeOf(".leaflet-routeDone-pane path"),
+      doneLength: done[0] ? done[0].getTotalLength() : 0,
+      futureStrokes: strokeOf(".leaflet-kursowka-pane path"),
+      pattern: done[0]?.getAttribute("stroke-dasharray") ?? null,
+      total,
+    };
+  });
+  assert.equal(progress.doneStrokes.length, 1, "przejechany odcinek to jedna ciągła linia");
+  assert.ok(progress.total > 0, "trasa kursu nadal jest narysowana");
+  assert.ok(
+    progress.doneStrokes[0] !== progress.futureStrokes[0],
+    `przejechany odcinek ma inny kolor (${progress.doneStrokes[0]} vs ${progress.futureStrokes[0]})`,
+  );
+  assert.ok(progress.doneLength > 0, "przejechany odcinek ma długość");
+  assert.equal(progress.pattern, null, "linia jest ciągła — bez kresek i przerywania");
+
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // Drugi klik w ten sam autobus zamyka kartę i chowa trasę.
   await page.evaluate(() => {
     const label = document.querySelector(".live-bus-label") ?? document.querySelector(".live-bus");
     label.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   });
   await page.waitForFunction(
-    () => document.querySelectorAll(".leaflet-kursowka-pane path").length === 0,
+    () =>
+      document.querySelectorAll(".leaflet-kursowka-pane path").length === 0 &&
+      document.querySelectorAll(".leaflet-routeDone-pane path").length === 0,
     undefined,
     { timeout: 10000 },
   );
