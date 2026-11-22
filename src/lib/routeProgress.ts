@@ -43,6 +43,9 @@ export interface SplitRouteOptions {
   maxOffRouteMeters?: number;
   /** Krótszy odcinek nie jest rysowany jako osobny kolor (za mało pikseli). */
   minPartMeters?: number;
+  /** Przedział odcinków między ostatnim i kolejnym przystankiem. */
+  minIndex?: number;
+  maxIndex?: number;
 }
 
 const M_PER_DEG_LAT = 111_320;
@@ -102,27 +105,27 @@ export function splitRouteAtBus(
   const minPart = options.minPartMeters ?? DEFAULT_MIN_PART_M;
   const nearIndex = options.nearIndex ?? null;
 
-  let best: { index: number; meters: number; lat: number; lon: number } | null = null;
-  for (let i = 0; i < path.length - 1; i += 1) {
+  const firstIndex = Math.max(0, options.minIndex ?? 0);
+  const lastIndex = Math.min(path.length - 2, options.maxIndex ?? path.length - 2);
+  const candidates: Array<{ index: number; meters: number; lat: number; lon: number }> = [];
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let i = firstIndex; i <= lastIndex; i += 1) {
     const projected = projectOnSegment(bus, path[i], path[i + 1]);
-    if (!best || projected.meters < best.meters) {
-      best = { index: i, meters: projected.meters, lat: projected.lat, lon: projected.lon };
-      continue;
-    }
-    // Równie bliski odcinek: przy pętli wybieramy ten bliżej poprzedniego podziału.
-    if (
-      nearIndex !== null &&
-      Math.abs(projected.meters - best.meters) <= TIE_METERS &&
-      Math.abs(i - nearIndex) < Math.abs(best.index - nearIndex)
-    ) {
-      best = { index: i, meters: projected.meters, lat: projected.lat, lon: projected.lon };
-    }
+    candidates.push({ index: i, meters: projected.meters, lat: projected.lat, lon: projected.lon });
+    nearest = Math.min(nearest, projected.meters);
+  }
+  let best: typeof candidates[number] | null = null;
+  for (const candidate of candidates) {
+    if (candidate.meters > maxOffRoute || candidate.meters > nearest + (nearIndex === null ? 0 : TIE_METERS)) continue;
+    if (!best || (nearIndex !== null && Math.abs(candidate.index - nearIndex) < Math.abs(best.index - nearIndex)) ||
+      (nearIndex === null && candidate.meters < best.meters)) best = candidate;
   }
   if (!best || best.meters > maxOffRoute) return null;
 
   const point: RoutePoint = [best.lat, best.lon];
   const passed: RoutePoint[] = path.slice(0, best.index + 1);
-  if (!samePoint(passed[passed.length - 1], point)) passed.push(point);
+  const lastPassed = passed[passed.length - 1];
+  if (lastPassed[0] !== point[0] || lastPassed[1] !== point[1]) passed.push(point);
 
   const remaining: RoutePoint[] = [point];
   for (let i = best.index + 1; i < path.length; i += 1) {
@@ -144,12 +147,11 @@ export function splitRouteAtBus(
       remaining[i + 1][1],
     );
   }
-  const startPassed = passedMeters >= minPart ? passed : [];
-  const startRemaining = remainingMeters >= minPart ? remaining : [];
-  // Autobus dokładnie na starcie i na końcu trasy jednocześnie: brak podziału.
-  if (!startPassed.length && !startRemaining.length) return null;
-  if (startPassed.length === 1) startPassed.push(startRemaining[0] ?? point);
-  if (startRemaining.length === 1) startRemaining.unshift(startPassed[startPassed.length - 1] ?? point);
+  if (passedMeters < minPart && remainingMeters < minPart) return null;
+  // Na krańcach nie zostawiamy białej obwódki bez koloru: cała geometria
+  // należy do jednego z odcinków, aż drugi stanie się wystarczająco długi.
+  const startPassed = passedMeters < minPart ? [] : remainingMeters < minPart ? [...path] : passed;
+  const startRemaining = remainingMeters < minPart ? [] : passedMeters < minPart ? [...path] : remaining;
 
   return {
     index: best.index,
@@ -164,7 +166,7 @@ export function splitRouteAtBus(
  * Kolor odcinka już przejechanego: neutralna szarość (nie kolor innej linii),
  * czytelna na jasnych i ciemnych kafelkach.
  */
-export const PAST_ROUTE_COLOR = { light: "#b0bcb4", dark: "#6b7b72" } as const;
+export const PAST_ROUTE_COLOR = { light: "#6b6b6b", dark: "#b8b8b8" } as const;
 
 export function pastRouteColor(dark: boolean): string {
   return dark ? PAST_ROUTE_COLOR.dark : PAST_ROUTE_COLOR.light;
@@ -177,4 +179,65 @@ export const FUTURE_ROUTE_COLOR = "#16803c";
 export function liveStopProgress(sequence: number | undefined, nextSequence: number | undefined): "passed" | "upcoming" | "unknown" {
   if (sequence == null || nextSequence == null || !Number.isFinite(sequence) || !Number.isFinite(nextSequence)) return "unknown";
   return sequence < nextSequence ? "passed" : "upcoming";
+}
+
+/**
+ * Gdy pozycja GPS jest zbyt daleko od kształtu, rysujemy postęp tylko do
+ * ostatniego potwierdzonego przystanku. Jest to dolne oszacowanie, nie GPS.
+ */
+export function splitRouteAtLastPassedStop(
+  path: readonly RoutePoint[],
+  stops: ReadonlyArray<{ lat: number; lon: number; sequence?: number }>,
+  nextSequence: number | undefined,
+  options: Pick<SplitRouteOptions, "nearIndex"> = {},
+): RouteProgress | null {
+  if (nextSequence == null || !Number.isFinite(nextSequence) || !stops.length) return null;
+  const knownStops = stops.filter((stop) => stop.sequence != null && Number.isFinite(stop.sequence));
+  if (!knownStops.some((stop) => stop.sequence === nextSequence)) return null;
+  const passed = knownStops.filter((stop) => stop.sequence! < nextSequence);
+  if (!passed.length) {
+    return path.length >= 2 ? { index: 0, point: path[0], offsetMeters: 0, passed: [], remaining: [...path] } : null;
+  }
+  const last = passed[passed.length - 1];
+  return splitRouteAtBus(path, last, options);
+}
+
+/**
+ * Kolejne przystanki przyporządkowane do geometrii w kolejności kursu.
+ * Pomaga wybrać właściwą nitkę, gdy autobus wraca tą samą ulicą.
+ * Przy niezgodnych danych zwracamy null zamiast narzucać błędny przedział.
+ */
+export function routeStopAnchors(
+  path: readonly RoutePoint[],
+  stops: ReadonlyArray<{ lat: number; lon: number; sequence?: number }>,
+): number[] | null {
+  if (path.length < 2 || stops.length < 2) return null;
+  const result: number[] = [];
+  let position = 0;
+  for (let stopIndex = 0; stopIndex < stops.length; stopIndex += 1) {
+    const stop = stops[stopIndex];
+    let best: { index: number; t: number; meters: number } | null = null;
+    for (let i = Math.floor(position); i < path.length - 1; i += 1) {
+      const p = projectOnSegment(stop, path[i], path[i + 1]);
+      if (i + p.t + 1e-8 < position) continue;
+      if (!best || p.meters < best.meters - 0.01 ||
+          (stopIndex === stops.length - 1 && Math.abs(p.meters - best.meters) <= 0.01)) {
+        best = { index: i, t: p.t, meters: p.meters };
+      }
+    }
+    if (!best || best.meters > DEFAULT_MAX_OFF_ROUTE_M) return null;
+    position = best.index + best.t;
+    result.push(best.index);
+  }
+  return result;
+}
+
+/** Zakres segmentów geometrii pomiędzy potwierdzonymi przystankami kursu. */
+export function stopSegmentRange(
+  stops: ReadonlyArray<{ sequence?: number }>, anchors: readonly number[] | null, nextSequence: number | undefined,
+): { minIndex: number; maxIndex: number } | null {
+  if (!anchors || anchors.length !== stops.length || nextSequence == null) return null;
+  const next = stops.findIndex((stop) => stop.sequence === nextSequence);
+  if (next < 0) return null;
+  return { minIndex: next > 0 ? anchors[next - 1] : 0, maxIndex: anchors[next] };
 }

@@ -2899,6 +2899,8 @@ export async function getVehicleRouteOverlay(
   color: string;
   polylines: [number, number][][];
   stops: Array<{ name: string; lat: number; lon: number; sequence: number }>;
+  /** Różnica między numeracją GPS a stop_sequence w tym kursie. */
+  liveSequenceOffset: number;
 } | null> {
   const store = await seededWithShapes();
   const match = await resolveVehicleTrip(bus);
@@ -2931,6 +2933,7 @@ export async function getVehicleRouteOverlay(
     color: route?.color || bus.routeColor || "#0d4f3b",
     polylines,
     stops,
+    liveSequenceOffset: match?.seqOffset ?? 0,
   };
 }
 

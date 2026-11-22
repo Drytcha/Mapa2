@@ -58,7 +58,7 @@ try {
     ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),
   });
   const page = await context.newPage();
-  const feed = { nextSequence: 2, delay: 0, location: [16.2883, 50.771] };
+  const feed = { nextSequence: 1, delay: 0, location: [16.2883, 50.771] };
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -116,8 +116,8 @@ try {
                 delay: feed.delay,
                 headsign: "Koniec",
                 upcomingStops: [
-                  { sequence: 2, name: "Północ", scheduledArrival: at(10, 10), scheduledDeparture: at(10, 10) },
-                  { sequence: 3, name: "Koniec", scheduledArrival: at(10, 20), scheduledDeparture: at(10, 20) },
+                  { sequence: 1, name: "Północ", scheduledArrival: at(10, 10), scheduledDeparture: at(10, 10) },
+                  { sequence: 2, name: "Koniec", scheduledArrival: at(10, 20), scheduledDeparture: at(10, 20) },
                 ].filter((stop) => stop.sequence >= feed.nextSequence),
               },
             ],
@@ -150,7 +150,7 @@ try {
   await page.waitForSelector('[data-testid="bus-pane-odjazdy"]', { timeout: 15000 });
   await page.waitForSelector('[data-testid="bus-run-panel"]', { timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelectorAll(".leaflet-kursowka-pane path").length > 0,
+    () => document.querySelectorAll(".leaflet-routeDone-pane path").length === 2,
     undefined,
     { timeout: 15000 },
   );
@@ -175,7 +175,7 @@ try {
   assert.ok(card.paths > 0, "trasa kursu musi być narysowana na mapie");
   // Trasa to JEDNA ciągła linia (obwódka + kolor), a nie kawałki: wcześniej
   // dłuższe odcinki kształtu dzieliły polilinię i linia urywała się w połowie.
-  assert.equal(card.paths, 2, `trasa rysowana jednym ciągiem (są ${card.paths} ścieżki)`);
+  assert.equal(card.paths, 1, `obwódka trasy jest ciągła (są ${card.paths} ścieżki)`);
   assert.ok(card.overlayTitle.includes("Trasa linii 7"), "mapa podpisuje narysowaną trasę");
   assert.equal(card.selected, 1, "wybrany autobus jest wyróżniony");
 
@@ -188,9 +188,9 @@ try {
     const done = Array.from(document.querySelectorAll(".leaflet-routeDone-pane path"));
     const total = document.querySelectorAll(".leaflet-kursowka-pane path").length;
     return {
-      doneStrokes: strokeOf(".leaflet-routeDone-pane path"),
+      doneStrokes: strokeOf(".leaflet-routeDone-pane path").slice(0, 1),
       doneLength: done[0] ? done[0].getTotalLength() : 0,
-      futureStrokes: strokeOf(".leaflet-kursowka-pane path"),
+      futureStrokes: strokeOf(".leaflet-routeDone-pane path").slice(1),
       pattern: done[0]?.getAttribute("stroke-dasharray") ?? null,
       linePatterns: Array.from(document.querySelectorAll(".leaflet-kursowka-pane path")).map((path) => getComputedStyle(path).strokeDasharray),
       total,
@@ -217,7 +217,7 @@ try {
 
   // Nieruchomy autobus, ale nowe informacje GPS: postęp musi się odświeżyć
   // również wtedy, gdy współrzędne w ogóle się nie zmieniły.
-  feed.nextSequence = 3;
+  feed.nextSequence = 2;
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.waitForFunction(() => {
     const stops = document.querySelectorAll(".leaflet-courseStops-pane path");
@@ -231,11 +231,26 @@ try {
     await page.waitForFunction((color) => getComputedStyle(document.querySelector(".live-bus")).backgroundColor === color, expected, { timeout: 15000 });
   }
 
-  const beforeMovement = await page.locator(".leaflet-routeDone-pane path").getAttribute("d");
+  const beforeMovement = await page.locator(".leaflet-routeDone-pane path").first().getAttribute("d");
   feed.location = [16.292, 50.779];
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.waitForFunction((previous) => document.querySelector(".leaflet-routeDone-pane path")?.getAttribute("d") !== previous, beforeMovement, { timeout: 15000 });
-  assert.ok((await page.locator(".leaflet-routeDone-pane path").evaluate((path) => path.getTotalLength())) > progress.doneLength, "szary odcinek rośnie wraz z pozycją pojazdu");
+  assert.ok((await page.locator(".leaflet-routeDone-pane path").first().evaluate((path) => path.getTotalLength())) > progress.doneLength, "szary odcinek rośnie wraz z pozycją pojazdu");
+
+  // GPS poza geometrią: szary fragment do ostatniego znanego przystanku i
+  // informacja, że podział jest szacunkowy, zamiast pozornie całej zielonej trasy.
+  feed.location = [16.32, 50.779];
+  await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
+  await page.getByTestId("route-progress-status").getByText(/Szacunkowo/).waitFor();
+  assert.deepEqual(await page.locator(".leaflet-routeDone-pane path").evaluateAll((paths) => paths.map((path) => path.getAttribute("stroke"))), ["#b8b8b8", "#16803c"]);
+  assert.deepEqual((await colors()).slice(0, 2), ["#b8b8b8", "#b8b8b8"], "numeracja GPS od zera jest dopasowana do rozkładu");
+
+  // Brak pozycji blisko trasy i brak kolejnego przystanku: postęp nie jest
+  // znany i nie wolno udawać, że cała trasa jest przed autobusem.
+  feed.nextSequence = 99;
+  await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
+  await page.getByTestId("route-progress-status").getByText(/Brak danych/).waitFor();
+  assert.deepEqual(await page.locator(".leaflet-routeDone-pane path").evaluateAll((paths) => paths.map((path) => path.getAttribute("stroke"))), ["#94a3b8"]);
 
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // Drugi klik w ten sam autobus zamyka kartę i chowa trasę.
