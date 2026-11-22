@@ -807,11 +807,11 @@ export default function BrigadesPanel({
             className={cn(
               "flex h-6 items-center gap-1 rounded px-2 text-[9.5px] font-extrabold transition-colors",
               operatorFilter === "mzuk"
-                ? "bg-[#86efac] text-[#10351e] shadow-xs"
+                ? "bg-raised text-ink shadow-xs"
                 : "text-mute hover:text-ink"
             )}
           >
-            <span className="h-2 w-2 rounded-full bg-[#22c55e]" />
+            <span className="h-2 w-2 rounded-full bg-[#94a3b8]" />
             MZUK
             <span className="metric text-[8.5px] opacity-80">
               ({operatorCounts.mzuk})
@@ -826,11 +826,11 @@ export default function BrigadesPanel({
             className={cn(
               "flex h-6 items-center gap-1 rounded px-2 text-[9.5px] font-extrabold transition-colors",
               operatorFilter === "ska"
-                ? "bg-[#c084fc] text-[#1b0734] shadow-xs"
+                ? "bg-raised text-ink shadow-xs"
                 : "text-mute hover:text-ink"
             )}
           >
-            <span className="h-2 w-2 rounded-full bg-[#a855f7]" />
+            <span className="h-2 w-2 rounded-full bg-[#94a3b8]" />
             ŚKA
             <span className="metric text-[8.5px] opacity-80">
               ({operatorCounts.ska})
@@ -982,16 +982,16 @@ export default function BrigadesPanel({
             [
               {
                 bucket: fleetSummary.mzuk,
-                dot: "bg-[#22c55e]",
-                badgeBg: "#86efac",
-                badgeFg: "#10351e",
+                dot: "bg-[#94a3b8]",
+                badgeBg: "#cbd5e1",
+                badgeFg: "#273449",
                 title: "MZUK Sp. z o.o.",
               },
               {
                 bucket: fleetSummary.ska,
-                dot: "bg-[#a855f7]",
-                badgeBg: "#c084fc",
-                badgeFg: "#1b0734",
+                dot: "bg-[#94a3b8]",
+                badgeBg: "#cbd5e1",
+                badgeFg: "#273449",
                 title: "ŚKA (Konsorcjum)",
               },
               {

@@ -1,4 +1,4 @@
-/** Punctuality colours are separate from the company's identity colours. */
+/** Punctuality colours used consistently for vehicles and predicted times. */
 export type DelayTone = "late-high" | "late" | "early-small" | "early-big";
 export interface DelayStyle {
   bg: string;
@@ -8,7 +8,7 @@ export interface DelayStyle {
 
 export const DELAY_STYLES: Record<DelayTone, DelayStyle> = {
   "late-high": { bg: "#dc2626", fg: "#ffffff", label: "Opóźnienie powyżej 3 min" },
-  late: { bg: "#fb923c", fg: "#3a1503", label: "Opóźnienie do 3 min" },
+  late: { bg: "#fca5a5", fg: "#450a0a", label: "Opóźnienie do 3 min" },
   "early-small": { bg: "#86efac", fg: "#052e16", label: "Na czas / przyspieszenie do 1 min" },
   "early-big": { bg: "#15803d", fg: "#ffffff", label: "Przyspieszenie powyżej 1 min" },
 };

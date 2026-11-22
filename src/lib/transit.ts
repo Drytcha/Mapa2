@@ -2,13 +2,13 @@ import { foldPolish, formatDutyCode } from "./core/text";
 import type { LiveBusVehicle, WalbrzychOperatorKey } from "./types";
 import { formatVehicleNumber } from "./delay";
 
-/** Company identity is independent of the red/green punctuality indicator. */
+/** Neutral company labels; vehicle colour represents punctuality, not operator. */
 export const OPERATOR_STYLES: Record<
   WalbrzychOperatorKey,
   { label: string; bg: string; fg: string; soft: string }
 > = {
-  mzuk: { label: "MZUK", bg: "#86efac", fg: "#10351e", soft: "#86efac24" },
-  ska: { label: "ŚKA", bg: "#c084fc", fg: "#1b0734", soft: "#c084fc24" },
+  mzuk: { label: "MZUK", bg: "#cbd5e1", fg: "#273449", soft: "#cbd5e120" },
+  ska: { label: "ŚKA", bg: "#cbd5e1", fg: "#273449", soft: "#cbd5e120" },
   other: { label: "Inny", bg: "#cbd5e1", fg: "#273449", soft: "#cbd5e120" },
 };
 

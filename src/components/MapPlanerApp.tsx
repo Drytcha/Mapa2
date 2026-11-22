@@ -529,7 +529,8 @@ function MapPlanerWorkspace() {
           (vehicle) =>
             `${vehicle.vehicleId}:${vehicle.lat.toFixed(5)}:${vehicle.lon.toFixed(5)}:` +
             `${vehicle.delaySeconds}:${vehicle.speedKmh?.toFixed(1) ?? ""}:` +
-            `${vehicle.routeName}:${vehicle.kursowka ?? ""}:${vehicle.bearing?.toFixed(0) ?? ""}`
+            `${vehicle.routeName}:${vehicle.kursowka ?? ""}:${vehicle.bearing?.toFixed(0) ?? ""}:` +
+            `${vehicle.tripId ?? ""}:${vehicle.upcomingStops[0]?.sequence ?? ""}:${vehicle.upcomingStops[0]?.scheduledDeparture ?? ""}`
         )
         .join("|");
     let lastVehicleSignature = "";
@@ -2430,7 +2431,6 @@ function MapPlanerWorkspace() {
                 <ShapeOverlayControl
                   title={kursowkaOverlay.title}
                   progress={Boolean(kursowkaOverlay.liveVehicleId)}
-                  lineColor={kursowkaOverlay.color}
                   dark={theme === "dark"}
                   onClear={() => {
                     busOverlayRequestRef.current = null;
@@ -2693,9 +2693,7 @@ function MapPlanerWorkspace() {
                 </>
               )}
               <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#86efac]" /> MZUK
-                <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-[#c084fc]" /> ŚKA (
-                {visibleLiveBuses.length})
+                GPS autobusów ({visibleLiveBuses.length})
               </span>
               {trafficSignals.length > 0 && (
                 <>

@@ -242,7 +242,7 @@ export function computeFleetSignature(snapshot: LiveFleetSnapshot): string {
   const vPart = snapshot.vehicles
     .map(
       (v) =>
-        `${v.vehicleId}:${v.lat.toFixed(5)},${v.lon.toFixed(5)}:${v.delaySeconds}:${v.dutyCode ?? ""}:${v.operatorKey}:${v.speedKmh === null ? "-" : Math.round(v.speedKmh)}`
+        `${v.vehicleId}:${v.lat.toFixed(5)},${v.lon.toFixed(5)}:${v.delaySeconds}:${v.dutyCode ?? ""}:${v.operatorKey}:${v.speedKmh === null ? "-" : Math.round(v.speedKmh)}:${v.routeName}:${v.tripId ?? ""}:${v.upcomingStops[0]?.sequence ?? ""}:${v.upcomingStops[0]?.scheduledDeparture ?? ""}`
     )
     .join("|");
   return `${snapshot.vehicles.length}#${snapshot.traffic.recommendedPeakPercent}#${vPart}`;

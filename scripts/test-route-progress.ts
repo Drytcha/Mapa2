@@ -5,7 +5,7 @@
 // inny kolor niż ta, która ma być wykonana w przyszłości”.
 import assert from "node:assert/strict";
 
-const { splitRouteAtBus, pastRouteColor, PAST_ROUTE_COLOR } = await import(
+const { splitRouteAtBus, pastRouteColor, PAST_ROUTE_COLOR, FUTURE_ROUTE_COLOR, liveStopProgress } = await import(
   "../src/lib/routeProgress"
 );
 
@@ -94,5 +94,12 @@ const lengthMeters = (path: Array<[number, number]>) => {
     assert.ok(Math.max(r, g, b) - Math.min(r, g, b) <= 24, `szary odcień przejechanej trasy (${color})`);
   }
 }
+
+// Postęp przystanków pochodzi z numeru kolejnego przystanku GPS, nie z czasu zegara.
+assert.equal(FUTURE_ROUTE_COLOR, "#16803c");
+assert.deepEqual([1, 2, 3].map((sequence) => liveStopProgress(sequence, 2)), ["passed", "upcoming", "upcoming"]);
+assert.deepEqual([1, 2, 3].map((sequence) => liveStopProgress(sequence, 3)), ["passed", "passed", "upcoming"]);
+assert.equal(liveStopProgress(1, undefined), "unknown");
+assert.equal(liveStopProgress(undefined, 2), "unknown");
 
 console.log("OK: trasa za autobusem ma osobny kolor, a podział jest ciągły i bez dziur");

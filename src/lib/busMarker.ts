@@ -7,7 +7,6 @@ import {
   formatSpeed,
   formatVehicleNumber,
 } from "./delay";
-import { OPERATOR_STYLES } from "./transit";
 import type { LiveBusVehicle } from "./types";
 
 /** Direction, line, speed and delay stay visible; only extra identifiers are optional. */
@@ -96,7 +95,6 @@ export function buildBusMarker(
   const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
   // Kierunek z rozkładu jest pewniejszy niż tablica kierunkowa GPS.
   const directionLabel = options.destination || bus.headsign || "";
-  const company = OPERATOR_STYLES[bus.operatorKey] ?? OPERATOR_STYLES.other;
   const { segments, hasExtra } = buildMarkerSegments(bus, options);
   const compact = !hasExtra && segments.length === 1;
   const speedText = formatSpeed(bus.speedKmh);
@@ -117,7 +115,7 @@ export function buildBusMarker(
   const pill = `${operatorBadge}${direction}<span class="live-bus-label">${labelHtml}</span>`;
 
   const html = [
-    `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" data-vehicle-id="${escapeHtml(bus.vehicleId)}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};--operator-bg:${company.bg};--operator-fg:${company.fg}">`,
+    `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" data-vehicle-id="${escapeHtml(bus.vehicleId)}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};">`,
     `<div class="live-bus${compact ? " live-bus--compact" : ""}${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
     pill,
     `</div>`,
