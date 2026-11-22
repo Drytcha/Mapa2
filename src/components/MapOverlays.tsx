@@ -504,6 +504,8 @@ export function LiveBusCard({
   const [identityHelp, setIdentityHelp] = useState(false);
   /** myBus 3.0: dolne zakładki karty pojazdu. */
   const [pane, setPane] = useState<"odjazdy" | "szczegoly">("odjazdy");
+  /** Telefon: karta jako dolna szuflada — można ją zwinąć do paska stanu. */
+  const [sheetCollapsed, setSheetCollapsed] = useState(false);
 
   useEffect(() => {
     setIdentityHelp(false);
@@ -552,7 +554,21 @@ export function LiveBusCard({
   });
 
   return (
-    <div className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93">
+    <div
+      className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93 max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:z-[620] max-sm:max-h-[52dvh] max-sm:w-auto max-sm:max-w-none max-sm:rounded-2xl max-sm:shadow-[0_-10px_40px_rgba(9,35,23,0.35)]"
+      data-mobile-sheet="bus"
+    >
+      {/* Uchwyt dolnej karty: na telefonie zwija kartę do paska z kierunkiem. */}
+      <button
+        type="button"
+        onClick={() => setSheetCollapsed((collapsed) => !collapsed)}
+        aria-expanded={!sheetCollapsed}
+        aria-label={sheetCollapsed ? "Rozwiń kartę autobusu" : "Zwiń kartę autobusu"}
+        data-testid="bus-sheet-handle"
+        className="mx-auto mt-1 flex h-4 w-full shrink-0 items-center justify-center sm:hidden"
+      >
+        <span className="h-1 w-10 rounded-full bg-line-strong/70" />
+      </button>
       <div className="flex shrink-0 items-start gap-2.5 border-b border-line/70 bg-brand-soft/80 px-3 py-2.5">
         <span
           className="metric mt-px grid h-8 min-w-[34px] shrink-0 place-items-center rounded-lg px-1.5 text-[12px] font-extrabold shadow-xs"
@@ -567,7 +583,13 @@ export function LiveBusCard({
           <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.15em] text-brand-ink/80">
             GPS na żywo · {bus.operatorName}
           </span>
-          <div className="group/identity relative mt-0.5">
+          <div
+            className={cn(
+              "group/identity relative mt-0.5",
+              // Zwinięta dolna karta na telefonie pokazuje tylko kierunek i stan.
+              sheetCollapsed && "max-sm:hidden",
+            )}
+          >
             <button
               type="button"
               onClick={(event) => {
@@ -734,7 +756,7 @@ export function LiveBusCard({
             </span>
           )}
         </div>
-        <div className="mt-1.5 flex items-center gap-2.5 text-[8px] font-bold">
+        <div className={cn("mt-1.5 flex items-center gap-2.5 text-[8px] font-bold", sheetCollapsed && "max-sm:hidden")}>
           <button
             type="button"
             aria-pressed={pane === "odjazdy"}
@@ -766,7 +788,12 @@ export function LiveBusCard({
         </div>
       </div>
 
-      <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-3 py-2.5 text-[10px]">
+      <div
+        className={cn(
+          "scroll-area min-h-0 flex-1 overflow-y-auto px-3 py-2.5 text-[10px]",
+          sheetCollapsed && "max-sm:hidden",
+        )}
+      >
         {pane === "odjazdy" ? (
           <LiveBusRunPanel
             stops={tripStops.stops}

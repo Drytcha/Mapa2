@@ -500,3 +500,30 @@ Klik w ten sam autobus zamyka kartę i usuwa trasę. Nowe testy:
 `test-live-bus-route.ts` (bez dnia w kalendarzu trasa nadal powstaje — dowód, że
 regresja nie wróci) oraz `test:bus:e2e` (Chromium: klik w pigułkę → karta
 z całym kursem → trasa na mapie z podpisem „Trasa linii 7” → drugi klik chowa).
+
+## Telefon: karta autobusu jako dolna szuflada, mapa zostaje widoczna
+
+Zgłoszenie: „ciężko w ogóle cokolwiek widzieć na mapie po kliknięciu w autobus”.
+Na wąskim ekranie karta kursu była panelem na całą wysokość i zasłaniała mapę
+razem z narysowaną trasą. Zmiany (desktop bez zmian):
+
+1. **Karta to dolna szuflada** (`max-sm:fixed`, `inset-x-2`, `bottom-2`,
+   `max-h: 52dvh`, zaokrąglona). Mapa zostaje odsłonięta nad nią.
+2. **Uchwyt do zwijania** (`data-testid="bus-sheet-handle"`, `aria-expanded`):
+   schowanie zostawia sam nagłówek z linią i kierunkiem (na telefonie
+   wysokość karty spada z ~369 px do ~170 px), a po rozwinięciu wracają
+   zakładki, godziny i lista przystanków.
+3. **Trasa dopasowuje się do widocznej części mapy.** `fitOverlayMap` liczy
+   paddingi z realnego rozmiaru mapy (`getSize()`), a przy otwartej szufladzie
+   (`bottomSheetOpen`) dolny zapas to `24 + połowa wysokości mapy` — cały
+   przejazd mieści się **nad** kartą (na 390×844: trasa 161–396 px, karta
+   zaczyna się na 479 px).
+4. **Mniej zasłoniętej listy brygad** — na telefonie lista brygad chowa się,
+   gdy wybrany jest autobus (`hidden sm:contents`).
+5. **Drobniejsze pigułki autobusów** na wąskim ekranie (24 px wysokości, 10 px
+   numer linii, mniejsze opóźnienie i strzałka), żeby nie przykrywały ulic.
+
+Test `npm run test:bus:e2e` ma teraz drugą fazę w Chromium na 390×844
+(`isMobile`, `hasTouch`, DPR 2): sprawdza `position: fixed`, odstępy od
+krawędzi, wysokość ≤ 56% ekranu, ukrytą listę brygad, to, że trasa zaczyna się
+i kończy **nad** szufladą, oraz zwijanie/rozwijanie uchwytem.
