@@ -44,7 +44,6 @@ const SPEC: Record<string, Array<[string, string]>> = {
   "9": [
     ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
     ["a", "kurs przedłużony do przystanku Podwale - Forteczna"],
-    ["d", "kurs do Dworca Szczawienko"],
     ["s", "kurs przez ul. Sokołowskiego /szpital/"],
     ["c", "kurs przedłużony do ul. Jachimowicza"],
     ["j", "kurs przedłużony do ul. Jachimowicza (Faurecia)"],
@@ -131,8 +130,8 @@ assert.equal(code("8", "Dworzec Miasto"), "d");
 assert.equal(code("8", "Struga"), "s");
 assert.equal(code("8", "Szczawienko", ["Al. Podwale"]), "a");
 assert.equal(code("9", "Aleja Podwale - Forteczna"), "a");
-assert.equal(code("9", "Dworzec Szczawienko"), "d");
-assert.equal(code("9", "Stacyjna - Dw. Szczawienko"), "d");
+assert.equal(code("9", "Dworzec Szczawienko"), "");
+assert.equal(code("9", "Stacyjna - Dw. Szczawienko"), "");
 assert.equal(code("9", "ul. Jachimowicza"), "c");
 assert.equal(code("9", "ul. Jachimowicza (Faurecia)"), "j");
 assert.equal(code("9", "Jachimowicza - Toyota końcowy"), "c", "Toyota to nie Faurecia");
@@ -166,7 +165,7 @@ assert.equal(
   "s",
   "przejazd przez szpital to uwaga „s”, niezależna od końca kursu",
 );
-assert.equal(code("9", "Dworzec Szczawienko", ["Szpital", "Uczniowska - Urząd Skarbowy"]), "sd");
+assert.equal(code("9", "Dworzec Szczawienko", ["Szpital", "Uczniowska - Urząd Skarbowy"]), "s*");
 assert.equal(
   code("9", "Jachimowicza - Toyota końcowy", ["Szpital"]),
   "sc",
@@ -178,7 +177,7 @@ assert.equal(
     destination: "Jachimowicza",
     stops: ["Stacyjna", "Dworzec Szczawienko - końcowy"],
   }),
-  "d",
+  "",
   "koniec kursu (Dworzec Szczawienko) wygrywa z błędnym kierunkiem GTFS",
 );
 assert.deepEqual(
@@ -347,11 +346,9 @@ assert.equal(
   timetableLegendText(duty9),
   "Legenda wariantów: 9: a – kurs przedłużony do przystanku Podwale - Forteczna · 19: j – kurs przedłużony do ul. Jachimowicza (Faurecia)",
 );
-const jedenWiersz9 =
-  "* – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs przedłużony do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs przedłużony do ul. Jachimowicza, j – kurs przedłużony do ul. Jachimowicza (Faurecia)";
-const jedenWiersz19 =
+const jedenWiersz919 =
   "* – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs przedłużony do przystanku Podwale - Forteczna, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs przedłużony do ul. Jachimowicza, j – kurs przedłużony do ul. Jachimowicza (Faurecia)";
-const legenda919 = `9: ${jedenWiersz9} · 19: ${jedenWiersz19}`;
+const legenda919 = `9: ${jedenWiersz919} · 19: ${jedenWiersz919}`;
 assert.equal(
   timetablePrintLegendText(duty9),
   `Legenda wariantów: ${legenda919}`,
@@ -367,7 +364,7 @@ const uwagi9 = timetableLegendFooterRows({
 } as TimetablePdfDuty);
 assert.deepEqual(
   uwagi9.map((entry) => entry.code),
-  ["*", "a", "d", "s", "c", "j"],
+  ["*", "a", "s", "c", "j"],
   "jedna płaska lista liter (bez wiersza „linia” przy każdej literze)",
 );
 assert.ok(

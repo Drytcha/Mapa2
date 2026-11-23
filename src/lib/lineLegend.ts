@@ -68,17 +68,11 @@ const LINE_9_19_RULES: readonly LineLegendRule[] = [
     to: ["forteczna"],
     group: "koniec",
   },
-  {
-    code: "d",
-    text: "kurs do Dworca Szczawienko",
-    to: ["szczawienko"],
-    group: "koniec",
-  },
   { code: "s", text: "kurs przez ul. Sokołowskiego /szpital/", via: ["szpital"] },
   {
     code: "*",
     text: "na przystanku Uczniowska-US przesiadka pasażerów linią-18",
-    via: ["__manual_transfer_18__"],
+    via: ["uczniowska urzad skarbowy"],
   },
 ];
 
@@ -246,7 +240,7 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
       to: ["urzad skarbowy"],
     },
   ],
-  "19": LINE_9_19_RULES.filter((rule) => rule.code !== "d"),
+  "19": LINE_9_19_RULES,
   A: [
     { code: "a", text: "kurs przez Auchan", via: ["auchan"] },
     {
