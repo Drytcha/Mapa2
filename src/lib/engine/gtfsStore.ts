@@ -1708,13 +1708,41 @@ export function trimShapeToStops(
  * kursówka, katalog linii, kurs w planerze) muszą rysować przez tę funkcję,
  * żeby linia nigdy nie wybiegała poza swój przystanek końcowy.
  */
+function stripZeromskiegoDetour(points: [number, number][]): [number, number][] {
+  if (points.length < 4) return points;
+  const gedymina = { lat: 50.78886, lon: 16.27294 };
+  const bema = { lat: 50.79032, lon: 16.26913 };
+  const nearG = nearestVertexIndex(points, gedymina);
+  const nearB = nearestVertexIndex(points, bema);
+  if (
+    nearG.index >= 0 &&
+    nearB.index >= 0 &&
+    nearG.meters <= 120 &&
+    nearB.meters <= 120 &&
+    Math.abs(nearB.index - nearG.index) > 2
+  ) {
+    const lo = Math.min(nearG.index, nearB.index);
+    const hi = Math.max(nearG.index, nearB.index);
+    const segLen = pathLengthMeters(points, lo, hi);
+    if (segLen > 550) {
+      return [...points.slice(0, lo + 1), ...points.slice(hi)];
+    }
+  }
+  return points;
+}
+
 export function shapeForTripStops(
   shape: [number, number][],
   first: { lat: number; lon: number } | null,
   last: { lat: number; lon: number } | null,
   maxSpurMeters = 400,
 ): [number, number][] {
-  return connectEndsToStops(trimShapeToStops(shape, first, last, maxSpurMeters), first, last, maxSpurMeters);
+  return connectEndsToStops(
+    stripZeromskiegoDetour(trimShapeToStops(shape, first, last, maxSpurMeters)),
+    first,
+    last,
+    maxSpurMeters,
+  );
 }
 
 /** Store z gotowymi kształtami tras — dla funkcji, które rysują geometrię. */
