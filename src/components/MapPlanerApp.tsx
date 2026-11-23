@@ -2395,59 +2395,6 @@ function MapPlanerWorkspace() {
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
             <div className="pointer-events-none absolute left-3 top-5 flex max-h-[calc(100%-100px)] max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
-              {stopDisplay === "off" && (
-                <div
-                  role="status"
-                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold text-ink shadow-lg"
-                >
-                  Przystanki są ukryte. {" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      updateVisibility({ stops: "all" });
-                      setBusQuery("");
-                      centerWalbrzych();
-                    }}
-                    className="font-extrabold text-brand-ink underline underline-offset-2"
-                  >
-                    Pokaż przystanki
-                  </button>
-                </div>
-              )}
-              {stopDisplay !== "off" && (showingSnapshotStops || busError) && (
-                <div
-                  role="status"
-                  data-testid="stop-data-status"
-                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold leading-snug text-ink shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
-                >
-                  {busError || (busLoading
-                    ? "Pokazuję zapisaną migawkę przystanków. Wczytuję aktualny rozkład…"
-                    : "Przystanki pochodzą z zapisanej migawki i mogą być nieaktualne.")}
-                  {busError && showingSnapshotStops && " Przystanki z migawki mogą być nieaktualne."}
-                  {busError && (
-                    <button
-                      type="button"
-                      onClick={() => void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice")}
-                      className="ml-1.5 font-extrabold text-brand-ink underline underline-offset-2"
-                    >
-                      Ponów
-                    </button>
-                  )}
-                </div>
-              )}
-              {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
-                <ShapeOverlayControl
-                  title={kursowkaOverlay.title}
-                  progress={Boolean(kursowkaOverlay.liveVehicleId)}
-                  progressStatus={routeProgressStatus}
-                  dark={theme === "dark"}
-                  onClear={() => {
-                    busOverlayRequestRef.current = null;
-                    setBusOverlay(false);
-                    setKursowkaOverlay(null);
-                  }}
-                />
-              )}
               {addMode ? (
                 <MapDrawingBanner
                   count={assignedCount}
@@ -2577,6 +2524,59 @@ function MapPlanerWorkspace() {
                         mapRef.current?.centerOn(selectedLiveBus.lat, selectedLiveBus.lon, 16)
                       }
                     />
+                  )}
+                </div>
+              )}
+              {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
+                <ShapeOverlayControl
+                  title={kursowkaOverlay.title}
+                  progress={Boolean(kursowkaOverlay.liveVehicleId)}
+                  progressStatus={routeProgressStatus}
+                  dark={theme === "dark"}
+                  onClear={() => {
+                    busOverlayRequestRef.current = null;
+                    setBusOverlay(false);
+                    setKursowkaOverlay(null);
+                  }}
+                />
+              )}
+              {stopDisplay === "off" && (
+                <div
+                  role="status"
+                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold text-ink shadow-lg"
+                >
+                  Przystanki są ukryte. {" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateVisibility({ stops: "all" });
+                      setBusQuery("");
+                      centerWalbrzych();
+                    }}
+                    className="font-extrabold text-brand-ink underline underline-offset-2"
+                  >
+                    Pokaż przystanki
+                  </button>
+                </div>
+              )}
+              {stopDisplay !== "off" && (showingSnapshotStops || busError) && (
+                <div
+                  role="status"
+                  data-testid="stop-data-status"
+                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold leading-snug text-ink shadow-[0_8px_24px_rgba(13,42,28,0.14)] "
+                >
+                  {busError || (busLoading
+                    ? "Pokazuję zapisaną migawkę przystanków. Wczytuję aktualny rozkład…"
+                    : "Przystanki pochodzą z zapisanej migawki i mogą być nieaktualne.")}
+                  {busError && showingSnapshotStops && " Przystanki z migawki mogą być nieaktualne."}
+                  {busError && (
+                    <button
+                      type="button"
+                      onClick={() => void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice")}
+                      className="ml-1.5 font-extrabold text-brand-ink underline underline-offset-2"
+                    >
+                      Ponów
+                    </button>
                   )}
                 </div>
               )}
