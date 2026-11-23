@@ -1710,25 +1710,11 @@ export function trimShapeToStops(
  */
 function stripZeromskiegoDetour(points: [number, number][]): [number, number][] {
   if (points.length < 4) return points;
-  const gedymina = { lat: 50.78886, lon: 16.27294 };
-  const bema = { lat: 50.79032, lon: 16.26913 };
-  const nearG = nearestVertexIndex(points, gedymina);
-  const nearB = nearestVertexIndex(points, bema);
-  if (
-    nearG.index >= 0 &&
-    nearB.index >= 0 &&
-    nearG.meters <= 120 &&
-    nearB.meters <= 120 &&
-    Math.abs(nearB.index - nearG.index) > 2
-  ) {
-    const lo = Math.min(nearG.index, nearB.index);
-    const hi = Math.max(nearG.index, nearB.index);
-    const segLen = pathLengthMeters(points, lo, hi);
-    if (segLen > 550) {
-      return [...points.slice(0, lo + 1), ...points.slice(hi)];
-    }
-  }
-  return points;
+  // Usuń stary objazd przez Europejkę (na południe od ul. Żeromskiego między
+  // przystankami Żeromskiego - Oczki a Wańkowicza - Bema).
+  return points.filter(
+    ([lat, lon]) => !(lat < 50.7873 && lon > 16.269 && lon < 16.28),
+  );
 }
 
 export function shapeForTripStops(
