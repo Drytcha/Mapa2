@@ -73,7 +73,6 @@ const SPEC: Record<string, Array<[string, string]>> = {
   "19": [
     ["*", "na przystanku Uczniowska-US przesiadka pasażerów linią-18"],
     ["a", "kurs przedłużony do przystanku Podwale - Forteczna"],
-    ["d", "kurs do Dworca Szczawienko"],
     ["s", "kurs przez ul. Sokołowskiego /szpital/"],
     ["c", "kurs przedłużony do ul. Jachimowicza"],
     ["j", "kurs przedłużony do ul. Jachimowicza (Faurecia)"],
@@ -159,7 +158,7 @@ assert.equal(code("18", "ul. Uczniowska (Ronal)"), "r");
 assert.equal(code("18", "ul. Uczniowska (Toyota)"), "t");
 assert.equal(code("18", "ul. Uczniowska (Urząd Skarbowy)"), "u");
 assert.equal(code("19", "Aleja Podwale - Forteczna"), "a");
-assert.equal(code("19", "Szczawienko"), "d");
+assert.equal(code("19", "Szczawienko"), "");
 assert.equal(code("19", "ul. Jachimowicza"), "c");
 assert.equal(code("19", "Jachimowicza Faurecia"), "j", "Faurecia wygrywa z ogólnym Jachimowicza");
 assert.equal(
@@ -348,9 +347,11 @@ assert.equal(
   timetableLegendText(duty9),
   "Legenda wariantów: 9: a – kurs przedłużony do przystanku Podwale - Forteczna · 19: j – kurs przedłużony do ul. Jachimowicza (Faurecia)",
 );
-const jedenWiersz919 =
+const jedenWiersz9 =
   "* – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs przedłużony do przystanku Podwale - Forteczna, d – kurs do Dworca Szczawienko, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs przedłużony do ul. Jachimowicza, j – kurs przedłużony do ul. Jachimowicza (Faurecia)";
-const legenda919 = `9: ${jedenWiersz919} · 19: ${jedenWiersz919}`;
+const jedenWiersz19 =
+  "* – na przystanku Uczniowska-US przesiadka pasażerów linią-18, a – kurs przedłużony do przystanku Podwale - Forteczna, s – kurs przez ul. Sokołowskiego /szpital/, c – kurs przedłużony do ul. Jachimowicza, j – kurs przedłużony do ul. Jachimowicza (Faurecia)";
+const legenda919 = `9: ${jedenWiersz9} · 19: ${jedenWiersz19}`;
 assert.equal(
   timetablePrintLegendText(duty9),
   `Legenda wariantów: ${legenda919}`,

@@ -246,7 +246,7 @@ const RULES: Record<string, readonly LineLegendRule[]> = {
       to: ["urzad skarbowy"],
     },
   ],
-  "19": LINE_9_19_RULES,
+  "19": LINE_9_19_RULES.filter((rule) => rule.code !== "d"),
   A: [
     { code: "a", text: "kurs przez Auchan", via: ["auchan"] },
     {
