@@ -1566,6 +1566,27 @@ export async function syncWalbrzychGtfs(
   return activeSync;
 }
 
+const KOZICE_LOOP_LAT = 50.77238;
+const KOZICE_LOOP_LON = 16.32741;
+
+function normalizeStopPoint(
+  id: string,
+  name: string,
+  lat: number,
+  lon: number,
+): { id: string; name: string; lat: number; lon: number } {
+  // Przystanek „Strzegomska -Kozice” (8541) w paczce GTFS ma błędne
+  // współrzędne w Nowym Julianowie (50.7812, 16.33933) zamiast pętli Kozice.
+  const norm = name.toLowerCase().replace(/\s+/g, "");
+  if (
+    (id === "8541" || norm === "strzegomska-kozice") &&
+    distanceCoords(lat, lon, KOZICE_LOOP_LAT, KOZICE_LOOP_LON) > 400
+  ) {
+    return { id, name: "Strzegomska - Kozice", lat: KOZICE_LOOP_LAT, lon: KOZICE_LOOP_LON };
+  }
+  return { id, name, lat, lon };
+}
+
 /**
  * Punkt przystanku do rysowania: normalny przystanek, a gdy GTFS wstawia w
  * `stop_times` węzeł (`location_type=1`, np. pętla), bierzemy współrzędne węzła.
@@ -1576,9 +1597,9 @@ export function stopPointFor(
   stopId: string,
 ): { id: string; name: string; lat: number; lon: number } | null {
   const stop = base.stopsById.get(stopId);
-  if (stop) return { id: stop.id, name: stop.name, lat: stop.lat, lon: stop.lon };
+  if (stop) return normalizeStopPoint(stop.id, stop.name, stop.lat, stop.lon);
   const station = base.stationById?.get(stopId);
-  if (station) return { id: stopId, name: station.name, lat: station.lat, lon: station.lon };
+  if (station) return normalizeStopPoint(stopId, station.name, station.lat, station.lon);
   return null;
 }
 
