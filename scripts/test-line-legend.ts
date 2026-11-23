@@ -167,7 +167,7 @@ assert.equal(
   "s",
   "przejazd przez szpital to uwaga „s”, niezależna od końca kursu",
 );
-assert.equal(code("9", "Dworzec Szczawienko", ["Szpital", "Uczniowska - Urząd Skarbowy"]), "sd*");
+assert.equal(code("9", "Dworzec Szczawienko", ["Szpital", "Uczniowska - Urząd Skarbowy"]), "sd");
 assert.equal(
   code("9", "Jachimowicza - Toyota końcowy", ["Szpital"]),
   "sc",

@@ -78,7 +78,7 @@ const LINE_9_19_RULES: readonly LineLegendRule[] = [
   {
     code: "*",
     text: "na przystanku Uczniowska-US przesiadka pasażerów linią-18",
-    via: ["uczniowska urzad skarbowy"],
+    via: ["__manual_transfer_18__"],
   },
 ];
 
