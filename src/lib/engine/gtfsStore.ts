@@ -1710,11 +1710,29 @@ export function trimShapeToStops(
  */
 function stripZeromskiegoDetour(points: [number, number][]): [number, number][] {
   if (points.length < 4) return points;
-  // Usuń stary objazd przez Europejkę (na południe od ul. Żeromskiego między
-  // przystankami Żeromskiego - Oczki a Wańkowicza - Bema).
-  return points.filter(
-    ([lat, lon]) => !(lat < 50.7873 && lon > 16.269 && lon < 16.28),
-  );
+  // Usuń stary objazd przez Europejkę między przystankami Żeromskiego - Oczki
+  // a Wańkowicza - Bema: jeśli odcinek między nimi jest dłuższy niż 800 m
+  // (normalnie ~650 m prosto ul. Żeromskiego przez Pl. Gedymina), zastępujemy
+  // go bezpośrednim przejazdem przez Żeromskiego - Plac Gedymina.
+  const oczki = { lat: 50.78774, lon: 16.27743 };
+  const gedymina: [number, number] = [50.78886, 16.27294];
+  const bema = { lat: 50.79032, lon: 16.26913 };
+  const nearO = nearestVertexIndex(points, oczki);
+  const nearB = nearestVertexIndex(points, bema);
+  if (
+    nearO.index >= 0 &&
+    nearB.index >= 0 &&
+    nearO.meters <= 150 &&
+    nearB.meters <= 150 &&
+    Math.abs(nearB.index - nearO.index) > 2
+  ) {
+    const lo = Math.min(nearO.index, nearB.index);
+    const hi = Math.max(nearO.index, nearB.index);
+    if (pathLengthMeters(points, lo, hi) > 800) {
+      return [...points.slice(0, lo + 1), gedymina, ...points.slice(hi)];
+    }
+  }
+  return points;
 }
 
 export function shapeForTripStops(
