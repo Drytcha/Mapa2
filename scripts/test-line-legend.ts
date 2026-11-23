@@ -370,8 +370,8 @@ assert.deepEqual(
   "jedna płaska lista liter (bez wiersza „linia” przy każdej literze)",
 );
 assert.ok(
-  uwagi9.every((entry) => !("line" in entry)),
-  "wiersze UWAG nie niosą numeru linii",
+  uwagi9.every((entry) => typeof entry.line === "string" && entry.line.length > 0),
+  "wiersze UWAG niosą numer linii",
 );
 assert.match(
   uwagi9.find((entry) => entry.code === "j")!.text,

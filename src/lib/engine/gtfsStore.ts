@@ -1714,7 +1714,6 @@ function stripZeromskiegoDetour(points: [number, number][]): [number, number][] 
   // a Wańkowicza - Bema; pozostałą lukę (~340 m + ~310 m) repairShapeGaps
   // automatycznie poprowadzi po realnej drodze (ul. Stefana Żeromskiego) przez OSRM.
   const oczki = { lat: 50.78774, lon: 16.27743 };
-  const gedymina: [number, number] = [50.78886, 16.27294];
   const bema = { lat: 50.79032, lon: 16.26913 };
   const nearO = nearestVertexIndex(points, oczki);
   const nearB = nearestVertexIndex(points, bema);
@@ -1728,7 +1727,7 @@ function stripZeromskiegoDetour(points: [number, number][]): [number, number][] 
     const lo = Math.min(nearO.index, nearB.index);
     const hi = Math.max(nearO.index, nearB.index);
     if (pathLengthMeters(points, lo, hi) > 800) {
-      return [...points.slice(0, lo + 1), gedymina, ...points.slice(hi)];
+      return [...points.slice(0, lo + 1), ...points.slice(hi)];
     }
   }
   return points;

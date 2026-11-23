@@ -132,18 +132,19 @@ export const TIMETABLE_LEGEND_ROW_HEIGHT = 3.4;
  */
 export function timetableLegendFooterRows(
   duty: TimetablePdfDuty,
-): Array<{ code: string; text: string }> {
+): Array<{ line: string; code: string; text: string }> {
   const full = timetableFullLegendRows(duty);
   const source =
     full.length && full.length <= TIMETABLE_LEGEND_MAX_ROWS ? full : timetableLegendRows(duty);
-  const merged = new Map<string, string[]>();
+  const merged = new Map<string, { line: string; code: string; texts: string[] }>();
   for (const entry of source) {
-    const texts = merged.get(entry.code) ?? [];
-    if (!texts.includes(entry.text)) texts.push(entry.text);
-    merged.set(entry.code, texts);
+    const key = `${entry.line}|${entry.code}`;
+    const existing = merged.get(key) ?? { line: entry.line, code: entry.code, texts: [] };
+    if (!existing.texts.includes(entry.text)) existing.texts.push(entry.text);
+    merged.set(key, existing);
   }
-  return [...merged.entries()]
-    .map(([code, texts]) => ({ code, text: texts.join(" · ") }))
+  return [...merged.values()]
+    .map(({ line, code, texts }) => ({ line, code, text: texts.join(" · ") }))
     .slice(0, TIMETABLE_LEGEND_MAX_ROWS);
 }
 
@@ -578,9 +579,9 @@ export async function createTimetablePdf(data: TimetablePdfData): Promise<jsPDF>
       doc.text("UWAGI:", margin, legendTop + 3);
       legendRows.forEach((entry, rowIndex) => {
         const rowY = legendTop + 3 + rowIndex * TIMETABLE_LEGEND_ROW_HEIGHT;
-        // Bez numeru linii: litera | opis (jedna lista na całą kursówkę).
-        centered(entry.code, margin + 14, rowY, 6, 6.8);
-        fitText(entry.text, margin + 22, rowY, tableW - 24, 6.6);
+        centered(entry.line, margin + 12, rowY, 7, 6.8);
+        centered(entry.code, margin + 20, rowY, 6, 6.8);
+        fitText(entry.text, margin + 28, rowY, tableW - 30, 6.6);
       });
     }
 
