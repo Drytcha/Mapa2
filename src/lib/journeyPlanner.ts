@@ -23,6 +23,7 @@ import {
   type GtfsMemoryStore,
   type GtfsStopRecord,
 } from "./engine/gtfsStore";
+import { findLineRouteOverride } from "./engine/lineRouteOverrides";
 import type { LiveBusVehicle } from "./types";
 import {
   getWalkingRoute,
@@ -856,9 +857,19 @@ function materialize(
         });
       }
       const coords = stops.map((s) => [s.lat, s.lon] as [number, number]);
-      const shape = trip.shapeId
-        ? store.base.shapesById.get(trip.shapeId)
-        : undefined;
+      const rawTrip = store.base.rawTripsById.get(trip.tripId);
+      const override = findLineRouteOverride({
+        lineShort: pattern.routeShort,
+        shapeId: trip.shapeId,
+        firstStopId: rawTrip?.firstStopId,
+        lastStopId: rawTrip?.lastStopId,
+        firstStopName: rawTrip?.firstStopName,
+        lastStopName: rawTrip?.lastStopName,
+        directionId: rawTrip?.directionId,
+      });
+      const shape =
+        override?.override.path ??
+        (trip.shapeId ? store.base.shapesById.get(trip.shapeId) : undefined);
       const path = (shape && shapeSlice(shape, coords)) || coords;
       legs.push({
         kind: "bus",

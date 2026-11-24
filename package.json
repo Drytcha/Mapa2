@@ -21,7 +21,9 @@
     "test:perf": "tsx scripts/test-map-perf.ts",
     "test:load": "tsx scripts/test-gtfs-load.ts",
     "bench:load": "tsx scripts/bench-load.ts",
-    "test:geometry": "tsx scripts/test-route-geometry.ts"
+    "test:geometry": "tsx scripts/test-route-geometry.ts",
+    "test:route-editor": "tsx scripts/test-line-route-editor.ts && tsx scripts/test-line-route-editor-ui.tsx",
+    "test:route-editor:e2e": "node scripts/test-line-route-editor-e2e.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

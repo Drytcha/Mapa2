@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Eye, Loader2, MapPinned, Search, Waypoints, X } from "lucide-react";
+import { ArrowRight, Eye, Loader2, MapPinned, Pencil, Search, Waypoints, X } from "lucide-react";
 import { DateTime } from "luxon";
 import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import { foldPolish, isPlannerOnlyLine } from "@/lib/core/text";
@@ -21,6 +21,8 @@ interface Props {
   isPlanner?: boolean;
   onClose: () => void;
   onShowShapeOverlay: (overlay: KursowkaShapeOverlay) => void;
+  /** Tylko dla Planisty: otwiera interaktywny edytor przebiegu trasy wybranego wariantu. */
+  onEditLineRoute?: (lineShort: string, variantKey?: string | null) => void;
 }
 
 const VARIANTS_COLLAPSED = 6;
@@ -137,7 +139,13 @@ function RoutePreview({
   );
 }
 
-export default function LinesDialog({ open, isPlanner = false, onClose, onShowShapeOverlay }: Props) {
+export default function LinesDialog({
+  open,
+  isPlanner = false,
+  onClose,
+  onShowShapeOverlay,
+  onEditLineRoute,
+}: Props) {
   const [entries, setEntries] = useState<LineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -167,9 +175,16 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
   useEffect(() => {
     if (!open) return;
     void load();
-    return onRuntimeEvent("gtfs:updated", () => {
+    const unsubGtfs = onRuntimeEvent("gtfs:updated", () => {
       void load();
     });
+    const unsubOverrides = onRuntimeEvent("routes:overrides-updated", () => {
+      void load();
+    });
+    return () => {
+      unsubGtfs();
+      unsubOverrides();
+    };
   }, [open, load]);
 
   const visible = useMemo(
@@ -372,6 +387,23 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
                     {busyKey === "all" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPinned className="h-3.5 w-3.5" />}
                     Pokaż całą linię na mapie
                   </button>
+                  {isPlanner && onEditLineRoute && (
+                    <button
+                      type="button"
+                      data-testid="line-edit-route"
+                      onClick={() => {
+                        onEditLineRoute(
+                          selected.shortName,
+                          activeKey ?? selected.variants[0]?.key ?? null,
+                        );
+                        onClose();
+                      }}
+                      className="flex h-8 items-center gap-1.5 rounded-lg border border-brand/40 bg-brand-soft px-3 text-[10px] font-extrabold text-brand-ink transition-colors hover:border-brand"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edytuj przebieg linii
+                    </button>
+                  )}
                   {activeKey && (
                     <button
                       type="button"
@@ -420,11 +452,19 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
                               <ArrowRight className="h-3 w-3" />
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
+                              <span className="flex flex-wrap items-center gap-1.5">
                                 <span className="truncate text-[10px] font-extrabold text-ink">{variant.headsign}</span>
                                 {variant.main && (
                                   <span className="shrink-0 rounded bg-brand px-1 py-px text-[7px] font-extrabold uppercase text-on-brand">
                                     Główny
+                                  </span>
+                                )}
+                                {variant.customized && (
+                                  <span
+                                    className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/12 px-1 py-px text-[7px] font-extrabold uppercase text-emerald-700 dark:text-emerald-300"
+                                    title={variant.customNote || "Trasa skorygowana przez Planistę"}
+                                  >
+                                    {variant.customStatus === "local-modified" ? "Lokalnie" : "Poprawiona"}
                                   </span>
                                 )}
                               </span>
@@ -440,6 +480,21 @@ export default function LinesDialog({ open, isPlanner = false, onClose, onShowSh
                               </span>
                             </span>
                           </button>
+                          {isPlanner && onEditLineRoute && (
+                            <button
+                              type="button"
+                              data-testid="line-variant-edit"
+                              onClick={() => {
+                                onEditLineRoute(selected.shortName, variant.key);
+                                onClose();
+                              }}
+                              title="Edytuj przebieg tego wariantu na mapie"
+                              className="flex shrink-0 items-center gap-1 rounded-md border border-brand/35 bg-brand-soft px-2 text-[8.5px] font-extrabold text-brand-ink transition-colors hover:border-brand"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              <span className="hidden sm:inline">Edytuj</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             data-testid="line-variant-map"

@@ -15,6 +15,7 @@ import {
   routeArrowIconSize,
   routeArrowPoints,
 } from "@/lib/routeArrows";
+import { nearestVertexOnPath } from "@/lib/routeEditorGeometry";
 import type {
   BusStop,
   LiveBusVehicle,
@@ -48,10 +49,30 @@ export interface MapUserLocation {
 export interface MapHandle {
   fitRoute: () => void;
   fitOverlay: () => void;
+  fitLineEditor: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
   centerOn: (lat: number, lon: number, zoom?: number) => void;
   getBounds: () => { south: number; west: number; north: number; east: number } | null;
+}
+
+export type LineEditorMode = "vertices" | "draw" | "segment" | "delete";
+
+export interface LineRouteEditorMapState {
+  fitKey: string;
+  fitNonce: number;
+  lineShort: string;
+  color: string;
+  path: [number, number][];
+  originalPath: [number, number][];
+  showOriginal: boolean;
+  stops: Array<{ id: string; name: string; lat: number; lon: number; sequence: number }>;
+  showStops: boolean;
+  mode: LineEditorMode;
+  segmentStartIndex: number | null;
+  segmentEndIndex: number | null;
+  segmentDraftPoints: [number, number][];
+  segmentPreviewPath: [number, number][];
 }
 
 export interface KursowkaShapeOverlay {
@@ -160,6 +181,12 @@ interface MapViewProps {
     clientY: number,
     stop?: BusStop
   ) => void;
+  lineRouteEditor?: LineRouteEditorMapState | null;
+  onLineEditorVertexMove?: (index: number, lat: number, lon: number) => void;
+  onLineEditorVertexInsert?: (lat: number, lon: number) => void;
+  onLineEditorVertexRemove?: (index: number) => void;
+  onLineEditorMapClick?: (lat: number, lon: number) => void;
+  onLineEditorSegmentPickVertex?: (index: number) => void;
 }
 
 const vehicleSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.6 3.9 21l8.1-4.7 8.1 4.7L12 2.6Z" fill="currentColor"/></svg>`;
@@ -245,6 +272,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     onMarkerDrag,
     onMapClick,
     onMapContextMenu,
+    lineRouteEditor = null,
+    onLineEditorVertexMove,
+    onLineEditorVertexInsert,
+    onLineEditorVertexRemove,
+    onLineEditorMapClick,
+    onLineEditorSegmentPickVertex,
   },
   ref
 ) {
@@ -257,6 +290,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const tileRef = useRef<L.TileLayer[]>([]);
   const routeGroupRef = useRef<L.LayerGroup | null>(null);
   const kursowkaGroupRef = useRef<L.LayerGroup | null>(null);
+  const lineEditorGroupRef = useRef<L.LayerGroup | null>(null);
+  const lineEditorHandlesGroupRef = useRef<L.LayerGroup | null>(null);
+  const lastLineEditorFitKeyRef = useRef<string>("");
+  const lastLineEditorFitNonceRef = useRef<number>(-1);
   const routeDoneGroupRef = useRef<L.LayerGroup | null>(null);
   /** Ostatni odcinek podziału „przejechane / przed nami” — ciągłość przy pętli. */
   const routeDoneIndexRef = useRef<Map<string, number>>(new Map());
@@ -298,6 +335,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const liveBusClickRef = useRef(onLiveBusClick);
   const routeRef = useRef(route);
   const overlayRef = useRef(kursowkaOverlay);
+  const lineEditorRef = useRef(lineRouteEditor);
+  const lineEditorMoveRef = useRef(onLineEditorVertexMove);
+  const lineEditorInsertRef = useRef(onLineEditorVertexInsert);
+  const lineEditorRemoveRef = useRef(onLineEditorVertexRemove);
+  const lineEditorMapClickRef = useRef(onLineEditorMapClick);
+  const lineEditorSegmentPickRef = useRef(onLineEditorSegmentPickVertex);
   useEffect(() => {
     pickModeRef.current = pickMode;
     stopClickRef.current = onBusStopClick;
@@ -309,6 +352,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     contextMenuRef.current = onMapContextMenu;
     routeRef.current = route;
     overlayRef.current = kursowkaOverlay;
+    lineEditorRef.current = lineRouteEditor;
+    lineEditorMoveRef.current = onLineEditorVertexMove;
+    lineEditorInsertRef.current = onLineEditorVertexInsert;
+    lineEditorRemoveRef.current = onLineEditorVertexRemove;
+    lineEditorMapClickRef.current = onLineEditorMapClick;
+    lineEditorSegmentPickRef.current = onLineEditorSegmentPickVertex;
     tripOriginPickRef.current = onTripOriginPick;
     tripOriginMoveRef.current = onTripOriginMove;
     tripDestinationPickRef.current = onTripDestinationPick;
@@ -387,6 +436,25 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     });
   };
 
+  const fitLineEditorMap = () => {
+    const map = mapRef.current;
+    const editor = lineEditorRef.current;
+    if (!map || !editor) return;
+    const allCoords: [number, number][] = [
+      ...(editor.path.length >= 2 ? editor.path : editor.originalPath),
+      ...editor.stops.map((stop): [number, number] => [stop.lat, stop.lon]),
+    ];
+    if (allCoords.length < 2) return;
+    const narrow = window.innerWidth < 1024;
+    map.fitBounds(L.latLngBounds(allCoords), {
+      paddingTopLeft: narrow ? [24, 72] : [56, 72],
+      paddingBottomRight: narrow ? [24, 180] : [56, 72],
+      maxZoom: 15,
+      animate: true,
+      duration: 0.7,
+    });
+  };
+
   useImperativeHandle(ref, () => ({
     fitRoute: () => {
       userPanRef.current?.();
@@ -395,6 +463,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     fitOverlay: () => {
       userPanRef.current?.();
       fitOverlayMap();
+    },
+    fitLineEditor: () => {
+      userPanRef.current?.();
+      fitLineEditorMap();
     },
     zoomIn: () => mapRef.current?.zoomIn(),
     zoomOut: () => mapRef.current?.zoomOut(),
@@ -472,9 +544,17 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     userPane.style.zIndex = "690";
     userPane.style.pointerEvents = "none";
 
+    const lineEditorPane = map.createPane("lineEditor");
+    lineEditorPane.style.zIndex = "640";
+
+    const lineEditorHandlesPane = map.createPane("lineEditorHandles");
+    lineEditorHandlesPane.style.zIndex = "660";
+
     routeGroupRef.current = L.layerGroup().addTo(map);
     kursowkaGroupRef.current = L.layerGroup().addTo(map);
     routeDoneGroupRef.current = L.layerGroup().addTo(map);
+    lineEditorGroupRef.current = L.layerGroup().addTo(map);
+    lineEditorHandlesGroupRef.current = L.layerGroup().addTo(map);
     tripGroupRef.current = L.layerGroup().addTo(map);
     stopGroupRef.current = L.layerGroup().addTo(map);
     signalGroupRef.current = L.layerGroup().addTo(map);
@@ -489,9 +569,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       if (!gpsZoomRef.current) userPanRef.current?.();
     });
     map.on("click", (event: L.LeafletMouseEvent) => {
+      if (lineEditorRef.current) {
+        lineEditorMapClickRef.current?.(event.latlng.lat, event.latlng.lng);
+        return;
+      }
       mapClickRef.current(event.latlng.lat, event.latlng.lng);
     });
     map.on("contextmenu", (event: L.LeafletMouseEvent) => {
+      if (lineEditorRef.current) return;
       dispatchContextMenu(event);
     });
 
@@ -519,6 +604,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       routeGroupRef.current = null;
       kursowkaGroupRef.current = null;
       routeDoneGroupRef.current = null;
+      lineEditorGroupRef.current = null;
+      lineEditorHandlesGroupRef.current = null;
       tripGroupRef.current = null;
       tripOriginRef.current = null;
       tripDestinationRef.current = null;
@@ -1668,14 +1755,350 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     mapRef.current.flyTo([focus.lat, focus.lon], focus.zoom ?? 14, { duration: 0.9 });
   }, [focus]);
 
+  /* Interaktywny edytor przebiegu trasy linii (moduł Planisty). */
+  useEffect(() => {
+    const map = mapRef.current;
+    const baseGroup = lineEditorGroupRef.current;
+    const handlesGroup = lineEditorHandlesGroupRef.current;
+    if (!map || !baseGroup || !handlesGroup) return;
+
+    baseGroup.clearLayers();
+    handlesGroup.clearLayers();
+
+    if (!lineRouteEditor) {
+      lastLineEditorFitKeyRef.current = "";
+      return;
+    }
+
+    const {
+      fitKey,
+      fitNonce: editorFitNonce,
+      color,
+      path,
+      originalPath,
+      showOriginal,
+      stops,
+      showStops,
+      mode,
+      segmentStartIndex,
+      segmentEndIndex,
+      segmentDraftPoints,
+      segmentPreviewPath,
+    } = lineRouteEditor;
+
+    const lineColor = color || "#0d4f3b";
+
+    // 1. Oryginał GTFS w tle (ciągła półprzezroczysta linia — bez dashArray).
+    if (showOriginal && originalPath.length >= 2) {
+      L.polyline(originalPath, {
+        color: "#64748b",
+        weight: 5,
+        opacity: 0.36,
+        lineCap: "round",
+        lineJoin: "round",
+        pane: "lineEditor",
+        interactive: false,
+      }).addTo(baseGroup);
+    }
+
+    // 2. Edytowana trasa: biały kontur + właściwa linia + szeroka strefa kliknięcia.
+    let casingLine: L.Polyline | null = null;
+    let mainLine: L.Polyline | null = null;
+    let hitLine: L.Polyline | null = null;
+    const liveCoords: [number, number][] = path.map(([lat, lon]) => [lat, lon]);
+
+    if (liveCoords.length >= 2) {
+      casingLine = L.polyline(liveCoords, {
+        color: "#ffffff",
+        weight: 10,
+        opacity: 0.92,
+        lineCap: "round",
+        lineJoin: "round",
+        pane: "lineEditor",
+        interactive: false,
+      }).addTo(baseGroup);
+
+      mainLine = L.polyline(liveCoords, {
+        color: lineColor,
+        weight: 5.5,
+        opacity: 0.96,
+        lineCap: "round",
+        lineJoin: "round",
+        pane: "lineEditor",
+        interactive: false,
+      }).addTo(baseGroup);
+
+      if (mode === "vertices" || mode === "segment") {
+        hitLine = L.polyline(liveCoords, {
+          color: lineColor,
+          weight: 20,
+          opacity: 0.001,
+          pane: "lineEditor",
+          interactive: true,
+        }).addTo(baseGroup);
+
+        hitLine.on("click", (event: L.LeafletMouseEvent) => {
+          L.DomEvent.stopPropagation(event);
+          if (mode === "vertices") {
+            lineEditorInsertRef.current?.(event.latlng.lat, event.latlng.lng);
+          } else if (mode === "segment") {
+            const nearest = nearestVertexOnPath(liveCoords, [
+              event.latlng.lat,
+              event.latlng.lng,
+            ]);
+            if (nearest.index >= 0) {
+              lineEditorSegmentPickRef.current?.(nearest.index);
+            }
+          }
+        });
+      }
+
+      // Statyczne strzałki kierunku trasy (ta sama logika co w nawigacji).
+      for (const arrow of routeArrowPoints(liveCoords)) {
+        const size = routeArrowIconSize(arrow);
+        L.marker([arrow.lat, arrow.lon], {
+          icon: L.divIcon({
+            className: "route-arrow-wrap",
+            html: routeArrowIconHtml(arrow),
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+          }),
+          pane: "lineEditor",
+          interactive: false,
+          keyboard: false,
+        }).addTo(baseGroup);
+      }
+    }
+
+    // 3. Podgląd zastępowanego fragmentu A -> B (tryb "segment").
+    if (mode === "segment") {
+      if (
+        segmentStartIndex !== null &&
+        segmentEndIndex !== null &&
+        segmentStartIndex >= 0 &&
+        segmentEndIndex >= 0 &&
+        segmentStartIndex < liveCoords.length &&
+        segmentEndIndex < liveCoords.length &&
+        segmentStartIndex !== segmentEndIndex
+      ) {
+        const lo = Math.min(segmentStartIndex, segmentEndIndex);
+        const hi = Math.max(segmentStartIndex, segmentEndIndex);
+        const replacedSlice = liveCoords.slice(lo, hi + 1);
+        if (replacedSlice.length >= 2) {
+          L.polyline(replacedSlice, {
+            color: "#f59e0b",
+            weight: 9,
+            opacity: 0.52,
+            lineCap: "round",
+            lineJoin: "round",
+            pane: "lineEditor",
+            interactive: false,
+          }).addTo(baseGroup);
+        }
+      }
+
+      if (segmentPreviewPath.length >= 2) {
+        L.polyline(segmentPreviewPath, {
+          color: "#ffffff",
+          weight: 9,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+          pane: "lineEditor",
+          interactive: false,
+        }).addTo(baseGroup);
+        L.polyline(segmentPreviewPath, {
+          color: "#10b981",
+          weight: 5,
+          opacity: 0.98,
+          lineCap: "round",
+          lineJoin: "round",
+          pane: "lineEditor",
+          interactive: false,
+        }).addTo(baseGroup);
+      }
+
+      segmentDraftPoints.forEach(([lat, lon], idx) => {
+        L.marker([lat, lon], {
+          pane: "lineEditorHandles",
+          interactive: false,
+          icon: L.divIcon({
+            className: "line-editor-pin-wrap",
+            html: `<span style="display:grid;place-items:center;width:20px;height:20px;border-radius:9999px;background:#10b981;color:#fff;font-size:10px;font-weight:800;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);">${idx + 1}</span>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }),
+        }).addTo(baseGroup);
+      });
+
+      const badgePin = (idx: number | null, label: string, bg: string) => {
+        if (idx === null || idx < 0 || idx >= liveCoords.length) return;
+        const [lat, lon] = liveCoords[idx];
+        L.marker([lat, lon], {
+          pane: "lineEditorHandles",
+          interactive: false,
+          icon: L.divIcon({
+            className: "line-editor-pin-wrap",
+            html: `<span style="display:grid;place-items:center;width:24px;height:24px;border-radius:9999px;background:${bg};color:#fff;font-size:11px;font-weight:900;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.4);">${label}</span>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          }),
+        }).addTo(baseGroup);
+      };
+      badgePin(segmentStartIndex, "A", "#0891b2");
+      badgePin(segmentEndIndex, "B", "#e11d48");
+    }
+
+    // 4. Przystanki wariantu jako punkt odniesienia.
+    if (showStops && stops.length > 0) {
+      stops.forEach((stop, index) => {
+        const isFirst = index === 0;
+        const isLast = index === stops.length - 1;
+        L.circleMarker([stop.lat, stop.lon], {
+          pane: "courseStops",
+          radius: isFirst || isLast ? 7 : 4.5,
+          weight: 2,
+          color: "#ffffff",
+          fillColor: isFirst ? "#0891b2" : isLast ? "#e11d48" : lineColor,
+          fillOpacity: 0.95,
+          interactive: true,
+          bubblingMouseEvents: true,
+        })
+          .bindTooltip(
+            `<b>#${index + 1}</b> · ${escapeHtml(stop.name)}`,
+            {
+              direction: "top",
+              offset: [0, -8],
+              className: "waypoint-tooltip",
+            },
+          )
+          .addTo(baseGroup);
+      });
+    }
+
+    // 5. Uchwyty wierzchołków (widokowo przycinane i zagęszczane przy zbliżeniu).
+    const syncHandles = () => {
+      handlesGroup.clearLayers();
+      if (liveCoords.length === 0) return;
+
+      const bounds = map.getBounds().pad(0.25);
+      const zoom = map.getZoom();
+      const dense = liveCoords.length > 140 && zoom < 15;
+      const step = dense ? Math.ceil(liveCoords.length / 90) : 1;
+
+      for (let i = 0; i < liveCoords.length; i += 1) {
+        const isStart = i === 0;
+        const isEnd = i === liveCoords.length - 1;
+        if (!isStart && !isEnd && i % step !== 0) continue;
+        const [lat, lon] = liveCoords[i];
+        if (!isStart && !isEnd && !bounds.contains([lat, lon])) continue;
+
+        const size = isStart || isEnd ? 16 : mode === "delete" ? 13 : 12;
+        const fill =
+          mode === "delete"
+            ? "#ef4444"
+            : isStart
+              ? "#0891b2"
+              : isEnd
+                ? "#e11d48"
+                : "#ffffff";
+        const border =
+          mode === "delete"
+            ? "#ffffff"
+            : isStart || isEnd
+              ? "#ffffff"
+              : lineColor;
+        const cursor =
+          mode === "vertices"
+            ? "grab"
+            : mode === "delete" || mode === "segment"
+              ? "pointer"
+              : "default";
+
+        const marker = L.marker([lat, lon], {
+          pane: "lineEditorHandles",
+          draggable: mode === "vertices",
+          icon: L.divIcon({
+            className: "line-editor-vertex-wrap",
+            html: `<span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${fill};border:2.5px solid ${border};box-shadow:0 1px 4px rgba(0,0,0,0.42);cursor:${cursor};"></span>`,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+          }),
+        });
+
+        const vertexIndex = i;
+        if (mode === "vertices") {
+          marker.on("drag", () => {
+            const pos = marker.getLatLng();
+            liveCoords[vertexIndex] = [pos.lat, pos.lng];
+            casingLine?.setLatLngs(liveCoords);
+            mainLine?.setLatLngs(liveCoords);
+            hitLine?.setLatLngs(liveCoords);
+          });
+          marker.on("dragend", () => {
+            const pos = marker.getLatLng();
+            lineEditorMoveRef.current?.(vertexIndex, pos.lat, pos.lng);
+          });
+          marker.on("contextmenu", (event: L.LeafletMouseEvent) => {
+            L.DomEvent.stop(event);
+            lineEditorRemoveRef.current?.(vertexIndex);
+          });
+          marker.on("click", (event: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(event);
+            const orig = event.originalEvent as MouseEvent | undefined;
+            if (orig?.shiftKey) {
+              lineEditorRemoveRef.current?.(vertexIndex);
+            }
+          });
+        } else if (mode === "delete") {
+          marker.on("click", (event: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(event);
+            lineEditorRemoveRef.current?.(vertexIndex);
+          });
+        } else if (mode === "segment") {
+          marker.on("click", (event: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(event);
+            lineEditorSegmentPickRef.current?.(vertexIndex);
+          });
+        }
+
+        marker.addTo(handlesGroup);
+      }
+    };
+
+    syncHandles();
+    map.on("moveend zoomend", syncHandles);
+
+    if (
+      fitKey !== lastLineEditorFitKeyRef.current ||
+      editorFitNonce !== lastLineEditorFitNonceRef.current
+    ) {
+      lastLineEditorFitKeyRef.current = fitKey;
+      lastLineEditorFitNonceRef.current = editorFitNonce;
+      fitLineEditorMap();
+    }
+
+    return () => {
+      map.off("moveend zoomend", syncHandles);
+    };
+  }, [lineRouteEditor]);
+
   const tileTone = mapStyle === "satellite" ? "satellite" : theme;
+  const mapCursor =
+    pickMode ||
+    lineRouteEditor?.mode === "draw" ||
+    (lineRouteEditor?.mode === "segment" &&
+      lineRouteEditor.segmentStartIndex !== null &&
+      lineRouteEditor.segmentEndIndex !== null)
+      ? "crosshair"
+      : undefined;
 
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
       <div
         ref={containerRef}
         className="h-full w-full select-none outline-none"
-        style={{ cursor: pickMode ? "crosshair" : undefined }}
+        style={{ cursor: mapCursor }}
         role="application"
         aria-label="Interaktywna mapa trasy"
       />

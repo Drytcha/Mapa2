@@ -95,6 +95,7 @@ export interface RuntimeEventMap {
   "operators:updated": { vehicleId: string };
   "fleet:updated": { snapshot: LiveFleetSnapshot; signature: string };
   "fleet:loading": boolean;
+  "routes:overrides-updated": { revision: number };
 }
 
 type EventListener<K extends keyof RuntimeEventMap> = (
