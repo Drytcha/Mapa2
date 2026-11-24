@@ -11,7 +11,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Route as RouteIcon } from "lucide-react";
-import type { KursowkaShapeOverlay, LiveRouteProgressStatus, MapHandle } from "./MapView";
+import type {
+  KursowkaShapeOverlay,
+  LineRouteEditorMapState,
+  LiveRouteProgressStatus,
+  MapHandle,
+} from "./MapView";
+import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
 import TopBar from "./TopBar";
 import UserLocationHud from "./UserLocationHud";
 import StopFinder from "./StopFinder";
@@ -45,6 +51,7 @@ import {
 } from "@/lib/visibility";
 
 const PlanningPanel = lazy(() => import("./PlanningPanel"));
+const LineRouteEditorPanel = lazy(() => import("./LineRouteEditorPanel"));
 const KursowkiDialog = lazy(() => import("./KursowkiDialog"));
 const LinesDialog = lazy(() => import("./LinesDialog"));
 const PdfExportDialog = lazy(() => import("./PdfExportDialog"));
@@ -111,6 +118,7 @@ import { setOperatorOverride } from "@/lib/engine/fleetOperators";
 import { liveBusTap } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
 import { ensureGtfsSeeded, getCoursePreview, getVehicleRouteOverlay } from "@/lib/engine/gtfsStore";
+import { getOverridesSummary, initLineRouteOverrides } from "@/lib/engine/lineRouteOverrides";
 import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
 import { detectTurnaroundSpotsAlongRoute, type TurnaroundSpot } from "@/lib/engine/turnarounds";
 import {
@@ -470,6 +478,51 @@ function MapPlanerWorkspace() {
   const [fleetOpen, setFleetOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+
+  // Moduł Planisty: edytor przebiegu tras linii (zapis + widoczność u wszystkich)
+  const [lineEditorOpen, setLineEditorOpen] = useState(false);
+  const [lineEditorTarget, setLineEditorTarget] = useState<{
+    lineShort: string | null;
+    variantKey: string | null;
+  }>({ lineShort: null, variantKey: null });
+  const [lineEditorMapState, setLineEditorMapState] =
+    useState<LineRouteEditorMapState | null>(null);
+  const lineEditorHandlersRef = useRef<LineEditorMapHandlers | null>(null);
+  const [editedRoutesCount, setEditedRoutesCount] = useState<number>(
+    () => getOverridesSummary().totalActive,
+  );
+
+  useEffect(() => {
+    void initLineRouteOverrides();
+    return onRuntimeEvent("routes:overrides-updated", () => {
+      setEditedRoutesCount(getOverridesSummary().totalActive);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isPlanner) {
+      setLineEditorOpen(false);
+      setLineEditorMapState(null);
+    }
+  }, [isPlanner]);
+
+  const openLineRouteEditor = useCallback(
+    (lineShort: string | null = null, variantKey: string | null = null) => {
+      if (!isPlanner) return;
+      setKursowkiOpen(false);
+      setLinesOpen(false);
+      setAddMode(false);
+      setPickTarget(null);
+      setKursowkaOverlay(null);
+      setBusOverlay(false);
+      setLineEditorTarget({ lineShort, variantKey });
+      setLineEditorOpen(true);
+      if (typeof window !== "undefined" && window.innerWidth < 1024) {
+        setMobileExpanded(true);
+      }
+    },
+    [isPlanner],
+  );
 
   const openInformation = useCallback(() => {
     if (isPlanner) setSettingsOpen(true);
@@ -2225,6 +2278,8 @@ function MapPlanerWorkspace() {
     onAddStopsAlongRoute: addStopsAlongRoute,
     onCenterWalbrzych: centerWalbrzych,
     onOpenKursowka: handleOpenKursowkaFromItem,
+    onOpenLineEditor: () => openLineRouteEditor(null, null),
+    editedRoutesCount,
   };
 
   return (
@@ -2276,7 +2331,21 @@ function MapPlanerWorkspace() {
                 </div>
               }
             >
-              <PlanningPanel {...panelProps} />
+              {lineEditorOpen ? (
+                <LineRouteEditorPanel
+                  initialLineShort={lineEditorTarget.lineShort}
+                  initialVariantKey={lineEditorTarget.variantKey}
+                  onClose={() => {
+                    setLineEditorOpen(false);
+                    setLineEditorMapState(null);
+                  }}
+                  onMapStateChange={setLineEditorMapState}
+                  handlersRef={lineEditorHandlersRef}
+                  onToast={showToast}
+                />
+              ) : (
+                <PlanningPanel {...panelProps} />
+              )}
             </Suspense>
           </aside>
         )}
@@ -2306,6 +2375,17 @@ function MapPlanerWorkspace() {
               nearRouteIds={nearRouteIds}
               usedStopKeys={usedStopKeys}
               onBusStopClick={(stop) => {
+                if (isPlanner && lineEditorOpen && lineEditorMapState) {
+                  if (
+                    lineEditorMapState.mode === "draw" ||
+                    (lineEditorMapState.mode === "segment" &&
+                      lineEditorMapState.segmentStartIndex !== null &&
+                      lineEditorMapState.segmentEndIndex !== null)
+                  ) {
+                    lineEditorHandlersRef.current?.onMapClick(stop.lat, stop.lon);
+                    return;
+                  }
+                }
                 if (tripPick) {
                   const point: TripPoint = { lat: stop.lat, lon: stop.lon, label: stop.name, stopId: stop.gtfsId, stopIds: stop.gtfsIds };
                   if (tripPick === "origin") {
@@ -2390,6 +2470,22 @@ function MapPlanerWorkspace() {
               onMarkerDrag={handleMarkerDrag}
               onMapClick={handleMapClick}
               onMapContextMenu={handleMapContextMenu}
+              lineRouteEditor={isPlanner && lineEditorOpen ? lineEditorMapState : null}
+              onLineEditorVertexMove={(index, lat, lon) =>
+                lineEditorHandlersRef.current?.onVertexMove(index, lat, lon)
+              }
+              onLineEditorVertexInsert={(lat, lon) =>
+                lineEditorHandlersRef.current?.onVertexInsert(lat, lon)
+              }
+              onLineEditorVertexRemove={(index) =>
+                lineEditorHandlersRef.current?.onVertexRemove(index)
+              }
+              onLineEditorMapClick={(lat, lon) =>
+                lineEditorHandlersRef.current?.onMapClick(lat, lon)
+              }
+              onLineEditorSegmentPickVertex={(index) =>
+                lineEditorHandlersRef.current?.onSegmentPickVertex(index)
+              }
             />
           </Suspense>
 
@@ -2599,9 +2695,11 @@ function MapPlanerWorkspace() {
                 onZoomIn={() => mapRef.current?.zoomIn()}
                 onZoomOut={() => mapRef.current?.zoomOut()}
                 onFit={() =>
-                  kursowkaOverlay
-                    ? mapRef.current?.fitOverlay()
-                    : mapRef.current?.fitRoute()
+                  lineEditorOpen && lineEditorMapState
+                    ? mapRef.current?.fitLineEditor()
+                    : kursowkaOverlay
+                      ? mapRef.current?.fitOverlay()
+                      : mapRef.current?.fitRoute()
                 }
                 onLocate={centerOnMe}
                 locateState={
@@ -2791,7 +2889,21 @@ function MapPlanerWorkspace() {
               routeReady={exportReady}
             >
               <Suspense fallback={null}>
-                <PlanningPanel {...panelProps} />
+                {lineEditorOpen ? (
+                  <LineRouteEditorPanel
+                    initialLineShort={lineEditorTarget.lineShort}
+                    initialVariantKey={lineEditorTarget.variantKey}
+                    onClose={() => {
+                      setLineEditorOpen(false);
+                      setLineEditorMapState(null);
+                    }}
+                    onMapStateChange={setLineEditorMapState}
+                    handlersRef={lineEditorHandlersRef}
+                    onToast={showToast}
+                  />
+                ) : (
+                  <PlanningPanel {...panelProps} />
+                )}
               </Suspense>
             </MobilePlannerSheet>
           )}
@@ -2837,6 +2949,11 @@ function MapPlanerWorkspace() {
             open={linesOpen}
             isPlanner={isPlanner}
             onClose={() => setLinesOpen(false)}
+            onEditLineRoute={
+              isPlanner
+                ? (lineShort, variantKey) => openLineRouteEditor(lineShort, variantKey ?? null)
+                : undefined
+            }
             onShowShapeOverlay={(overlay) => {
               if (overlayEpoch !== overlayEpochRef.current) return;
               setKursowkaOverlay(overlay);

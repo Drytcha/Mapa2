@@ -1,6 +1,7 @@
 /**
  * Katalog linii Wałbrzycha: dla każdej linii (2, 4, 5, 7 …) jej warianty tras
- * zbudowane z `shapes.txt` — po jednym wariancie na każdy odrębny kształt trasy.
+ * zbudowane z `shapes.txt` oraz ewentualnych zapisanych korekt Planisty — po
+ * jednym wariancie na każdy odrębny kształt trasy.
  * Dane pochodzą z tej samej paczki GTFS co kursówki, więc linia 30 (od 1 grudnia)
  * i linie planistyczne S1–S4 są w niej, o ile są w paczce „GTFS (full).zip".
  */
@@ -10,9 +11,17 @@ import { WARSAW_ZONE } from "../core/time";
 import {
   ensureGtfsSeeded,
   ensureShapesReady,
+  resolveTripShape,
   shapeForTripStops,
   stopPointFor,
 } from "./gtfsStore";
+import {
+  findLineRouteOverride,
+  getOverridesRevision,
+  getOverrideStatus,
+  initLineRouteOverrides,
+  type OverrideSyncStatus,
+} from "./lineRouteOverrides";
 
 type LatLng = [number, number];
 type Store = Awaited<ReturnType<typeof ensureGtfsSeeded>>;
@@ -24,6 +33,8 @@ export interface LineVariant {
   directionId: number;
   /** Kierunek = ostatni przystanek kursu z rozkładu (nie `trip_headsign`). */
   headsign: string;
+  firstStopId: string;
+  lastStopId: string;
   firstStop: string;
   lastStop: string;
   stopCount: number;
@@ -38,9 +49,17 @@ export interface LineVariant {
   representativeTripId: string;
   /** Pierwszy wariant danego kierunku, który kursuje w dniu odniesienia. */
   main: boolean;
-  /** true = brak shapes.txt, trasa to łamana po przystankach. */
+  /** true = brak shapes.txt i brak korekty Planisty, trasa to łamana po przystankach. */
   approximate: boolean;
+  /** Aktywna ścieżka (korekta Planisty albo oryginał GTFS). */
   path: LatLng[];
+  /** Oryginalna ścieżka z GTFS (do podglądu porównawczego i przywrócenia w edytorze). */
+  originalPath: LatLng[];
+  /** true = wariant ma zapisany poprawiony przebieg z edytora Planisty. */
+  customized: boolean;
+  customStatus: OverrideSyncStatus;
+  customNote?: string;
+  customUpdatedAt?: string;
 }
 
 export interface LineEntry {
@@ -57,7 +76,7 @@ export interface LineEntry {
   variants: LineVariant[];
 }
 
-let cache: { base: unknown; entries: LineEntry[] } | null = null;
+let cache: { base: unknown; overridesRevision: number; entries: LineEntry[] } | null = null;
 
 function mostCommon(values: string[]): string {
   const counts = new Map<string, number>();
@@ -74,12 +93,16 @@ function mostCommon(values: string[]): string {
 }
 
 export async function getLineCatalogue(): Promise<LineEntry[]> {
+  void initLineRouteOverrides();
   const store = await ensureGtfsSeeded();
   // Warianty linii rysują się po `shapes.txt`; bez tego pierwszą geometrię
   // powstałaby z samych przystanków (linia łamana przez budynki).
   await ensureShapesReady(store);
   const base = store.base;
-  if (cache && cache.base === base) return cache.entries;
+  const overridesRevision = getOverridesRevision();
+  if (cache && cache.base === base && cache.overridesRevision === overridesRevision) {
+    return cache.entries;
+  }
 
   const today = Number(DateTime.now().setZone(WARSAW_ZONE).toFormat("yyyyLLdd"));
 
@@ -165,31 +188,47 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
       const lastPoint = tripStopTimes.length
         ? stopPointFor(base, tripStopTimes[tripStopTimes.length - 1].stopId)
         : null;
-      let path: LatLng[];
-      let approximate = false;
+
+      let originalPath: LatLng[];
       if (shape && shape.length >= 2) {
-        // Kształt przycięty do przystanków wariantu i dociągnięty do nich:
-        // wspólny `shape_id` nie może ciągnąć linii poza jej przystanek końcowy.
-        path = shapeForTripStops(shape, firstPoint, lastPoint);
+        originalPath = shapeForTripStops(shape, firstPoint, lastPoint);
       } else {
-        approximate = true;
-        path = [];
+        originalPath = [];
         for (const st of tripStopTimes) {
           const stop = stopPointFor(base, st.stopId);
-          if (stop) path.push([stop.lat, stop.lon]);
+          if (stop) originalPath.push([stop.lat, stop.lon]);
         }
       }
+
+      const resolved = resolveTripShape(
+        base,
+        representative,
+        firstPoint,
+        lastPoint,
+        originalPath,
+      );
+      const path = resolved.path;
+      const approximate = resolved.approximate;
       if (path.length < 2) continue;
 
-      // Nazwy skrajnych przystanków bierzemy z rozkładu **przypisanego do mapy**
-      // (`stopPointFor`), a nie z `trip_headsign` — ten bywa nieaktualny.
       const terminus = lastPoint?.name || representative.lastStopName || headsign;
       const origin = firstPoint?.name || representative.firstStopName;
+      const matchedOverride = findLineRouteOverride({
+        lineShort: route.shortName,
+        shapeId: representative.shapeId,
+        firstStopId: representative.firstStopId,
+        lastStopId: representative.lastStopId,
+        firstStopName: origin,
+        lastStopName: terminus,
+        directionId: representative.directionId,
+      });
 
       variants.push({
         key,
         directionId: representative.directionId,
         headsign: terminus,
+        firstStopId: representative.firstStopId,
+        lastStopId: representative.lastStopId,
         firstStop: origin,
         lastStop: terminus,
         stopCount: Math.max(...group.map((trip) => trip.stopCount)),
@@ -201,6 +240,11 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         main: false,
         approximate,
         path,
+        originalPath: originalPath.length >= 2 ? originalPath : path,
+        customized: resolved.isOverride,
+        customStatus: getOverrideStatus(route.shortName, key),
+        customNote: matchedOverride?.override.note,
+        customUpdatedAt: matchedOverride?.override.updatedAt,
       });
     }
     if (!variants.length) continue;
@@ -240,6 +284,6 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
     });
   }
 
-  cache = { base, entries };
+  cache = { base, overridesRevision, entries };
   return entries;
 }

@@ -3,6 +3,7 @@ import {
   Bookmark,
   FileDown,
   MousePointer2,
+  Pencil,
   Share2,
   SlidersHorizontal,
   Sparkles,
@@ -147,6 +148,8 @@ interface PlanningPanelProps {
   onAddStopsAlongRoute: () => void;
   onCenterWalbrzych: () => void;
   onOpenKursowka: (kursowkaId: string, kursowkaCode: string) => void;
+  onOpenLineEditor?: () => void;
+  editedRoutesCount?: number;
 }
 
 export default function PlanningPanel(props: PlanningPanelProps) {
@@ -199,13 +202,31 @@ export default function PlanningPanel(props: PlanningPanelProps) {
           type="button"
           onClick={props.onOpenPdf}
           disabled={!props.exportReady}
-          className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-brand/25 bg-brand-soft px-3 text-[11px] font-bold text-brand-ink transition-colors hover:border-brand/50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mb-2 flex h-9 w-full items-center justify-between rounded-lg border border-brand/25 bg-brand-soft px-3 text-[11px] font-bold text-brand-ink transition-colors hover:border-brand/50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="flex items-center gap-2">
             <FileDown className="h-3.5 w-3.5" /> Pobierz trasę PDF
           </span>
           <span className="text-[8px] font-semibold">Cała mapa · margines 2 cm</span>
         </button>
+
+        {props.onOpenLineEditor && (
+          <button
+            type="button"
+            data-testid="open-line-route-editor"
+            onClick={props.onOpenLineEditor}
+            className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
+          >
+            <span className="flex items-center gap-2">
+              <Pencil className="h-3.5 w-3.5 text-brand-ink" /> Edytor przebiegu tras linii
+            </span>
+            <span className="text-[8px] font-bold text-brand-ink">
+              {props.editedRoutesCount && props.editedRoutesCount > 0
+                ? `${props.editedRoutesCount} popraw.`
+                : "Dla wszystkich"}
+            </span>
+          </button>
+        )}
 
         <div className="mb-2.5">
           <BrigadePanel

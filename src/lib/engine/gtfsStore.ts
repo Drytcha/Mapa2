@@ -40,6 +40,11 @@ import {
 import { reconstructLineSevenDuty } from "./lineSevenDuty";
 import { technicalTripCode, type TechnicalTripCode } from "./technicalTrips";
 import { repairShapeGaps } from "./shapeRepair";
+import {
+  findLineRouteOverride,
+  getOverridesRevision,
+  initLineRouteOverrides,
+} from "./lineRouteOverrides";
 import type { BuilderStop, BuilderTrip } from "./brigadeBuilder";
 import { CSV_CHUNK_ROWS, yieldToMain } from "../core/cooperative";
 import { createLap, measureSync, recordTiming } from "../core/perfMarks";
@@ -1747,8 +1752,93 @@ export function shapeForTripStops(
   );
 }
 
+export interface ResolvedTripShape {
+  path: [number, number][];
+  /** true = pochodzi z ręcznej edycji Planisty (wspólny rejestr tras). */
+  isOverride: boolean;
+  /** true = brak shapes.txt i brak edycji — łamana po przystankach. */
+  approximate: boolean;
+}
+
+/**
+ * Jedno źródło prawdy dla geometrii kursu w całej aplikacji:
+ * 1. Zapisany przebieg Planisty (`line-route-overrides.json` / IndexedDB / GitHub)
+ * 2. Oficjalny kształt z `shapes.txt` przycięty i dociągnięty do skrajnych przystanków
+ * 3. Przybliżona łamana po przystankach kursu
+ */
+export function resolveTripShape(
+  base: ParsedArchiveBase,
+  trip: RawTripDetail,
+  first: { lat: number; lon: number; name?: string } | null,
+  last: { lat: number; lon: number; name?: string } | null,
+  fallbackStopPath?: [number, number][],
+): ResolvedTripShape {
+  const overrideMatch = findLineRouteOverride({
+    lineShort: trip.routeShort,
+    shapeId: trip.shapeId,
+    firstStopId: trip.firstStopId,
+    lastStopId: trip.lastStopId,
+    firstStopName: first?.name || trip.firstStopName,
+    lastStopName: last?.name || trip.lastStopName,
+    directionId: trip.directionId,
+  });
+
+  if (overrideMatch && overrideMatch.override.path.length >= 2) {
+    const path = overrideMatch.exactVariantMatch
+      ? overrideMatch.override.path.map(([lat, lon]): [number, number] => [lat, lon])
+      : connectEndsToStops(
+          trimShapeToStops(overrideMatch.override.path, first, last),
+          first,
+          last,
+        );
+    return { path, isOverride: true, approximate: false };
+  }
+
+  const shape = trip.shapeId ? base.shapesById.get(trip.shapeId) : undefined;
+  if (shape && shape.length >= 2) {
+    return {
+      path: shapeForTripStops(shape, first, last),
+      isOverride: false,
+      approximate: false,
+    };
+  }
+
+  if (fallbackStopPath && fallbackStopPath.length >= 2) {
+    return { path: fallbackStopPath, isOverride: false, approximate: true };
+  }
+
+  const stopPath: [number, number][] = [];
+  for (const st of base.rawStopTimesByTrip.get(trip.rawTripId) ?? []) {
+    const stop = stopPointFor(base, st.stopId);
+    if (stop) stopPath.push([stop.lat, stop.lon]);
+  }
+  return { path: stopPath, isOverride: false, approximate: true };
+}
+
+/** Zwraca uporządkowaną listę przystanków danego kursu (do edytora tras linii). */
+export async function getTripOrderedStops(
+  tripId: string,
+): Promise<Array<{ id: string; name: string; lat: number; lon: number; sequence: number }>> {
+  const store = await ensureGtfsSeeded();
+  const out: Array<{ id: string; name: string; lat: number; lon: number; sequence: number }> = [];
+  for (const st of store.base.rawStopTimesByTrip.get(tripId) ?? []) {
+    const stop = stopPointFor(store.base, st.stopId);
+    if (stop) {
+      out.push({
+        id: stop.id,
+        name: stop.name,
+        lat: stop.lat,
+        lon: stop.lon,
+        sequence: st.stopSequence,
+      });
+    }
+  }
+  return out;
+}
+
 /** Store z gotowymi kształtami tras — dla funkcji, które rysują geometrię. */
 async function seededWithShapes(): Promise<GtfsMemoryStore> {
+  void initLineRouteOverrides();
   const store = await ensureGtfsSeeded();
   await ensureShapesReady(store);
   return store;
@@ -2078,8 +2168,19 @@ export async function getDutyDetail(options: {
   const shapes: Record<string, [number, number][]> = {};
   for (const trip of trips) {
     if (trip.shapeId && !shapes[trip.shapeId]) {
-      const pts = store.base.shapesById.get(trip.shapeId);
-      if (pts) shapes[trip.shapeId] = pts;
+      const rawTrip = store.base.rawTripsById.get(trip.rawTripId);
+      const sts = store.base.rawStopTimesByTrip.get(trip.rawTripId) ?? [];
+      const firstPoint = sts[0] ? stopPointFor(store.base, sts[0].stopId) : null;
+      const lastPoint = sts.length ? stopPointFor(store.base, sts[sts.length - 1].stopId) : null;
+      const resolved = rawTrip
+        ? resolveTripShape(store.base, rawTrip, firstPoint, lastPoint)
+        : null;
+      if (resolved && resolved.path.length >= 2) {
+        shapes[trip.shapeId] = resolved.path;
+      } else {
+        const pts = store.base.shapesById.get(trip.shapeId);
+        if (pts) shapes[trip.shapeId] = pts;
+      }
     }
   }
 
@@ -2568,14 +2669,18 @@ function fetchLiveStopDeparturesCached(
   });
 }
 
-const tripLengthCache = new WeakMap<GtfsMemoryStore, Map<string, number>>();
+const tripLengthCache = new WeakMap<
+  GtfsMemoryStore,
+  { revision: number; lengths: Map<string, number> }
+>();
 const polylineMeters = polylineLengthMeters;
 
 /** Mapa długości wszystkich kursów danego dnia w metrach. */
 export async function getTripLengthMap(): Promise<Map<string, number>> {
   const store = await seededWithShapes();
+  const rev = getOverridesRevision();
   const cached = tripLengthCache.get(store);
-  if (cached) return cached;
+  if (cached && cached.revision === rev) return cached.lengths;
   const lengths = new Map<string, number>();
   for (const trip of store.base.rawTrips) {
     const stops = store.base.rawStopTimesByTrip.get(trip.rawTripId) ?? [];
@@ -2583,6 +2688,24 @@ export async function getTripLengthMap(): Promise<Map<string, number>> {
     for (const st of stops) {
       const stop = store.base.stopsById.get(st.stopId);
       if (stop) stopPoints.push([stop.lat, stop.lon]);
+    }
+    const firstPoint = stops[0] ? stopPointFor(store.base, stops[0].stopId) : null;
+    const lastPoint = stops.length ? stopPointFor(store.base, stops[stops.length - 1].stopId) : null;
+    const override = findLineRouteOverride({
+      lineShort: trip.routeShort,
+      shapeId: trip.shapeId,
+      firstStopId: trip.firstStopId,
+      lastStopId: trip.lastStopId,
+      firstStopName: firstPoint?.name || trip.firstStopName,
+      lastStopName: lastPoint?.name || trip.lastStopName,
+      directionId: trip.directionId,
+    });
+    if (override && override.override.path.length >= 2) {
+      const resolvedPath = override.exactVariantMatch
+        ? override.override.path
+        : connectEndsToStops(trimShapeToStops(override.override.path, firstPoint, lastPoint), firstPoint, lastPoint);
+      lengths.set(trip.rawTripId, Math.max(0, Math.round(polylineMeters(resolvedPath))));
+      continue;
     }
     const shape = trip.shapeId
       ? store.base.shapesById.get(trip.shapeId)
@@ -2598,7 +2721,7 @@ export async function getTripLengthMap(): Promise<Map<string, number>> {
     }
     lengths.set(trip.rawTripId, Math.max(0, Math.round(meters)));
   }
-  tripLengthCache.set(store, lengths);
+  tripLengthCache.set(store, { revision: rev, lengths });
   return lengths;
 }
 
@@ -2615,30 +2738,32 @@ export interface LineRouteGeometry {
 
 const lineGeometryCache = new WeakMap<
   GtfsMemoryStore,
-  Map<string, LineRouteGeometry | null>
+  { revision: number; map: Map<string, LineRouteGeometry | null> }
 >();
 
-function geometrySignature(routeId: string, shapeIds: string[]): string {
+function geometrySignature(routeId: string, shapeIds: string[], overridesRevision = 0): string {
   // FNV-1a: krótki, stabilny klucz cache bez zależności od kolejności wariantów.
   let hash = 0x811c9dc5;
-  for (const char of `${routeId}|${[...shapeIds].sort().join(",")}`) {
+  for (const char of `${routeId}|r${overridesRevision}|${[...shapeIds].sort().join(",")}`) {
     hash ^= char.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193);
   }
   return `${routeId}-${(hash >>> 0).toString(36)}`;
 }
 
-/** Geometria i przystanki linii — wszystkie warianty kierunkowe z shapes.txt. */
+/** Geometria i przystanki linii — wszystkie warianty kierunkowe z shapes.txt (oraz zapisane korekty Planisty). */
 export async function getLineRouteGeometry(
   routeShort: string,
 ): Promise<LineRouteGeometry | null> {
   const store = await seededWithShapes();
+  const rev = getOverridesRevision();
   const wanted = routeShort.trim().toUpperCase();
-  let cache = lineGeometryCache.get(store);
-  if (!cache) {
-    cache = new Map();
-    lineGeometryCache.set(store, cache);
+  let cacheBucket = lineGeometryCache.get(store);
+  if (!cacheBucket || cacheBucket.revision !== rev) {
+    cacheBucket = { revision: rev, map: new Map() };
+    lineGeometryCache.set(store, cacheBucket);
   }
+  const cache = cacheBucket.map;
   if (cache.has(wanted)) return cache.get(wanted) ?? null;
 
   const base = store.base;
@@ -2663,21 +2788,8 @@ export async function getLineRouteGeometry(
     ? allTrips.filter((trip) => refServices.has(trip.serviceId))
     : [];
   const trips = activeTrips.length ? activeTrips : allTrips;
-  const shapeIds = [
-    ...new Set(
-      trips
-        .map((trip) => trip.shapeId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ]
-    .filter((id) => (base.shapesById.get(id)?.length ?? 0) >= 2)
-    .sort(
-      (a, b) =>
-        (base.shapesById.get(b)?.length ?? 0) -
-        (base.shapesById.get(a)?.length ?? 0),
-    )
-    .slice(0, 16);
-
+  const seenKeys = new Set<string>();
+  const shapeIds: string[] = [];
   const points: [number, number][] = [];
   const seen = new Set<string>();
   const pushPoint = (lat: number, lon: number) => {
@@ -2687,9 +2799,19 @@ export async function getLineRouteGeometry(
     seen.add(key);
     points.push([lat, lon]);
   };
-  for (const id of shapeIds) {
-    for (const point of base.shapesById.get(id) ?? [])
-      pushPoint(point[0], point[1]);
+  for (const trip of trips) {
+    const variantKey = trip.shapeId || `${trip.firstStopId}>${trip.lastStopId}`;
+    if (seenKeys.has(variantKey)) continue;
+    seenKeys.add(variantKey);
+    if (shapeIds.length >= 16) continue;
+    const sts = base.rawStopTimesByTrip.get(trip.rawTripId) ?? [];
+    const firstPoint = sts[0] ? stopPointFor(base, sts[0].stopId) : null;
+    const lastPoint = sts.length ? stopPointFor(base, sts[sts.length - 1].stopId) : null;
+    const resolved = resolveTripShape(base, trip, firstPoint, lastPoint);
+    if (resolved.path.length >= 2) {
+      shapeIds.push(variantKey);
+      for (const point of resolved.path) pushPoint(point[0], point[1]);
+    }
   }
 
   const stopById = new Map<
@@ -2724,7 +2846,7 @@ export async function getLineRouteGeometry(
     routeId: route.id,
     routeShort: route.shortName,
     routeName: route.longName,
-    signature: geometrySignature(route.id, shapeIds),
+    signature: geometrySignature(route.id, shapeIds, rev),
     points,
     stops,
   };
@@ -2967,16 +3089,17 @@ export async function getVehicleRouteOverlay(
     const stop = stopPointFor(store.base, st.stopId);
     if (stop) stops.push({ name: stop.name, lat: stop.lat, lon: stop.lon, sequence: st.stopSequence });
   }
-  const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
-  const fromShape = Boolean(shape && shape.length >= 2);
-  // Kształt jest geometrią oficjalną: rysujemy go w całości i dociągamy do
-  // pierwszego/ostatniego przystanku kursu (pętla bywa dalej niż koniec kształtu).
-  const path: [number, number][] = fromShape
-    ? shapeForTripStops(shape as [number, number][], stops[0] ?? null, stops[stops.length - 1] ?? null)
-    : stops.map((stop): [number, number] => [stop.lat, stop.lon]);
+  const resolved = resolveTripShape(
+    store.base,
+    trip,
+    stops[0] ?? null,
+    stops[stops.length - 1] ?? null,
+    stops.map((stop): [number, number] => [stop.lat, stop.lon]),
+  );
+  const path = resolved.path;
   if (path.length < 2) return null;
 
-  const repaired = await repairShapeGaps(path, undefined, !fromShape);
+  const repaired = await repairShapeGaps(path, undefined, resolved.approximate);
   const polylines = repaired.polylines.length > 0 ? repaired.polylines : [path];
   const route = store.base.routesById.get(trip.routeId);
   return {
@@ -3124,29 +3247,22 @@ export async function getBrigadeShapeOverlay(
   for (const tripId of tripIds) {
     const trip = store.base.rawTripsById.get(tripId);
     if (!trip) continue;
-    const pts = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : undefined;
     const sts = store.base.rawStopTimesByTrip.get(tripId) ?? [];
-    if (pts && pts.length >= 2 && trip.shapeId) {
-      if (!seenShapes.has(trip.shapeId)) {
-        seenShapes.add(trip.shapeId);
-        const firstPoint = sts[0] ? stopPointFor(store.base, sts[0].stopId) : null;
-        const lastPoint = sts.length ? stopPointFor(store.base, sts[sts.length - 1].stopId) : null;
+    const firstPoint = sts[0] ? stopPointFor(store.base, sts[0].stopId) : null;
+    const lastPoint = sts.length ? stopPointFor(store.base, sts[sts.length - 1].stopId) : null;
+    const resolved = resolveTripShape(store.base, trip, firstPoint, lastPoint);
+    if (resolved.path.length >= 2) {
+      const dedupeKey = resolved.isOverride
+        ? `ovr:${trip.routeShort}:${trip.shapeId || `${trip.firstStopId}>${trip.lastStopId}`}`
+        : !resolved.approximate && trip.shapeId
+          ? `shp:${trip.shapeId}:${trip.firstStopId}>${trip.lastStopId}`
+          : `stp:${JSON.stringify(sts.map((st) => st.stopId))}`;
+      if (!seenShapes.has(dedupeKey) && !seenStopChains.has(dedupeKey)) {
+        seenShapes.add(dedupeKey);
         polylines.push({
-          // Ten sam kurs = ten sam przystanek końcowy; kształt nie może biec dalej.
-          path: shapeForTripStops(pts, firstPoint, lastPoint),
-          stopChain: false,
+          path: resolved.path,
+          stopChain: resolved.approximate,
         });
-      }
-    } else {
-      const key = JSON.stringify(sts.map((st) => st.stopId));
-      if (!seenStopChains.has(key)) {
-        seenStopChains.add(key);
-        const path: [number, number][] = [];
-        for (const st of sts) {
-          const stop = stopPointFor(store.base, st.stopId);
-          if (stop) path.push([stop.lat, stop.lon]);
-        }
-        if (path.length >= 2) polylines.push({ path, stopChain: true });
       }
     }
     for (const st of sts) {
@@ -3249,17 +3365,15 @@ export async function getCoursePreview(
   }
   if (stops.length < 2) return null;
 
-  const shape = trip.shapeId ? store.base.shapesById.get(trip.shapeId) : null;
-  const approximate = !shape || shape.length < 2;
-  // Kształt rysujemy w całości i dociągamy do przystanku początkowego/końcowego
-  // (np. pętla Kozice leży ~360 m za końcem kształtu linii 11).
-  const path: [number, number][] = approximate
-    ? stops.map((stop) => [stop.lat, stop.lon])
-    : shapeForTripStops(
-        shape as [number, number][],
-        stops[0] ?? null,
-        stops[stops.length - 1] ?? null,
-      );
+  const resolved = resolveTripShape(
+    store.base,
+    trip,
+    stops[0] ?? null,
+    stops[stops.length - 1] ?? null,
+    stops.map((stop) => [stop.lat, stop.lon]),
+  );
+  const approximate = resolved.approximate;
+  const path: [number, number][] = resolved.path;
   const route = store.base.routesById.get(trip.routeId);
   const operatorKey =
     trip.operatorKey !== "other"
