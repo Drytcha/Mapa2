@@ -161,6 +161,81 @@ export function removeVertexFromPath(
   return [...points.slice(0, index), ...points.slice(index + 1)];
 }
 
+export interface SelectionBounds {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+/** Returns sorted indices of all vertices located inside geographic `bounds`. */
+export function findVerticesInBounds(
+  points: readonly LatLng[],
+  bounds: SelectionBounds,
+): number[] {
+  const s = Math.min(bounds.south, bounds.north);
+  const n = Math.max(bounds.south, bounds.north);
+  const w = Math.min(bounds.west, bounds.east);
+  const e = Math.max(bounds.west, bounds.east);
+  const out: number[] = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const [lat, lon] = points[i];
+    if (lat >= s && lat <= n && lon >= w && lon <= e) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+/**
+ * Removes multiple vertex indices at once while preserving at least `minPoints` (default 2).
+ * If removing every requested vertex would leave fewer than `minPoints`, endpoints (first/last)
+ * are preserved first so the route remains valid.
+ */
+export function removeVerticesFromPath(
+  points: readonly LatLng[],
+  indices: Iterable<number>,
+  minPoints = 2,
+): { nextPoints: LatLng[]; removedCount: number } {
+  const toRemove = new Set<number>();
+  for (const idx of indices) {
+    if (Number.isInteger(idx) && idx >= 0 && idx < points.length) {
+      toRemove.add(idx);
+    }
+  }
+  if (toRemove.size === 0 || points.length <= minPoints) {
+    return { nextPoints: [...points], removedCount: 0 };
+  }
+
+  const maxRemovable = Math.max(0, points.length - minPoints);
+  if (toRemove.size > maxRemovable) {
+    // Preserve route endpoints first (start, then end), then earliest indices.
+    if (toRemove.has(0) && toRemove.size > maxRemovable) {
+      toRemove.delete(0);
+    }
+    if (toRemove.has(points.length - 1) && toRemove.size > maxRemovable) {
+      toRemove.delete(points.length - 1);
+    }
+    if (toRemove.size > maxRemovable) {
+      const sorted = [...toRemove].sort((a, b) => a - b);
+      let excess = sorted.length - maxRemovable;
+      for (let i = 0; i < sorted.length && excess > 0; i += 1) {
+        toRemove.delete(sorted[i]);
+        excess -= 1;
+      }
+    }
+  }
+
+  const nextPoints: LatLng[] = [];
+  for (let i = 0; i < points.length; i += 1) {
+    if (!toRemove.has(i)) nextPoints.push(points[i]);
+  }
+  return {
+    nextPoints,
+    removedCount: points.length - nextPoints.length,
+  };
+}
+
 /** Finds the nearest vertex index on `points` to `target`. */
 export function nearestVertexOnPath(
   points: readonly LatLng[],

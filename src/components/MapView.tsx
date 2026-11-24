@@ -15,7 +15,7 @@ import {
   routeArrowIconSize,
   routeArrowPoints,
 } from "@/lib/routeArrows";
-import { nearestVertexOnPath } from "@/lib/routeEditorGeometry";
+import { findVerticesInBounds, nearestVertexOnPath } from "@/lib/routeEditorGeometry";
 import type {
   BusStop,
   LiveBusVehicle,
@@ -56,7 +56,7 @@ export interface MapHandle {
   getBounds: () => { south: number; west: number; north: number; east: number } | null;
 }
 
-export type LineEditorMode = "vertices" | "draw" | "segment" | "delete";
+export type LineEditorMode = "vertices" | "draw" | "segment" | "delete" | "box-delete";
 
 export interface LineRouteEditorMapState {
   fitKey: string;
@@ -73,6 +73,7 @@ export interface LineRouteEditorMapState {
   segmentEndIndex: number | null;
   segmentDraftPoints: [number, number][];
   segmentPreviewPath: [number, number][];
+  selectedVertexIndices: number[];
 }
 
 export interface KursowkaShapeOverlay {
@@ -187,6 +188,10 @@ interface MapViewProps {
   onLineEditorVertexRemove?: (index: number) => void;
   onLineEditorMapClick?: (lat: number, lon: number) => void;
   onLineEditorSegmentPickVertex?: (index: number) => void;
+  onLineEditorBoxSelect?: (indices: number[], additive: boolean) => void;
+  onLineEditorToggleSelectVertex?: (index: number) => void;
+  onLineEditorDeleteSelected?: () => void;
+  onLineEditorClearSelection?: () => void;
 }
 
 const vehicleSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.6 3.9 21l8.1-4.7 8.1 4.7L12 2.6Z" fill="currentColor"/></svg>`;
@@ -278,6 +283,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     onLineEditorVertexRemove,
     onLineEditorMapClick,
     onLineEditorSegmentPickVertex,
+    onLineEditorBoxSelect,
+    onLineEditorToggleSelectVertex,
+    onLineEditorDeleteSelected,
+    onLineEditorClearSelection,
   },
   ref
 ) {
@@ -341,6 +350,15 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const lineEditorRemoveRef = useRef(onLineEditorVertexRemove);
   const lineEditorMapClickRef = useRef(onLineEditorMapClick);
   const lineEditorSegmentPickRef = useRef(onLineEditorSegmentPickVertex);
+  const lineEditorBoxSelectRef = useRef(onLineEditorBoxSelect);
+  const lineEditorToggleSelectRef = useRef(onLineEditorToggleSelectVertex);
+  const [selectionBox, setSelectionBox] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    count: number;
+  } | null>(null);
   useEffect(() => {
     pickModeRef.current = pickMode;
     stopClickRef.current = onBusStopClick;
@@ -358,6 +376,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     lineEditorRemoveRef.current = onLineEditorVertexRemove;
     lineEditorMapClickRef.current = onLineEditorMapClick;
     lineEditorSegmentPickRef.current = onLineEditorSegmentPickVertex;
+    lineEditorBoxSelectRef.current = onLineEditorBoxSelect;
+    lineEditorToggleSelectRef.current = onLineEditorToggleSelectVertex;
     tripOriginPickRef.current = onTripOriginPick;
     tripOriginMoveRef.current = onTripOriginMove;
     tripDestinationPickRef.current = onTripDestinationPick;
@@ -1784,8 +1804,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       segmentEndIndex,
       segmentDraftPoints,
       segmentPreviewPath,
+      selectedVertexIndices,
     } = lineRouteEditor;
 
+    const selectedSet = new Set(selectedVertexIndices);
     const lineColor = color || "#0d4f3b";
 
     // 1. Oryginał GTFS w tle (ciągła półprzezroczysta linia — bez dashArray).
@@ -1989,29 +2011,41 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       for (let i = 0; i < liveCoords.length; i += 1) {
         const isStart = i === 0;
         const isEnd = i === liveCoords.length - 1;
-        if (!isStart && !isEnd && i % step !== 0) continue;
+        const isSelected = selectedSet.has(i);
+        if (!isStart && !isEnd && !isSelected && i % step !== 0) continue;
         const [lat, lon] = liveCoords[i];
-        if (!isStart && !isEnd && !bounds.contains([lat, lon])) continue;
+        if (!isStart && !isEnd && !isSelected && !bounds.contains([lat, lon])) continue;
 
-        const size = isStart || isEnd ? 16 : mode === "delete" ? 13 : 12;
-        const fill =
-          mode === "delete"
+        const size = isSelected
+          ? 16
+          : isStart || isEnd
+            ? 16
+            : mode === "delete" || mode === "box-delete"
+              ? 13
+              : 12;
+        const fill = isSelected
+          ? "#dc2626"
+          : mode === "delete"
             ? "#ef4444"
             : isStart
               ? "#0891b2"
               : isEnd
                 ? "#e11d48"
                 : "#ffffff";
-        const border =
-          mode === "delete"
+        const border = isSelected
+          ? "#fef08a"
+          : mode === "delete"
             ? "#ffffff"
             : isStart || isEnd
               ? "#ffffff"
               : lineColor;
+        const ring = isSelected
+          ? "0 0 0 2px #dc2626, 0 2px 6px rgba(0,0,0,0.45)"
+          : "0 1px 4px rgba(0,0,0,0.42)";
         const cursor =
           mode === "vertices"
             ? "grab"
-            : mode === "delete" || mode === "segment"
+            : mode === "delete" || mode === "box-delete" || mode === "segment"
               ? "pointer"
               : "default";
 
@@ -2020,7 +2054,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           draggable: mode === "vertices",
           icon: L.divIcon({
             className: "line-editor-vertex-wrap",
-            html: `<span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${fill};border:2.5px solid ${border};box-shadow:0 1px 4px rgba(0,0,0,0.42);cursor:${cursor};"></span>`,
+            html: `<span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${fill};border:2.5px solid ${border};box-shadow:${ring};cursor:${cursor};"></span>`,
             iconSize: [size, size],
             iconAnchor: [size / 2, size / 2],
           }),
@@ -2055,6 +2089,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
             L.DomEvent.stopPropagation(event);
             lineEditorRemoveRef.current?.(vertexIndex);
           });
+        } else if (mode === "box-delete") {
+          marker.on("click", (event: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(event);
+            lineEditorToggleSelectRef.current?.(vertexIndex);
+          });
         } else if (mode === "segment") {
           marker.on("click", (event: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(event);
@@ -2083,15 +2122,167 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     };
   }, [lineRouteEditor]);
 
+  /* Zaznaczanie wielu punktów trasy prostokątem (ramką) do zbiorczego usunięcia. */
+  const boxSelectMode =
+    lineRouteEditor?.mode === "box-delete" || lineRouteEditor?.mode === "delete";
+  const boxSelectPrimary = lineRouteEditor?.mode === "box-delete";
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const container = containerRef.current;
+    if (!map || !container) return;
+
+    if (boxSelectPrimary) {
+      map.dragging.disable();
+    } else {
+      map.dragging.enable();
+    }
+
+    if (!boxSelectMode) {
+      setSelectionBox(null);
+      return () => {
+        map.dragging.enable();
+      };
+    }
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let additive = false;
+    let pointerId: number | null = null;
+    let temporarilyDisabledMapDrag = false;
+
+    const toLocal = (event: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      };
+    };
+
+    const indicesForRect = (x1: number, y1: number, x2: number, y2: number) => {
+      const editor = lineEditorRef.current;
+      if (!editor || editor.path.length === 0) return [];
+      const left = Math.min(x1, x2);
+      const right = Math.max(x1, x2);
+      const top = Math.min(y1, y2);
+      const bottom = Math.max(y1, y2);
+      const nw = map.containerPointToLatLng(L.point(left, top));
+      const se = map.containerPointToLatLng(L.point(right, bottom));
+      return findVerticesInBounds(editor.path, {
+        south: se.lat,
+        west: nw.lng,
+        north: nw.lat,
+        east: se.lng,
+      });
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement | null;
+      // Nie zaczynaj ramki po kliknięciu w przycisk/kontrolkę nad mapą lub w pojedynczy uchwyt punktu.
+      if (target?.closest("button, a, input, .line-editor-vertex-wrap")) return;
+      const editor = lineEditorRef.current;
+      if (!editor) return;
+      const startBox =
+        editor.mode === "box-delete" || (editor.mode === "delete" && event.shiftKey);
+      if (!startBox) return;
+
+      if (editor.mode === "delete") {
+        map.dragging.disable();
+        temporarilyDisabledMapDrag = true;
+      }
+
+      const pt = toLocal(event);
+      dragging = true;
+      startX = pt.x;
+      startY = pt.y;
+      additive = event.shiftKey;
+      pointerId = event.pointerId;
+      try {
+        container.setPointerCapture(event.pointerId);
+      } catch {
+        /* Optional pointer capture */
+      }
+      event.preventDefault();
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!dragging || event.pointerId !== pointerId) return;
+      const pt = toLocal(event);
+      const width = Math.abs(pt.x - startX);
+      const height = Math.abs(pt.y - startY);
+      if (width < 5 && height < 5) {
+        setSelectionBox(null);
+        return;
+      }
+      const indices = indicesForRect(startX, startY, pt.x, pt.y);
+      setSelectionBox({
+        left: Math.min(startX, pt.x),
+        top: Math.min(startY, pt.y),
+        width,
+        height,
+        count: indices.length,
+      });
+    };
+
+    const finishDrag = (event: PointerEvent, commit: boolean) => {
+      if (!dragging || event.pointerId !== pointerId) return;
+      dragging = false;
+      pointerId = null;
+      try {
+        if (container.hasPointerCapture(event.pointerId)) {
+          container.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        /* Optional pointer capture */
+      }
+      if (temporarilyDisabledMapDrag) {
+        map.dragging.enable();
+        temporarilyDisabledMapDrag = false;
+      }
+      if (commit) {
+        const pt = toLocal(event);
+        const width = Math.abs(pt.x - startX);
+        const height = Math.abs(pt.y - startY);
+        if (width >= 5 || height >= 5) {
+          const indices = indicesForRect(startX, startY, pt.x, pt.y);
+          lineEditorBoxSelectRef.current?.(indices, additive);
+        }
+      }
+      setSelectionBox(null);
+    };
+
+    const onPointerUp = (event: PointerEvent) => finishDrag(event, true);
+    const onPointerCancel = (event: PointerEvent) => finishDrag(event, false);
+
+    container.addEventListener("pointerdown", onPointerDown, true);
+    container.addEventListener("pointermove", onPointerMove);
+    container.addEventListener("pointerup", onPointerUp);
+    container.addEventListener("pointercancel", onPointerCancel);
+
+    return () => {
+      container.removeEventListener("pointerdown", onPointerDown, true);
+      container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerup", onPointerUp);
+      container.removeEventListener("pointercancel", onPointerCancel);
+      setSelectionBox(null);
+      map.dragging.enable();
+    };
+  }, [boxSelectMode, boxSelectPrimary]);
+
   const tileTone = mapStyle === "satellite" ? "satellite" : theme;
   const mapCursor =
     pickMode ||
     lineRouteEditor?.mode === "draw" ||
+    lineRouteEditor?.mode === "box-delete" ||
     (lineRouteEditor?.mode === "segment" &&
       lineRouteEditor.segmentStartIndex !== null &&
       lineRouteEditor.segmentEndIndex !== null)
       ? "crosshair"
       : undefined;
+
+  const selectedCount = lineRouteEditor?.selectedVertexIndices.length ?? 0;
 
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
@@ -2102,6 +2293,48 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         role="application"
         aria-label="Interaktywna mapa trasy"
       />
+      {selectionBox && (
+        <div
+          data-testid="line-editor-selection-box"
+          className="pointer-events-none absolute z-[700] rounded-sm border-2 border-dashed border-red-500 bg-red-500/15"
+          style={{
+            left: `${selectionBox.left}px`,
+            top: `${selectionBox.top}px`,
+            width: `${selectionBox.width}px`,
+            height: `${selectionBox.height}px`,
+          }}
+        >
+          <span className="absolute -top-6 right-0 whitespace-nowrap rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow">
+            {selectionBox.count} pkt
+          </span>
+        </div>
+      )}
+      {lineRouteEditor && selectedCount > 0 && (
+        <div
+          data-testid="line-editor-selection-bar"
+          className="pointer-events-auto absolute left-1/2 top-3 z-[710] flex -translate-x-1/2 items-center gap-2 rounded-xl border border-red-500/40 bg-surface px-3 py-1.5 text-[10px] font-extrabold text-ink shadow-[0_12px_32px_rgba(0,0,0,0.28)]"
+        >
+          <span className="flex items-center gap-1.5 whitespace-nowrap">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-600 ring-2 ring-yellow-200" />
+            Zaznaczono {selectedCount} pkt
+          </span>
+          <button
+            type="button"
+            data-testid="map-delete-selected-vertices"
+            onClick={() => onLineEditorDeleteSelected?.()}
+            className="rounded-lg bg-red-600 px-2.5 py-1 text-[10px] font-extrabold text-white transition-colors hover:bg-red-700"
+          >
+            Usuń zaznaczone
+          </button>
+          <button
+            type="button"
+            onClick={() => onLineEditorClearSelection?.()}
+            className="rounded-lg border border-line bg-raised px-2 py-1 text-[9.5px] font-bold text-ink-soft hover:text-ink"
+          >
+            Odznacz
+          </button>
+        </div>
+      )}
       {mapStyle === "satellite" && (
         <div className="pointer-events-none absolute inset-0 bg-[#06110c]/20" aria-hidden="true" />
       )}

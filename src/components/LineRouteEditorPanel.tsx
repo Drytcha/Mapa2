@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowLeftRight,
+  BoxSelect,
   Check,
   ChevronDown,
   ChevronUp,
@@ -61,6 +62,7 @@ import {
   insertVertexOnPath,
   moveVertexInPath,
   removeVertexFromPath,
+  removeVerticesFromPath,
   replacePathSegment,
   roundCoord,
   routeSegmentViaOsrm,
@@ -79,6 +81,10 @@ export interface LineEditorMapHandlers {
   onVertexRemove: (index: number) => void;
   onMapClick: (lat: number, lon: number) => void;
   onSegmentPickVertex: (index: number) => void;
+  onBoxSelect: (indices: number[], additive: boolean) => void;
+  onToggleSelectVertex: (index: number) => void;
+  onDeleteSelected: () => void;
+  onClearSelection: () => void;
 }
 
 interface LineRouteEditorPanelProps {
@@ -169,6 +175,7 @@ export default function LineRouteEditorPanel({
   const [segmentEndIndex, setSegmentEndIndex] = useState<number | null>(null);
   const [segmentDraftPoints, setSegmentDraftPoints] = useState<LatLng[]>([]);
   const [segmentPreviewPath, setSegmentPreviewPath] = useState<LatLng[]>([]);
+  const [selectedVertexIndices, setSelectedVertexIndices] = useState<number[]>([]);
   const segmentAbortRef = useRef<AbortController | null>(null);
   const osrmAbortRef = useRef<AbortController | null>(null);
 
@@ -286,6 +293,7 @@ export default function LineRouteEditorPanel({
     setSegmentEndIndex(null);
     setSegmentDraftPoints([]);
     setSegmentPreviewPath([]);
+    setSelectedVertexIndices([]);
     setLastCommitUrl(null);
     setPublishError("");
 
@@ -312,6 +320,7 @@ export default function LineRouteEditorPanel({
 
   const commitPathChange = useCallback((nextPath: LatLng[]) => {
     const clean = sanitizePath(nextPath);
+    setSelectedVertexIndices([]);
     setDraftPath((current) => {
       if (pathsEqual(current, clean)) return current;
       setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), current]);
@@ -320,7 +329,35 @@ export default function LineRouteEditorPanel({
     });
   }, []);
 
+  const selectedIndicesRef = useRef(selectedVertexIndices);
+  selectedIndicesRef.current = selectedVertexIndices;
+
+  const handleDeleteSelectedVertices = useCallback(() => {
+    const current = draftPathRef.current;
+    const selected = selectedIndicesRef.current;
+    if (!selected.length) return;
+    if (current.length <= 2) {
+      onToast("Trasa musi mieć co najmniej 2 punkty.");
+      setSelectedVertexIndices([]);
+      return;
+    }
+    const { nextPoints, removedCount } = removeVerticesFromPath(current, selected, 2);
+    if (removedCount === 0) {
+      onToast("Nie można usunąć — muszą pozostać co najmniej 2 punkty trasy.");
+      setSelectedVertexIndices([]);
+      return;
+    }
+    commitPathChange(nextPoints);
+    const keptEndpoints = removedCount < selected.length;
+    onToast(
+      keptEndpoints
+        ? `Usunięto ${removedCount} pkt (pozostawiono skrajne punkty, aby trasa miała min. 2 punkty).`
+        : `Usunięto ${removedCount} zaznaczonych punktów trasy (Ctrl+Z cofa).`,
+    );
+  }, [commitPathChange, onToast]);
+
   const undo = useCallback(() => {
+    setSelectedVertexIndices([]);
     setHistory((prev) => {
       if (!prev.length) return prev;
       const previous = prev[prev.length - 1];
@@ -333,6 +370,7 @@ export default function LineRouteEditorPanel({
   }, []);
 
   const redo = useCallback(() => {
+    setSelectedVertexIndices([]);
     setFuture((prev) => {
       if (!prev.length) return prev;
       const next = prev[0];
@@ -344,7 +382,7 @@ export default function LineRouteEditorPanel({
     });
   }, []);
 
-  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y / Escape
+  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y / Delete / Escape
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -366,16 +404,26 @@ export default function LineRouteEditorPanel({
       ) {
         event.preventDefault();
         redo();
-      } else if (event.key === "Escape" && mode === "segment") {
-        setSegmentStartIndex(null);
-        setSegmentEndIndex(null);
-        setSegmentDraftPoints([]);
-        setSegmentPreviewPath([]);
+      } else if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        selectedIndicesRef.current.length > 0
+      ) {
+        event.preventDefault();
+        handleDeleteSelectedVertices();
+      } else if (event.key === "Escape") {
+        if (selectedIndicesRef.current.length > 0) {
+          setSelectedVertexIndices([]);
+        } else if (mode === "segment") {
+          setSegmentStartIndex(null);
+          setSegmentEndIndex(null);
+          setSegmentDraftPoints([]);
+          setSegmentPreviewPath([]);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo, redo, mode]);
+  }, [undo, redo, mode, handleDeleteSelectedVertices]);
 
   // Recompute live segment A->B preview whenever endpoints or draft via-points change.
   useEffect(() => {
@@ -454,6 +502,7 @@ export default function LineRouteEditorPanel({
       segmentEndIndex,
       segmentDraftPoints,
       segmentPreviewPath,
+      selectedVertexIndices,
     });
   }, [
     selectedLine,
@@ -470,6 +519,7 @@ export default function LineRouteEditorPanel({
     segmentEndIndex,
     segmentDraftPoints,
     segmentPreviewPath,
+    selectedVertexIndices,
     onMapStateChange,
   ]);
 
@@ -582,8 +632,30 @@ export default function LineRouteEditorPanel({
             if (osrmAbortRef.current === controller) setBusyMessage(null);
           });
       },
+      onBoxSelect: (indices, additive) => {
+        setSelectedVertexIndices((prev) => {
+          if (!additive) return indices;
+          const merged = new Set(prev);
+          for (const idx of indices) merged.add(idx);
+          return [...merged].sort((a, b) => a - b);
+        });
+      },
+      onToggleSelectVertex: (index) => {
+        setSelectedVertexIndices((prev) => {
+          if (prev.includes(index)) {
+            return prev.filter((item) => item !== index);
+          }
+          return [...prev, index].sort((a, b) => a - b);
+        });
+      },
+      onDeleteSelected: () => {
+        handleDeleteSelectedVertices();
+      },
+      onClearSelection: () => {
+        setSelectedVertexIndices([]);
+      },
     };
-  }, [commitPathChange, handlersRef, onToast]);
+  }, [commitPathChange, handleDeleteSelectedVertices, handlersRef, onToast]);
 
   const selectLineAndVariant = (lineShort: string, variantKey: string | null) => {
     if (isDirty) {
@@ -1116,21 +1188,31 @@ export default function LineRouteEditorPanel({
                           id: "vertices",
                           label: "Wierzchołki",
                           icon: MousePointerClick,
+                          spanFull: false,
                         },
                         {
                           id: "segment",
                           label: "Fragment A→B",
                           icon: Scissors,
+                          spanFull: false,
                         },
                         {
                           id: "draw",
                           label: "Rysuj / dopisz",
                           icon: Pencil,
+                          spanFull: false,
                         },
                         {
                           id: "delete",
-                          label: "Usuń punkty",
+                          label: "Usuń pojedynczo",
                           icon: Trash2,
+                          spanFull: false,
+                        },
+                        {
+                          id: "box-delete",
+                          label: "Zaznacz ramką i usuń wiele",
+                          icon: BoxSelect,
+                          spanFull: true,
                         },
                       ] as const
                     ).map((tool) => {
@@ -1149,11 +1231,17 @@ export default function LineRouteEditorPanel({
                               setSegmentDraftPoints([]);
                               setSegmentPreviewPath([]);
                             }
+                            if (tool.id !== "box-delete" && tool.id !== "delete") {
+                              setSelectedVertexIndices([]);
+                            }
                           }}
                           className={cn(
                             "flex h-8 items-center justify-center gap-1.5 rounded-lg border px-2 text-[9.5px] font-bold transition-colors",
+                            tool.spanFull && "col-span-2",
                             active
-                              ? "border-brand bg-brand text-on-brand"
+                              ? tool.id === "box-delete"
+                                ? "border-red-600 bg-red-600 text-white"
+                                : "border-brand bg-brand text-on-brand"
                               : "border-line bg-surface text-ink-soft hover:border-line-strong hover:text-ink",
                           )}
                         >
@@ -1190,8 +1278,38 @@ export default function LineRouteEditorPanel({
                     {mode === "delete" && (
                       <>
                         <b>Kliknij dowolny czerwony punkt</b> na trasie, aby go
-                        natychmiast usunąć.
+                        natychmiast usunąć, albo przytrzymaj <b>Shift i przeciągnij</b>,
+                        aby zaznaczyć ramką wiele punktów.
                       </>
+                    )}
+                    {mode === "box-delete" && (
+                      <div className="space-y-1.5">
+                        <span>
+                          <b>Przeciągnij prostokąt (ramkę)</b> po mapie, aby zaznaczyć
+                          wiele punktów trasy naraz (<b>Shift+ramka</b> dodaje kolejne,
+                          klik w punkt przełącza, <b>Delete</b> usuwa, <b>Esc</b> odznacza).
+                        </span>
+                        {selectedVertexIndices.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                            <button
+                              type="button"
+                              data-testid="editor-delete-selected"
+                              onClick={handleDeleteSelectedVertices}
+                              className="flex h-7 items-center gap-1 rounded-md bg-red-600 px-2.5 text-[9px] font-extrabold text-white hover:bg-red-700"
+                            >
+                              <Trash2 className="h-3 w-3" /> Usuń zaznaczone (
+                              {selectedVertexIndices.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedVertexIndices([])}
+                              className="h-7 rounded-md border border-line bg-raised px-2 text-[8.5px] font-bold text-ink-soft hover:text-ink"
+                            >
+                              Odznacz
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {mode === "segment" && (
                       <>

@@ -10,9 +10,11 @@ Date.now = () => FIXED_NOW;
 
 // 1. Testy czystej geometrii edytora
 import {
+  findVerticesInBounds,
   insertVertexOnPath,
   moveVertexInPath,
   removeVertexFromPath,
+  removeVerticesFromPath,
   replacePathSegment,
   sanitizePath,
   simplifyPath,
@@ -98,6 +100,39 @@ import {
   );
   assert.deepEqual(snapped[0], [50.77, 16.28]);
   assert.deepEqual(snapped[snapped.length - 1], [50.775, 16.285]);
+
+  // Zaznaczanie ramką (box selection) i zbiorcze usuwanie punktów trasy
+  const boxPath: LatLng[] = [
+    [50.77, 16.28],
+    [50.772, 16.282],
+    [50.774, 16.284],
+    [50.776, 16.286],
+    [50.78, 16.29],
+  ];
+  const inside = findVerticesInBounds(boxPath, {
+    south: 50.771,
+    north: 50.777,
+    west: 16.281,
+    east: 16.287,
+  });
+  assert.deepEqual(inside, [1, 2, 3], "ramka znajduje wszystkie punkty wewnątrz prostokąta");
+
+  const batchRemoved = removeVerticesFromPath(boxPath, inside);
+  assert.equal(batchRemoved.removedCount, 3, "usuwa wszystkie zaznaczone punkty naraz");
+  assert.deepEqual(
+    batchRemoved.nextPoints,
+    [
+      [50.77, 16.28],
+      [50.78, 16.29],
+    ],
+    "pozostałe punkty tworzą spójną trasę",
+  );
+
+  // Zabezpieczenie: zaznaczenie WSZYSTKICH punktów zostawia min. 2 (początek i koniec)
+  const removeAll = removeVerticesFromPath(boxPath, [0, 1, 2, 3, 4], 2);
+  assert.equal(removeAll.nextPoints.length, 2, "zawsze zostają co najmniej 2 punkty");
+  assert.deepEqual(removeAll.nextPoints[0], boxPath[0], "zachowany punkt startowy");
+  assert.deepEqual(removeAll.nextPoints[1], boxPath[4], "zachowany punkt końcowy");
 }
 
 // 2. Syntetyczny GTFS do sprawdzenia integracji z całym silnikiem

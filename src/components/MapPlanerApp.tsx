@@ -2486,6 +2486,18 @@ function MapPlanerWorkspace() {
               onLineEditorSegmentPickVertex={(index) =>
                 lineEditorHandlersRef.current?.onSegmentPickVertex(index)
               }
+              onLineEditorBoxSelect={(indices, additive) =>
+                lineEditorHandlersRef.current?.onBoxSelect(indices, additive)
+              }
+              onLineEditorToggleSelectVertex={(index) =>
+                lineEditorHandlersRef.current?.onToggleSelectVertex(index)
+              }
+              onLineEditorDeleteSelected={() =>
+                lineEditorHandlersRef.current?.onDeleteSelected()
+              }
+              onLineEditorClearSelection={() =>
+                lineEditorHandlersRef.current?.onClearSelection()
+              }
             />
           </Suspense>
 
