@@ -84,6 +84,15 @@ import {
   snapEndsToStops,
   type LatLng,
 } from "@/lib/routeEditorGeometry";
+import {
+  exportRoutesToGeoJson,
+  exportRoutesToGpx,
+  exportRoutesToGtfsShapesTxt,
+  overrideToExportEntry,
+  sanitizeGtfsId,
+  triggerTextDownload,
+  type RouteExportEntry,
+} from "@/lib/routeExportFormats";
 import { cn } from "@/utils/cn";
 import type { LineEditorMode, LineRouteEditorMapState } from "./MapView";
 
@@ -1267,6 +1276,85 @@ export default function LineRouteEditorPanel({
     }
   };
 
+  const [geometryExportScope, setGeometryExportScope] = useState<"current" | "all">(
+    "current",
+  );
+
+  const handleExportGeometry = (format: "shapes" | "geojson" | "gpx") => {
+    const entriesToExport: RouteExportEntry[] = [];
+    if (geometryExportScope === "all") {
+      for (const ovr of allOverrides) {
+        entriesToExport.push(overrideToExportEntry(ovr));
+      }
+      if (!entriesToExport.length) {
+        onToast("Brak zapisanych poprawionych tras. Najpierw zapisz trasę lub wybierz „Bieżąca”.");
+        return;
+      }
+    } else {
+      if (!selectedLine || !selectedVariant || draftPath.length < 2) {
+        onToast("Brak aktywnej trasy do wyeksportowania (min. 2 punkty).");
+        return;
+      }
+      const isDir = editScope === "direction" && activeDirectionGroup !== null;
+      const shapeId = isDir
+        ? sanitizeGtfsId(
+            `LINE_${selectedLine.shortName}_DIR_${activeDirectionGroup.directionId}`,
+          )
+        : sanitizeGtfsId(selectedVariant.key, `LINE_${selectedLine.shortName}`);
+      entriesToExport.push({
+        shapeId,
+        lineShort: selectedLine.shortName,
+        name: `Linia ${selectedLine.shortName} · ${selectedVariant.firstStop} → ${selectedVariant.lastStop}`,
+        directionId: isDir
+          ? activeDirectionGroup.directionId
+          : selectedVariant.directionId,
+        scope: isDir ? "direction" : "variant",
+        firstStopName: selectedVariant.firstStop,
+        lastStopName: selectedVariant.lastStop,
+        note: note.trim() || undefined,
+        updatedAt: new Date().toISOString(),
+        path: draftPath,
+      });
+    }
+
+    const baseName =
+      geometryExportScope === "all"
+        ? `trasy-poprawione-${entriesToExport.length}`
+        : `linia-${sanitizeGtfsId(selectedLine?.shortName ?? "trasa")}-${editScope === "direction" ? `kier${activeDirectionGroup?.directionId ?? 0}` : "wariant"}`;
+
+    if (format === "shapes") {
+      const content = exportRoutesToGtfsShapesTxt(entriesToExport);
+      triggerTextDownload(
+        content,
+        geometryExportScope === "all" ? "shapes.txt" : `${baseName}-shapes.txt`,
+        "text/csv;charset=utf-8",
+      );
+      onToast(
+        `Wyeksportowano ${entriesToExport.length} ${entriesToExport.length === 1 ? "trasę" : "tras"} do GTFS shapes.txt.`,
+      );
+    } else if (format === "geojson") {
+      const content = exportRoutesToGeoJson(entriesToExport);
+      triggerTextDownload(
+        content,
+        `${baseName}.geojson`,
+        "application/geo+json;charset=utf-8",
+      );
+      onToast(
+        `Wyeksportowano ${entriesToExport.length} ${entriesToExport.length === 1 ? "trasę" : "tras"} do GeoJSON (gotowe do QGIS).`,
+      );
+    } else {
+      const content = exportRoutesToGpx(entriesToExport);
+      triggerTextDownload(
+        content,
+        `${baseName}.gpx`,
+        "application/gpx+xml;charset=utf-8",
+      );
+      onToast(
+        `Wyeksportowano ${entriesToExport.length} ${entriesToExport.length === 1 ? "trasę" : "tras"} do GPX 1.1.`,
+      );
+    }
+  };
+
   const handleDownloadJson = () => {
     const text = exportLineRouteOverridesJson();
     const blob = new Blob([text], { type: "application/json;charset=utf-8" });
@@ -2269,6 +2357,70 @@ export default function LineRouteEditorPanel({
                           : "Przywróć oryginał GTFS dla wariantu"}
                       </button>
                     )}
+                  </div>
+
+                  {/* Eksport geometrii do shapes.txt (GTFS) / GeoJSON / GPX */}
+                  <div className="mt-2.5 border-t border-line pt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[8px] font-extrabold uppercase tracking-[0.1em] text-mute">
+                        Eksport GIS / GTFS
+                      </span>
+                      <div className="flex rounded border border-line bg-surface p-0.5 text-[7.5px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setGeometryExportScope("current")}
+                          className={cn(
+                            "rounded px-1.5 py-0.5 transition-colors",
+                            geometryExportScope === "current"
+                              ? "bg-brand text-on-brand"
+                              : "text-mute hover:text-ink",
+                          )}
+                        >
+                          Bieżąca
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGeometryExportScope("all")}
+                          className={cn(
+                            "rounded px-1.5 py-0.5 transition-colors",
+                            geometryExportScope === "all"
+                              ? "bg-brand text-on-brand"
+                              : "text-mute hover:text-ink",
+                          )}
+                        >
+                          Wszystkie ({allOverrides.length})
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        data-testid="editor-export-shapes"
+                        onClick={() => handleExportGeometry("shapes")}
+                        className="flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-surface px-1.5 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                      >
+                        <Download className="h-2.5 w-2.5 shrink-0" />
+                        shapes.txt
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="editor-export-geojson"
+                        onClick={() => handleExportGeometry("geojson")}
+                        className="flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-surface px-1.5 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                      >
+                        <Download className="h-2.5 w-2.5 shrink-0" />
+                        GeoJSON
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="editor-export-gpx"
+                        onClick={() => handleExportGeometry("gpx")}
+                        className="flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-surface px-1.5 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                      >
+                        <Download className="h-2.5 w-2.5 shrink-0" />
+                        GPX
+                      </button>
+                    </div>
                   </div>
                 </section>
               </>

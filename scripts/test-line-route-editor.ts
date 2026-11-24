@@ -209,6 +209,7 @@ const {
   getDirectionOverride,
   importLineRouteOverridesJson,
   isDirectionOverride,
+  listLineRouteOverrides,
   makeDirectionVariantKey,
   publishLineRouteOverridesToGitHub,
   refreshRemoteLineRouteOverrides,
@@ -217,6 +218,7 @@ const {
 } = await import("../src/lib/engine/lineRouteOverrides");
 
 resetLineRouteOverridesForTests();
+const initialBundledCount = listLineRouteOverrides().length;
 
 // Sprawdź punkt wyjściowy (oryginał GTFS z błędnym objazdem na lon=16.25)
 const beforeCatalogue = await getLineCatalogue();
@@ -333,7 +335,7 @@ await deleteLineRouteOverride("7", "sh7_old");
 assert.equal((await getLineCatalogue()).find((e) => e.shortName === "7")!.variants[0].customized, false);
 
 const imported = await importLineRouteOverridesJson(exportedJson);
-assert.equal(imported.importedCount, 1);
+assert.equal(imported.importedCount, initialBundledCount + 1);
 assert.equal((await getLineCatalogue()).find((e) => e.shortName === "7")!.variants[0].customized, true);
 
 // 7. Publikacja na GitHub (mock API) i wczytanie u innego użytkownika (pasażera)
@@ -398,7 +400,7 @@ const pub = await publishLineRouteOverridesToGitHub({
   token: "test_token_123",
 });
 assert.equal(pub.mode, "github");
-assert.equal(pub.publishedCount, 1);
+assert.equal(pub.publishedCount, initialBundledCount + 1);
 assert.ok(pub.commitUrl?.includes("commit/1234567"));
 assert.ok(committedJsonOnGitHub.includes("Poprawiony przebieg prosto ul. Żeromskiego"));
 
@@ -408,7 +410,7 @@ resetLineRouteOverridesForTests();
 (globalThis as unknown as { window?: unknown }).window = {};
 const refreshed = await refreshRemoteLineRouteOverrides(false);
 assert.equal(refreshed.ok, true);
-assert.equal(refreshed.count, 1, "każdy użytkownik automatycznie pobiera opublikowaną trasę");
+assert.equal(refreshed.count, initialBundledCount + 1, "każdy użytkownik automatycznie pobiera opublikowaną trasę");
 const travelerCatalogue = await getLineCatalogue();
 assert.deepEqual(
   travelerCatalogue.find((e) => e.shortName === "7")!.variants[0].path,

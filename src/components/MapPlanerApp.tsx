@@ -55,6 +55,8 @@ const LineRouteEditorPanel = lazy(() => import("./LineRouteEditorPanel"));
 const KursowkiDialog = lazy(() => import("./KursowkiDialog"));
 const LinesDialog = lazy(() => import("./LinesDialog"));
 const ScheduleDiffDialog = lazy(() => import("./ScheduleDiffDialog"));
+const RouteAuditDialog = lazy(() => import("./RouteAuditDialog"));
+const CustomGtfsBuilderDialog = lazy(() => import("./CustomGtfsBuilderDialog"));
 const PdfExportDialog = lazy(() => import("./PdfExportDialog"));
 const TripPlannerPanel = lazy(() => import("./TripPlannerPanel"));
 const CoursePreviewCard = lazy(() => import("./CoursePreviewCard"));
@@ -451,6 +453,8 @@ function MapPlanerWorkspace() {
   const [kursowkiOpen, setKursowkiOpen] = useState(false);
   const [linesOpen, setLinesOpen] = useState(false);
   const [scheduleDiffOpen, setScheduleDiffOpen] = useState(false);
+  const [routeAuditOpen, setRouteAuditOpen] = useState(false);
+  const [customGtfsBuilderOpen, setCustomGtfsBuilderOpen] = useState(false);
   const [kursowkaDeepLink, setKursowkaDeepLink] = useState<{
     id?: string | null;
     code?: string | null;
@@ -2283,6 +2287,8 @@ function MapPlanerWorkspace() {
     onOpenLineEditor: () => openLineRouteEditor(null, null),
     editedRoutesCount,
     onOpenScheduleDiff: () => setScheduleDiffOpen(true),
+    onOpenRouteAudit: () => setRouteAuditOpen(true),
+    onOpenCustomGtfsBuilder: () => setCustomGtfsBuilderOpen(true),
   };
 
   return (
@@ -2987,6 +2993,37 @@ function MapPlanerWorkspace() {
           <ScheduleDiffDialog
             open={scheduleDiffOpen}
             onClose={() => setScheduleDiffOpen(false)}
+            onToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isPlanner && routeAuditOpen && (
+        <Suspense fallback={null}>
+          <RouteAuditDialog
+            open={routeAuditOpen}
+            onClose={() => setRouteAuditOpen(false)}
+            onFixInEditor={(lineShort, variantKey) => {
+              openLineRouteEditor(lineShort, variantKey);
+            }}
+            onShowOnMap={(overlay) => {
+              setKursowkaOverlay(overlay);
+              showToast(`Wyświetlono na mapie: ${overlay.title}.`);
+            }}
+            onToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isPlanner && customGtfsBuilderOpen && (
+        <Suspense fallback={null}>
+          <CustomGtfsBuilderDialog
+            open={customGtfsBuilderOpen}
+            onClose={() => setCustomGtfsBuilderOpen(false)}
+            onShowOnMap={(overlay) => {
+              setKursowkaOverlay(overlay);
+              showToast(`Wyświetlono na mapie: ${overlay.title}.`);
+            }}
             onToast={showToast}
           />
         </Suspense>

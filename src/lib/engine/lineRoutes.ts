@@ -64,8 +64,8 @@ export interface LineVariant {
   customStatus: OverrideSyncStatus;
   customNote?: string;
   customUpdatedAt?: string;
-  /** Uporządkowane współrzędne przystanków kursu (do oceny pokrycia wspólnego kierunku). */
-  orderedStopCoords: ReadonlyArray<{ lat: number; lon: number }>;
+  /** Uporządkowane współrzędne (i nazwy) przystanków kursu (do oceny pokrycia kierunku i audytu tras). */
+  orderedStopCoords: ReadonlyArray<{ lat: number; lon: number; name?: string }>;
 }
 
 export interface LineEntry {
@@ -195,10 +195,10 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         ? stopPointFor(base, tripStopTimes[tripStopTimes.length - 1].stopId)
         : null;
 
-      const orderedStopCoords: Array<{ lat: number; lon: number }> = [];
+      const orderedStopCoords: Array<{ lat: number; lon: number; name?: string }> = [];
       for (const st of tripStopTimes) {
         const stop = stopPointFor(base, st.stopId);
-        if (stop) orderedStopCoords.push({ lat: stop.lat, lon: stop.lon });
+        if (stop) orderedStopCoords.push({ lat: stop.lat, lon: stop.lon, name: stop.name });
       }
 
       let originalPath: LatLng[];

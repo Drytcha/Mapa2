@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   Bookmark,
+  FileArchive,
   FileDown,
   GitCompareArrows,
   MousePointer2,
   Pencil,
   Share2,
+  ShieldAlert,
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
@@ -152,6 +154,8 @@ interface PlanningPanelProps {
   onOpenLineEditor?: () => void;
   editedRoutesCount?: number;
   onOpenScheduleDiff?: () => void;
+  onOpenRouteAudit?: () => void;
+  onOpenCustomGtfsBuilder?: () => void;
 }
 
 export default function PlanningPanel(props: PlanningPanelProps) {
@@ -235,13 +239,45 @@ export default function PlanningPanel(props: PlanningPanelProps) {
             type="button"
             data-testid="open-schedule-diff"
             onClick={props.onOpenScheduleDiff}
-            className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
+            className="mb-2 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
           >
             <span className="flex items-center gap-2">
               <GitCompareArrows className="h-3.5 w-3.5 text-brand-ink" /> Porównanie rozkładów GTFS
             </span>
             <span className="text-[8px] font-bold text-brand-ink">
               Okresy · wzkm
+            </span>
+          </button>
+        )}
+
+        {props.onOpenRouteAudit && (
+          <button
+            type="button"
+            data-testid="open-route-audit"
+            onClick={props.onOpenRouteAudit}
+            className="mb-2 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-rose-500/50 hover:bg-rose-500/8"
+          >
+            <span className="flex items-center gap-2">
+              <ShieldAlert className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> Audyt jakości tras GTFS
+            </span>
+            <span className="text-[8px] font-bold text-rose-600 dark:text-rose-400">
+              Mapa błędów
+            </span>
+          </button>
+        )}
+
+        {props.onOpenCustomGtfsBuilder && (
+          <button
+            type="button"
+            data-testid="open-custom-gtfs-builder"
+            onClick={props.onOpenCustomGtfsBuilder}
+            className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
+          >
+            <span className="flex items-center gap-2">
+              <FileArchive className="h-3.5 w-3.5 text-brand-ink" /> Kreator linii i eksport GTFS
+            </span>
+            <span className="text-[8px] font-bold text-brand-ink">
+              Nowe linie · .zip
             </span>
           </button>
         )}
