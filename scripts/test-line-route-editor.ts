@@ -10,12 +10,18 @@ Date.now = () => FIXED_NOW;
 
 // 1. Testy czystej geometrii edytora
 import {
+  buildOppositeDirectionPath,
+  findVerticesInBounds,
   insertVertexOnPath,
+  matchStopsToCorridor,
   moveVertexInPath,
   removeVertexFromPath,
+  removeVerticesFromPath,
   replacePathSegment,
   sanitizePath,
   simplifyPath,
+  sliceCorridorForTrip,
+  slicePolylineByDistance,
   snapEndsToStops,
   type LatLng,
 } from "../src/lib/routeEditorGeometry";
@@ -98,6 +104,39 @@ import {
   );
   assert.deepEqual(snapped[0], [50.77, 16.28]);
   assert.deepEqual(snapped[snapped.length - 1], [50.775, 16.285]);
+
+  // Zaznaczanie ramką (box selection) i zbiorcze usuwanie punktów trasy
+  const boxPath: LatLng[] = [
+    [50.77, 16.28],
+    [50.772, 16.282],
+    [50.774, 16.284],
+    [50.776, 16.286],
+    [50.78, 16.29],
+  ];
+  const inside = findVerticesInBounds(boxPath, {
+    south: 50.771,
+    north: 50.777,
+    west: 16.281,
+    east: 16.287,
+  });
+  assert.deepEqual(inside, [1, 2, 3], "ramka znajduje wszystkie punkty wewnątrz prostokąta");
+
+  const batchRemoved = removeVerticesFromPath(boxPath, inside);
+  assert.equal(batchRemoved.removedCount, 3, "usuwa wszystkie zaznaczone punkty naraz");
+  assert.deepEqual(
+    batchRemoved.nextPoints,
+    [
+      [50.77, 16.28],
+      [50.78, 16.29],
+    ],
+    "pozostałe punkty tworzą spójną trasę",
+  );
+
+  // Zabezpieczenie: zaznaczenie WSZYSTKICH punktów zostawia min. 2 (początek i koniec)
+  const removeAll = removeVerticesFromPath(boxPath, [0, 1, 2, 3, 4], 2);
+  assert.equal(removeAll.nextPoints.length, 2, "zawsze zostają co najmniej 2 punkty");
+  assert.deepEqual(removeAll.nextPoints[0], boxPath[0], "zachowany punkt startowy");
+  assert.deepEqual(removeAll.nextPoints[1], boxPath[4], "zachowany punkt końcowy");
 }
 
 // 2. Syntetyczny GTFS do sprawdzenia integracji z całym silnikiem
@@ -167,7 +206,10 @@ const {
   deleteLineRouteOverride,
   exportLineRouteOverridesJson,
   findLineRouteOverride,
+  getDirectionOverride,
   importLineRouteOverridesJson,
+  isDirectionOverride,
+  makeDirectionVariantKey,
   publishLineRouteOverridesToGitHub,
   refreshRemoteLineRouteOverrides,
   resetLineRouteOverridesForTests,
@@ -374,10 +416,194 @@ assert.deepEqual(
   "pasażer widzi dokładnie ten sam poprawiony przebieg linii zapisany przez Planistę",
 );
 
+// 8. Wspólna edycja kierunku (wszystkie kursy pełne i skrócone) + automatyczne rozróżnienie tam / z powrotem
+{
+  resetLineRouteOverridesForTests();
+
+  // Symulacja linii 8: 5 przystanków od A (północ) do E (południe)
+  const stopA = { lat: 50.820, lon: 16.280 };
+  const stopB = { lat: 50.810, lon: 16.280 };
+  const stopC = { lat: 50.800, lon: 16.280 };
+  const stopD = { lat: 50.790, lon: 16.280 };
+  const stopE = { lat: 50.780, lon: 16.280 };
+  // Przystanek na innej odnodze ~2 km na wschód
+  const stopBranchX = { lat: 50.800, lon: 16.310 };
+  const stopBranchY = { lat: 50.790, lon: 16.315 };
+
+  // Kierunek 0 (TAM: A → E, lekko po ulicy zachodniej lon=16.279)
+  const corridorOutbound: LatLng[] = [
+    [50.820, 16.280],
+    [50.810, 16.2795],
+    [50.800, 16.279],
+    [50.790, 16.2795],
+    [50.780, 16.280],
+  ];
+  // Kierunek 1 (Z POWROTEM: E → A, lekko po jednokierunkowej ulicy wschodniej lon=16.281)
+  const corridorReturn: LatLng[] = [
+    [50.780, 16.280],
+    [50.790, 16.2808],
+    [50.800, 16.2812],
+    [50.810, 16.2808],
+    [50.820, 16.280],
+  ];
+
+  // Test czystej geometrii matchStopsToCorridor i sliceCorridorForTrip
+  const fullForward = matchStopsToCorridor(corridorOutbound, [stopA, stopB, stopC, stopD, stopE]);
+  assert.equal(fullForward.matched, true, "pełny kurs A→E dopasowany do kierunku 0");
+
+  const reverseOnOutbound = matchStopsToCorridor(corridorOutbound, [stopE, stopD, stopC, stopB, stopA]);
+  assert.equal(reverseOnOutbound.matched, false, "kurs powrotny E→A odrzucony przez korytarz kierunku 0");
+
+  const shortForward = sliceCorridorForTrip(corridorOutbound, [stopB, stopC, stopD]);
+  assert.equal(shortForward.match.matched, true, "kurs skrócony B→D dopasowany do wspólnego korytarza");
+  assert.ok(shortForward.path && shortForward.path.length >= 3);
+  assert.ok(
+    Math.abs(shortForward.path[0][0] - stopB.lat) < 0.001,
+    "przycięta trasa zaczyna się na przystanku B (bez ogona do A)",
+  );
+  assert.ok(
+    Math.abs(shortForward.path[shortForward.path.length - 1][0] - stopD.lat) < 0.001,
+    "przycięta trasa kończy się na przystanku D (bez ogona do E)",
+  );
+
+  // Test przycinania slicePolylineByDistance
+  const slicedMid = slicePolylineByDistance(corridorOutbound, 500, 2500);
+  assert.ok(slicedMid.length >= 2, "slicePolylineByDistance zwraca poprawny wycinek");
+
+  // Test odgałęzienia (innej odnogi > 2 km od głównej trasy)
+  const divergent = matchStopsToCorridor(corridorOutbound, [stopA, stopB, stopBranchX, stopBranchY]);
+  assert.equal(divergent.matched, false, "wariant jadący inną odnogą nie jest psująco nadpisywany");
+
+  // Test pętli (ten sam korytarz przejeżdżany w dwie strony na części trasy)
+  const loopCorridor: LatLng[] = [
+    [50.800, 16.280],
+    [50.805, 16.280],
+    [50.810, 16.280],
+    [50.810, 16.285],
+    [50.805, 16.280],
+    [50.800, 16.280],
+  ];
+  const loopMatch = matchStopsToCorridor(loopCorridor, [
+    { lat: 50.800, lon: 16.280 },
+    { lat: 50.805, lon: 16.280 },
+    { lat: 50.810, lon: 16.285 },
+    { lat: 50.805, lon: 16.280 },
+  ]);
+  assert.equal(loopMatch.matched, true, "DP monotoniczny radzi sobie z pętlą / wspólną ulicą");
+  assert.ok(loopMatch.endAlongM > loopMatch.startAlongM + 800);
+
+  // Test budowania kierunku przeciwnego (odwrócenie dokładne bez OSRM)
+  const exactOpposite = await buildOppositeDirectionPath(
+    corridorOutbound,
+    [stopE, stopD, stopC, stopB, stopA],
+    false,
+  );
+  assert.equal(exactOpposite.snapped, false);
+  assert.deepEqual(exactOpposite.path[0], [50.78, 16.28]);
+  assert.deepEqual(exactOpposite.path[exactOpposite.path.length - 1], [50.82, 16.28]);
+
+  // Zapis 2 wspólnych korytarzy dla linii 8 (kierunek 0 i kierunek 1)
+  await saveLineRouteOverride({
+    lineShort: "8",
+    variantKey: makeDirectionVariantKey(0),
+    scope: "direction",
+    directionId: 0,
+    firstStopId: "a",
+    firstStopName: "Szczawienko",
+    lastStopId: "e",
+    lastStopName: "Sobięcin",
+    path: corridorOutbound,
+    note: "Wspólna trasa w stronę Sobięcina",
+  });
+  await saveLineRouteOverride({
+    lineShort: "8",
+    variantKey: makeDirectionVariantKey(1),
+    scope: "direction",
+    directionId: 1,
+    firstStopId: "e",
+    firstStopName: "Sobięcin",
+    lastStopId: "a",
+    lastStopName: "Szczawienko",
+    path: corridorReturn,
+    note: "Wspólna trasa powrotna w stronę Szczawienka",
+  });
+
+  const savedDir0 = getDirectionOverride("8", 0);
+  assert.ok(savedDir0 && isDirectionOverride(savedDir0));
+
+  // Automatyczne rozróżnienie kierunku TAM vs Z POWROTEM — nawet bez/z błędnym directionId!
+  const autoOutbound = findLineRouteOverride({
+    lineShort: "8",
+    shapeId: "unknown_short_run_1",
+    directionId: 1, // celowo błędny directionId z GTFS!
+    tripStops: [stopB, stopC, stopD],
+  });
+  assert.ok(autoOutbound, "krótki kurs B→D automatycznie dopasowany");
+  assert.equal(autoOutbound.matchScope, "direction");
+  assert.equal(autoOutbound.override.directionId, 0, "geometria sama rozpoznała kierunek 0 (TAM)");
+  assert.ok(autoOutbound.slicedPath && autoOutbound.slicedPath.length >= 2);
+  assert.ok(
+    autoOutbound.slicedPath.some(([, lon]) => lon < 16.2799),
+    "wybrano ulicę kierunku 0 (lon=16.279), nie powrotną",
+  );
+
+  const autoReturn = findLineRouteOverride({
+    lineShort: "8",
+    shapeId: "unknown_short_run_2",
+    directionId: 0, // celowo błędny directionId z GTFS!
+    tripStops: [stopD, stopC, stopB],
+  });
+  assert.ok(autoReturn, "krótki kurs D→B automatycznie dopasowany");
+  assert.equal(autoReturn.matchScope, "direction");
+  assert.equal(autoReturn.override.directionId, 1, "geometria sama rozpoznała kierunek 1 (Z POWROTEM)");
+  assert.ok(autoReturn.slicedPath && autoReturn.slicedPath.length >= 2);
+  assert.ok(
+    autoReturn.slicedPath.some(([, lon]) => lon > 16.2801),
+    "wybrano jednokierunkową ulicę kierunku 1 (lon=16.2812)",
+  );
+
+  // Odgałęzienie nie dostaje błędnie głównego korytarza
+  const branchMatch = findLineRouteOverride({
+    lineShort: "8",
+    shapeId: "branch_shape",
+    directionId: 0,
+    tripStops: [stopA, stopB, stopBranchX, stopBranchY],
+  });
+  assert.equal(branchMatch, null, "kurs odgałęzieniem wraca do GTFS zamiast się psuć");
+
+  // Indywidualna korekta pojedynczego wariantu ma wyższy priorytet niż wspólny kierunek
+  const customBranchPath: LatLng[] = [
+    [50.82, 16.28],
+    [50.81, 16.28],
+    [50.8, 16.31],
+    [50.79, 16.315],
+  ];
+  await saveLineRouteOverride({
+    lineShort: "8",
+    variantKey: "branch_shape",
+    scope: "variant",
+    directionId: 0,
+    firstStopId: "a",
+    firstStopName: "Szczawienko",
+    lastStopId: "y",
+    lastStopName: "Odnoga Y",
+    path: customBranchPath,
+  });
+  const branchWithOwnOverride = findLineRouteOverride({
+    lineShort: "8",
+    shapeId: "branch_shape",
+    directionId: 0,
+    tripStops: [stopA, stopB, stopBranchX, stopBranchY],
+  });
+  assert.ok(branchWithOwnOverride);
+  assert.equal(branchWithOwnOverride.matchScope, "variant", "wyjątek wariantu ma priorytet nad wspólnym kierunkiem");
+  assert.deepEqual(branchWithOwnOverride.override.path, customBranchPath);
+}
+
 delete (globalThis as unknown as { window?: unknown }).window;
 globalThis.fetch = realFetch;
 Date.now = realNow;
 
 console.log(
-  "OK: edytor tras linii (geometria, zapis, publikacja dla wszystkich, widoczność w katalogu/kursach/GPS)",
+  "OK: edytor tras linii (geometria, wspólny kierunek, automatyczne tam/powrót, zapis, publikacja dla wszystkich, widoczność w katalogu/kursach/GPS)",
 );

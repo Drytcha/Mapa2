@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
+  ArrowRight,
+  BoxSelect,
   Check,
   ChevronDown,
   ChevronUp,
@@ -13,6 +16,7 @@ import {
   ExternalLink,
   GitBranch,
   Globe,
+  Layers,
   Loader2,
   MapPin,
   MousePointerClick,
@@ -44,11 +48,16 @@ import {
   clearGitHubPublishToken,
   deleteLineRouteOverride,
   exportLineRouteOverridesJson,
+  getDirectionOverride,
+  getDirectionOverrideStatus,
+  getLineRouteOverride,
   getOverridesSummary,
   githubWebEditUrl,
   importLineRouteOverridesJson,
+  isDirectionOverride,
   listLineRouteOverrides,
   loadGitHubPublishConfig,
+  makeDirectionVariantKey,
   publishLineRouteOverridesToGitHub,
   refreshRemoteLineRouteOverrides,
   saveGitHubPublishConfig,
@@ -56,11 +65,16 @@ import {
   type GitHubPublishConfig,
   type LineRouteOverride,
   type LineRouteOverridesSummary,
+  type OverrideScope,
+  type OverrideSyncStatus,
 } from "@/lib/engine/lineRouteOverrides";
 import {
+  buildOppositeDirectionPath,
   insertVertexOnPath,
+  matchStopsToCorridor,
   moveVertexInPath,
   removeVertexFromPath,
+  removeVerticesFromPath,
   replacePathSegment,
   roundCoord,
   routeSegmentViaOsrm,
@@ -79,6 +93,10 @@ export interface LineEditorMapHandlers {
   onVertexRemove: (index: number) => void;
   onMapClick: (lat: number, lon: number) => void;
   onSegmentPickVertex: (index: number) => void;
+  onBoxSelect: (indices: number[], additive: boolean) => void;
+  onToggleSelectVertex: (index: number) => void;
+  onDeleteSelected: () => void;
+  onClearSelection: () => void;
 }
 
 interface LineRouteEditorPanelProps {
@@ -115,6 +133,32 @@ function formatDiffKm(diffMeters: number): string {
   })} km`;
 }
 
+interface DirectionGroup {
+  directionId: number;
+  variants: LineVariant[];
+  masterVariant: LineVariant;
+  totalRefTrips: number;
+  savedCorridor: LineRouteOverride | null;
+  savedCorridorStatus: OverrideSyncStatus;
+}
+
+function pickMasterVariantForDirection(variants: readonly LineVariant[]): LineVariant {
+  let best = variants[0];
+  let bestScore = -Infinity;
+  for (const v of variants) {
+    const score =
+      v.stopCount * 10 +
+      (v.main ? 25 : 0) +
+      Math.min(20, v.refCount) +
+      Math.min(10, v.lengthMeters / 1000);
+    if (score > bestScore) {
+      bestScore = score;
+      best = v;
+    }
+  }
+  return best;
+}
+
 function pathsEqual(a: readonly LatLng[], b: readonly LatLng[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -142,9 +186,17 @@ export default function LineRouteEditorPanel({
   const [selectedLineShort, setSelectedLineShort] = useState<string | null>(
     initialLineShort,
   );
+  const [editScope, setEditScope] = useState<OverrideScope>("direction");
+  const [selectedDirectionId, setSelectedDirectionId] = useState<number | null>(
+    null,
+  );
   const [selectedVariantKey, setSelectedVariantKey] = useState<string | null>(
     initialVariantKey,
   );
+  const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
+  const [justSavedOppositeDirId, setJustSavedOppositeDirId] = useState<
+    number | null
+  >(null);
 
   // Editable geometry + history stack
   const [draftPath, setDraftPath] = useState<LatLng[]>([]);
@@ -169,6 +221,7 @@ export default function LineRouteEditorPanel({
   const [segmentEndIndex, setSegmentEndIndex] = useState<number | null>(null);
   const [segmentDraftPoints, setSegmentDraftPoints] = useState<LatLng[]>([]);
   const [segmentPreviewPath, setSegmentPreviewPath] = useState<LatLng[]>([]);
+  const [selectedVertexIndices, setSelectedVertexIndices] = useState<number[]>([]);
   const segmentAbortRef = useRef<AbortController | null>(null);
   const osrmAbortRef = useRef<AbortController | null>(null);
 
@@ -221,8 +274,26 @@ export default function LineRouteEditorPanel({
 
   // Update selection when external initial target changes (e.g. clicking "Edytuj" from LinesDialog).
   useEffect(() => {
-    if (initialLineShort) setSelectedLineShort(initialLineShort);
-    if (initialVariantKey) setSelectedVariantKey(initialVariantKey);
+    if (initialLineShort) {
+      setSelectedLineShort(initialLineShort);
+      if (initialVariantKey) {
+        const directVariantOverride = getLineRouteOverride(
+          initialLineShort,
+          initialVariantKey,
+        );
+        if (directVariantOverride && !isDirectionOverride(directVariantOverride)) {
+          setEditScope("variant");
+          setSelectedVariantKey(initialVariantKey);
+        } else {
+          setEditScope("direction");
+          setSelectedVariantKey(initialVariantKey);
+        }
+      } else {
+        setEditScope("direction");
+        setSelectedVariantKey(null);
+      }
+      setSelectedDirectionId(null);
+    }
   }, [initialLineShort, initialVariantKey]);
 
   const filteredLines = useMemo(() => {
@@ -244,21 +315,90 @@ export default function LineRouteEditorPanel({
     return filteredLines[0] ?? entries[0];
   }, [entries, filteredLines, selectedLineShort]);
 
+  // Group all variants of the selected line into directions (outbound vs return).
+  const directionGroups: DirectionGroup[] = useMemo(() => {
+    if (!selectedLine?.variants.length) return [];
+    const byDir = new Map<number, LineVariant[]>();
+    for (const variant of selectedLine.variants) {
+      const list = byDir.get(variant.directionId);
+      if (list) list.push(variant);
+      else byDir.set(variant.directionId, [variant]);
+    }
+    const sortedDirs = [...byDir.keys()].sort((a, b) => a - b);
+    // Reference summary.revision so saved corridors recompute after saves/deletes.
+    void summary.revision;
+    return sortedDirs.map((directionId) => {
+      const variants = byDir.get(directionId) ?? [];
+      const masterVariant = pickMasterVariantForDirection(variants);
+      return {
+        directionId,
+        variants,
+        masterVariant,
+        totalRefTrips: variants.reduce((sum, v) => sum + v.refCount, 0),
+        savedCorridor: getDirectionOverride(selectedLine.shortName, directionId),
+        savedCorridorStatus: getDirectionOverrideStatus(
+          selectedLine.shortName,
+          directionId,
+        ),
+      };
+    });
+  }, [selectedLine, summary.revision]);
+
+  const activeDirectionGroup: DirectionGroup | null = useMemo(() => {
+    if (!directionGroups.length) return null;
+    if (selectedDirectionId !== null) {
+      const exact = directionGroups.find(
+        (g) => g.directionId === selectedDirectionId,
+      );
+      if (exact) return exact;
+    }
+    if (selectedVariantKey && selectedLine) {
+      const matchedVar = selectedLine.variants.find(
+        (v) => v.key === selectedVariantKey,
+      );
+      if (matchedVar) {
+        const byVarDir = directionGroups.find(
+          (g) => g.directionId === matchedVar.directionId,
+        );
+        if (byVarDir) return byVarDir;
+      }
+    }
+    return directionGroups[0];
+  }, [directionGroups, selectedDirectionId, selectedVariantKey, selectedLine]);
+
+  const oppositeDirectionGroup: DirectionGroup | null = useMemo(() => {
+    if (!activeDirectionGroup || directionGroups.length < 2) return null;
+    return (
+      directionGroups.find(
+        (g) => g.directionId !== activeDirectionGroup.directionId,
+      ) ?? null
+    );
+  }, [directionGroups, activeDirectionGroup]);
+
   const selectedVariant: LineVariant | null = useMemo(() => {
     if (!selectedLine?.variants.length) return null;
+    if (editScope === "direction" && activeDirectionGroup) {
+      return activeDirectionGroup.masterVariant;
+    }
     if (selectedVariantKey) {
       const exact = selectedLine.variants.find((v) => v.key === selectedVariantKey);
       if (exact) return exact;
     }
-    return selectedLine.variants[0];
-  }, [selectedLine, selectedVariantKey]);
+    return activeDirectionGroup?.masterVariant ?? selectedLine.variants[0];
+  }, [selectedLine, selectedVariantKey, editScope, activeDirectionGroup]);
 
-  // Track which variant is currently loaded into the editor draft.
+  // Track which editing target (direction corridor or single variant) is loaded.
   const loadedVariantIdRef = useRef<string>("");
-  const currentVariantId =
-    selectedLine && selectedVariant
-      ? `${selectedLine.shortName}::${selectedVariant.key}`
-      : "";
+  const currentVariantId = useMemo(() => {
+    if (!selectedLine) return "";
+    if (editScope === "direction" && activeDirectionGroup) {
+      return `${selectedLine.shortName}::DIR::${activeDirectionGroup.directionId}`;
+    }
+    if (selectedVariant) {
+      return `${selectedLine.shortName}::VAR::${selectedVariant.key}`;
+    }
+    return "";
+  }, [selectedLine, editScope, activeDirectionGroup, selectedVariant]);
 
   const isDirty = useMemo(
     () =>
@@ -267,27 +407,83 @@ export default function LineRouteEditorPanel({
     [draftPath, baselinePath, note, baselineNote],
   );
 
-  // Load selected variant geometry & ordered stops whenever the variant changes.
+  // Live evaluation of how many variants in this direction are covered by `draftPath`.
+  const directionCoverage = useMemo(() => {
+    if (
+      editScope !== "direction" ||
+      !selectedLine ||
+      !activeDirectionGroup ||
+      draftPath.length < 2
+    ) {
+      return null;
+    }
+    void summary.revision;
+    const items = activeDirectionGroup.variants.map((variant) => {
+      const ownOverride = getLineRouteOverride(
+        selectedLine.shortName,
+        variant.key,
+      );
+      const hasOwnVariantOverride =
+        ownOverride !== null && !isDirectionOverride(ownOverride);
+      const match = matchStopsToCorridor(draftPath, variant.orderedStopCoords);
+      const status: "covered" | "own-override" | "divergent" =
+        hasOwnVariantOverride
+          ? "own-override"
+          : match.matched
+            ? "covered"
+            : "divergent";
+      return { variant, match, status };
+    });
+    const coveredCount = items.filter((i) => i.status === "covered").length;
+    const ownOverrideCount = items.filter(
+      (i) => i.status === "own-override",
+    ).length;
+    const divergentCount = items.filter((i) => i.status === "divergent").length;
+    const coveredTrips = items
+      .filter((i) => i.status === "covered")
+      .reduce((sum, i) => sum + i.variant.refCount, 0);
+    return {
+      items,
+      total: items.length,
+      coveredCount,
+      ownOverrideCount,
+      divergentCount,
+      coveredTrips,
+    };
+  }, [editScope, selectedLine, activeDirectionGroup, draftPath, summary.revision]);
+
+  // Load selected direction corridor or variant geometry & ordered stops.
   useEffect(() => {
     if (!selectedLine || !selectedVariant) return;
     if (loadedVariantIdRef.current === currentVariantId) return;
     loadedVariantIdRef.current = currentVariantId;
 
-    const initialDraft = sanitizePath(selectedVariant.path);
+    const dirCorridor =
+      editScope === "direction" && activeDirectionGroup
+        ? activeDirectionGroup.savedCorridor
+        : null;
+    const initialDraft = sanitizePath(
+      dirCorridor ? dirCorridor.path : selectedVariant.path,
+    );
     const initialOriginal = sanitizePath(selectedVariant.originalPath);
     setDraftPath(initialDraft);
     setBaselinePath(initialDraft);
     setOriginalPath(initialOriginal);
     setHistory([]);
     setFuture([]);
-    setNote(selectedVariant.customNote ?? "");
-    setBaselineNote(selectedVariant.customNote ?? "");
+    const initialNote = dirCorridor
+      ? (dirCorridor.note ?? "")
+      : (selectedVariant.customNote ?? "");
+    setNote(initialNote);
+    setBaselineNote(initialNote);
     setSegmentStartIndex(null);
     setSegmentEndIndex(null);
     setSegmentDraftPoints([]);
     setSegmentPreviewPath([]);
+    setSelectedVertexIndices([]);
     setLastCommitUrl(null);
     setPublishError("");
+    setJustSavedOppositeDirId(null);
 
     let active = true;
     void getTripOrderedStops(selectedVariant.representativeTripId).then(
@@ -298,7 +494,13 @@ export default function LineRouteEditorPanel({
     return () => {
       active = false;
     };
-  }, [selectedLine, selectedVariant, currentVariantId]);
+  }, [
+    selectedLine,
+    selectedVariant,
+    currentVariantId,
+    editScope,
+    activeDirectionGroup,
+  ]);
 
   // Clear map overlay on unmount
   useEffect(() => {
@@ -312,6 +514,7 @@ export default function LineRouteEditorPanel({
 
   const commitPathChange = useCallback((nextPath: LatLng[]) => {
     const clean = sanitizePath(nextPath);
+    setSelectedVertexIndices([]);
     setDraftPath((current) => {
       if (pathsEqual(current, clean)) return current;
       setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), current]);
@@ -320,7 +523,35 @@ export default function LineRouteEditorPanel({
     });
   }, []);
 
+  const selectedIndicesRef = useRef(selectedVertexIndices);
+  selectedIndicesRef.current = selectedVertexIndices;
+
+  const handleDeleteSelectedVertices = useCallback(() => {
+    const current = draftPathRef.current;
+    const selected = selectedIndicesRef.current;
+    if (!selected.length) return;
+    if (current.length <= 2) {
+      onToast("Trasa musi mieć co najmniej 2 punkty.");
+      setSelectedVertexIndices([]);
+      return;
+    }
+    const { nextPoints, removedCount } = removeVerticesFromPath(current, selected, 2);
+    if (removedCount === 0) {
+      onToast("Nie można usunąć — muszą pozostać co najmniej 2 punkty trasy.");
+      setSelectedVertexIndices([]);
+      return;
+    }
+    commitPathChange(nextPoints);
+    const keptEndpoints = removedCount < selected.length;
+    onToast(
+      keptEndpoints
+        ? `Usunięto ${removedCount} pkt (pozostawiono skrajne punkty, aby trasa miała min. 2 punkty).`
+        : `Usunięto ${removedCount} zaznaczonych punktów trasy (Ctrl+Z cofa).`,
+    );
+  }, [commitPathChange, onToast]);
+
   const undo = useCallback(() => {
+    setSelectedVertexIndices([]);
     setHistory((prev) => {
       if (!prev.length) return prev;
       const previous = prev[prev.length - 1];
@@ -333,6 +564,7 @@ export default function LineRouteEditorPanel({
   }, []);
 
   const redo = useCallback(() => {
+    setSelectedVertexIndices([]);
     setFuture((prev) => {
       if (!prev.length) return prev;
       const next = prev[0];
@@ -344,7 +576,7 @@ export default function LineRouteEditorPanel({
     });
   }, []);
 
-  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y / Escape
+  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y / Delete / Escape
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -366,16 +598,26 @@ export default function LineRouteEditorPanel({
       ) {
         event.preventDefault();
         redo();
-      } else if (event.key === "Escape" && mode === "segment") {
-        setSegmentStartIndex(null);
-        setSegmentEndIndex(null);
-        setSegmentDraftPoints([]);
-        setSegmentPreviewPath([]);
+      } else if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        selectedIndicesRef.current.length > 0
+      ) {
+        event.preventDefault();
+        handleDeleteSelectedVertices();
+      } else if (event.key === "Escape") {
+        if (selectedIndicesRef.current.length > 0) {
+          setSelectedVertexIndices([]);
+        } else if (mode === "segment") {
+          setSegmentStartIndex(null);
+          setSegmentEndIndex(null);
+          setSegmentDraftPoints([]);
+          setSegmentPreviewPath([]);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo, redo, mode]);
+  }, [undo, redo, mode, handleDeleteSelectedVertices]);
 
   // Recompute live segment A->B preview whenever endpoints or draft via-points change.
   useEffect(() => {
@@ -454,6 +696,7 @@ export default function LineRouteEditorPanel({
       segmentEndIndex,
       segmentDraftPoints,
       segmentPreviewPath,
+      selectedVertexIndices,
     });
   }, [
     selectedLine,
@@ -470,6 +713,7 @@ export default function LineRouteEditorPanel({
     segmentEndIndex,
     segmentDraftPoints,
     segmentPreviewPath,
+    selectedVertexIndices,
     onMapStateChange,
   ]);
 
@@ -582,19 +826,180 @@ export default function LineRouteEditorPanel({
             if (osrmAbortRef.current === controller) setBusyMessage(null);
           });
       },
+      onBoxSelect: (indices, additive) => {
+        setSelectedVertexIndices((prev) => {
+          if (!additive) return indices;
+          const merged = new Set(prev);
+          for (const idx of indices) merged.add(idx);
+          return [...merged].sort((a, b) => a - b);
+        });
+      },
+      onToggleSelectVertex: (index) => {
+        setSelectedVertexIndices((prev) => {
+          if (prev.includes(index)) {
+            return prev.filter((item) => item !== index);
+          }
+          return [...prev, index].sort((a, b) => a - b);
+        });
+      },
+      onDeleteSelected: () => {
+        handleDeleteSelectedVertices();
+      },
+      onClearSelection: () => {
+        setSelectedVertexIndices([]);
+      },
     };
-  }, [commitPathChange, handlersRef, onToast]);
+  }, [commitPathChange, handleDeleteSelectedVertices, handlersRef, onToast]);
+
+  const confirmDiscardIfDirty = (message: string): boolean => {
+    if (!isDirty) return true;
+    return window.confirm(message);
+  };
+
+  const selectLine = (lineShort: string) => {
+    if (
+      !confirmDiscardIfDirty(
+        "Masz niezapisane zmiany w bieżącym przebiegu. Przełączyć linię bez zapisywania?",
+      )
+    ) {
+      return;
+    }
+    loadedVariantIdRef.current = "";
+    setSelectedLineShort(lineShort);
+    setSelectedDirectionId(null);
+    setSelectedVariantKey(null);
+    setEditScope("direction");
+    setCoverageDetailsOpen(false);
+    setJustSavedOppositeDirId(null);
+  };
+
+  const selectDirection = (directionId: number) => {
+    if (
+      activeDirectionGroup?.directionId === directionId &&
+      editScope === "direction"
+    ) {
+      return;
+    }
+    if (
+      !confirmDiscardIfDirty(
+        "Masz niezapisane zmiany w tym kierunku. Przełączyć kierunek bez zapisywania?",
+      )
+    ) {
+      return;
+    }
+    loadedVariantIdRef.current = "";
+    setSelectedDirectionId(directionId);
+    setSelectedVariantKey(null);
+    setEditScope("direction");
+    setJustSavedOppositeDirId(null);
+  };
+
+  const switchScope = (nextScope: OverrideScope, explicitVariantKey?: string) => {
+    if (
+      nextScope === editScope &&
+      (!explicitVariantKey || explicitVariantKey === selectedVariantKey)
+    ) {
+      return;
+    }
+    if (
+      !confirmDiscardIfDirty(
+        "Masz niezapisane zmiany w bieżącej trasie. Zmienić tryb edycji bez zapisywania?",
+      )
+    ) {
+      return;
+    }
+    loadedVariantIdRef.current = "";
+    setEditScope(nextScope);
+    if (explicitVariantKey) {
+      setSelectedVariantKey(explicitVariantKey);
+    }
+    setJustSavedOppositeDirId(null);
+  };
 
   const selectLineAndVariant = (lineShort: string, variantKey: string | null) => {
-    if (isDirty) {
-      const ok = window.confirm(
-        "Masz niezapisane zmiany w bieżącym przebiegu. Przełączyć linię bez zapisywania?",
-      );
-      if (!ok) return;
+    if (
+      !confirmDiscardIfDirty(
+        "Masz niezapisane zmiany w bieżącym przebiegu. Przełączyć wariant bez zapisywania?",
+      )
+    ) {
+      return;
     }
     loadedVariantIdRef.current = "";
     setSelectedLineShort(lineShort);
     setSelectedVariantKey(variantKey);
+    if (variantKey) setEditScope("variant");
+    setJustSavedOppositeDirId(null);
+  };
+
+  const selectOverrideTarget = (ovr: LineRouteOverride) => {
+    if (
+      !confirmDiscardIfDirty(
+        "Masz niezapisane zmiany w bieżącym przebiegu. Przełączyć na wybraną trasę bez zapisywania?",
+      )
+    ) {
+      return;
+    }
+    loadedVariantIdRef.current = "";
+    setSelectedLineShort(ovr.lineShort);
+    if (isDirectionOverride(ovr)) {
+      setEditScope("direction");
+      setSelectedDirectionId(ovr.directionId);
+      setSelectedVariantKey(null);
+    } else {
+      setEditScope("variant");
+      setSelectedDirectionId(ovr.directionId);
+      setSelectedVariantKey(ovr.variantKey);
+    }
+    setJustSavedOppositeDirId(null);
+  };
+
+  const handleCopyFromOppositeDirection = async (useOsrmRoads: boolean) => {
+    const oppCorridor = oppositeDirectionGroup?.savedCorridor;
+    if (!oppCorridor) {
+      onToast("Kierunek przeciwny nie ma jeszcze zapisanej wspólnej trasy.");
+      return;
+    }
+    osrmAbortRef.current?.abort();
+    const controller = new AbortController();
+    osrmAbortRef.current = controller;
+    if (useOsrmRoads) {
+      setBusyMessage(
+        "Przejmowanie trasy z kierunku przeciwnego i dopasowanie do ulic jednokierunkowych (OSRM)…",
+      );
+    }
+    try {
+      const { path, snapped } = await buildOppositeDirectionPath(
+        oppCorridor.path,
+        stops,
+        useOsrmRoads,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      if (path.length >= 2) {
+        commitPathChange(path);
+        onToast(
+          useOsrmRoads
+            ? snapped
+              ? "Przejęto trasę z kierunku przeciwnego i poprowadzono po drogach (OSRM). Sprawdź ulice jednokierunkowe i zapisz."
+              : "Przejęto i odwrócono trasę (OSRM niedostępny — sprawdź ulice jednokierunkowe)."
+            : "Odwrócono dokładnie trasę z kierunku przeciwnego i dopasowano do przystanków.",
+        );
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        onToast("Nie udało się przejąć trasy z kierunku przeciwnego.");
+      }
+    } finally {
+      if (osrmAbortRef.current === controller) setBusyMessage(null);
+    }
+  };
+
+  const handleLoadBaseFromVariant = (variant: LineVariant) => {
+    commitPathChange(variant.originalPath);
+    void getTripOrderedStops(variant.representativeTripId).then(setStops);
+    onToast(
+      `Wczytano bazowy przebieg z wariantu ${variant.firstStop} → ${variant.lastStop} (${variant.stopCount} przyst.).`,
+    );
   };
 
   const applySegmentReplacement = () => {
@@ -686,16 +1091,33 @@ export default function LineRouteEditorPanel({
     onToast("Wyczyszczono ścieżkę — klikaj na mapie, aby narysować trasę od nowa.");
   };
 
+  const hasSavedTarget = useMemo(() => {
+    if (!selectedLine) return false;
+    if (editScope === "direction") {
+      return Boolean(activeDirectionGroup?.savedCorridor);
+    }
+    if (!selectedVariant) return false;
+    const direct = getLineRouteOverride(selectedLine.shortName, selectedVariant.key);
+    return direct !== null && !isDirectionOverride(direct);
+  }, [selectedLine, editScope, activeDirectionGroup, selectedVariant]);
+
   const handleRestoreGtfs = async () => {
     if (!selectedLine || !selectedVariant) return;
+    const isDir = editScope === "direction" && activeDirectionGroup !== null;
+    const targetVariantKey = isDir
+      ? makeDirectionVariantKey(activeDirectionGroup.directionId)
+      : selectedVariant.key;
+    const targetLabel = isDir
+      ? `wspólną trasę kierunku ${selectedVariant.firstStop} → ${selectedVariant.lastStop}`
+      : `wariant ${selectedVariant.headsign}`;
     const ok = window.confirm(
-      `Przywrócić oryginalny przebieg GTFS dla linii ${selectedLine.shortName} (${selectedVariant.headsign})?`,
+      `Przywrócić oryginalny przebieg GTFS dla linii ${selectedLine.shortName} (${targetLabel})?`,
     );
     if (!ok) return;
     try {
       const { syncedToDevServer } = await deleteLineRouteOverride(
         selectedLine.shortName,
-        selectedVariant.key,
+        targetVariantKey,
       );
       const restored = sanitizePath(originalPath);
       setDraftPath(restored);
@@ -724,13 +1146,22 @@ export default function LineRouteEditorPanel({
       return;
     }
 
+    const isDir = editScope === "direction" && activeDirectionGroup !== null;
+    const saveVariantKey = isDir
+      ? makeDirectionVariantKey(activeDirectionGroup.directionId)
+      : selectedVariant.key;
+    const saveDirectionId = isDir
+      ? activeDirectionGroup.directionId
+      : selectedVariant.directionId;
+
     setSaving(true);
     setPublishError("");
     try {
       const { syncedToDevServer } = await saveLineRouteOverride({
         lineShort: selectedLine.shortName,
-        variantKey: selectedVariant.key,
-        directionId: selectedVariant.directionId,
+        variantKey: saveVariantKey,
+        scope: isDir ? "direction" : "variant",
+        directionId: saveDirectionId,
         firstStopId: selectedVariant.firstStopId,
         firstStopName: selectedVariant.firstStop,
         lastStopId: selectedVariant.lastStopId,
@@ -745,6 +1176,18 @@ export default function LineRouteEditorPanel({
       setSummary(getOverridesSummary());
       setAllOverrides(listLineRouteOverrides());
 
+      if (
+        isDir &&
+        oppositeDirectionGroup &&
+        !oppositeDirectionGroup.savedCorridor
+      ) {
+        setJustSavedOppositeDirId(oppositeDirectionGroup.directionId);
+      }
+
+      const scopeMsg = isDir
+        ? `kierunku (${directionCoverage?.coveredCount ?? activeDirectionGroup.variants.length} wariantów)`
+        : `wariantu (${selectedVariant.headsign})`;
+
       if (alsoPublishToGitHub && ghConfig.token.trim()) {
         setPublishing(true);
         try {
@@ -754,7 +1197,7 @@ export default function LineRouteEditorPanel({
           setSummary(getOverridesSummary());
           setAllOverrides(listLineRouteOverrides());
           onToast(
-            `Zapisano i opublikowano linię ${selectedLine.shortName} dla wszystkich (${result.publishedCount} tras w rejestrze)!`,
+            `Zapisano i opublikowano linię ${selectedLine.shortName} — ${scopeMsg} dla wszystkich (${result.publishedCount} tras w rejestrze)!`,
           );
         } catch (err) {
           const msg =
@@ -762,7 +1205,7 @@ export default function LineRouteEditorPanel({
           setPublishError(msg);
           setPublishSectionOpen(true);
           onToast(
-            `Zapisano lokalnie linię ${selectedLine.shortName}, ale publikacja na GitHub wymaga uwagi.`,
+            `Zapisano lokalnie linię ${selectedLine.shortName} — ${scopeMsg}, ale publikacja na GitHub wymaga uwagi.`,
           );
         } finally {
           setPublishing(false);
@@ -772,11 +1215,11 @@ export default function LineRouteEditorPanel({
 
       if (syncedToDevServer) {
         onToast(
-          `Zapisano trasę linii ${selectedLine.shortName} w wspólnym pliku projektu (widoczna dla wszystkich).`,
+          `Zapisano trasę linii ${selectedLine.shortName} — ${scopeMsg} we wspólnym pliku projektu (widoczna dla wszystkich).`,
         );
       } else {
         onToast(
-          `Zapisano trasę linii ${selectedLine.shortName} lokalnie. Użyj „Widoczność u wszystkich”, aby opublikować ją dla wszystkich użytkowników.`,
+          `Zapisano trasę linii ${selectedLine.shortName} — ${scopeMsg} lokalnie. Użyj „Widoczność u wszystkich”, aby opublikować ją dla wszystkich użytkowników.`,
         );
       }
     } catch (err) {
@@ -992,7 +1435,7 @@ export default function LineRouteEditorPanel({
                       key={entry.shortName}
                       type="button"
                       data-testid={`editor-line-${entry.shortName}`}
-                      onClick={() => selectLineAndVariant(entry.shortName, null)}
+                      onClick={() => selectLine(entry.shortName)}
                       className={cn(
                         "relative flex h-7 min-w-[34px] items-center justify-center rounded-md px-2 text-[10.5px] font-extrabold transition-all",
                         active
@@ -1017,36 +1460,346 @@ export default function LineRouteEditorPanel({
                 })}
               </div>
 
-              {selectedLine && (
-                <div className="mt-2">
-                  <label className="block">
+              {selectedLine && directionGroups.length > 0 && (
+                <div className="mt-2.5 space-y-2">
+                  {/* Zakres edycji: wspólna dla kierunku vs pojedynczy wariant */}
+                  <div>
                     <span className="text-[8px] font-bold uppercase tracking-[0.1em] text-mute">
-                      Wariant ({selectedLine.variants.length})
+                      Zakres edycji
                     </span>
-                    <select
-                      data-testid="editor-variant-select"
-                      value={selectedVariant?.key ?? ""}
-                      onChange={(e) =>
-                        selectLineAndVariant(selectedLine.shortName, e.target.value)
-                      }
-                      className="mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2 text-[9.5px] font-bold text-ink outline-none focus:border-brand/60"
-                    >
-                      {selectedLine.variants.map((variant) => {
-                        const tag =
-                          variant.customStatus === "published"
-                            ? " ★ Opublikowano"
-                            : variant.customStatus === "local-modified"
-                              ? " ● Lokalnie"
-                              : "";
-                        return (
-                          <option key={variant.key} value={variant.key}>
-                            {variant.firstStop} → {variant.lastStop} (
-                            {variant.stopCount} przyst.){tag}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </label>
+                    <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg border border-line bg-surface p-0.5">
+                      <button
+                        type="button"
+                        data-testid="editor-scope-direction"
+                        onClick={() => switchScope("direction")}
+                        className={cn(
+                          "flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[9px] font-extrabold transition-colors",
+                          editScope === "direction"
+                            ? "bg-brand text-on-brand shadow-xs"
+                            : "text-ink-soft hover:text-ink",
+                        )}
+                      >
+                        <Layers className="h-3 w-3 shrink-0" />
+                        Cały kierunek
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="editor-scope-variant"
+                        onClick={() =>
+                          switchScope(
+                            "variant",
+                            selectedVariant?.key ??
+                              activeDirectionGroup?.masterVariant.key,
+                          )
+                        }
+                        className={cn(
+                          "flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[9px] font-extrabold transition-colors",
+                          editScope === "variant"
+                            ? "bg-brand text-on-brand shadow-xs"
+                            : "text-ink-soft hover:text-ink",
+                        )}
+                      >
+                        <RouteIcon className="h-3 w-3 shrink-0" />
+                        Jeden wariant
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kierunki: Tam vs Z powrotem */}
+                  {editScope === "direction" ? (
+                    <div className="space-y-1.5">
+                      <span className="text-[8px] font-bold uppercase tracking-[0.1em] text-mute">
+                        Kierunek jazdy (automatyczne rozróżnienie tam / powrót)
+                      </span>
+                      <div
+                        className={cn(
+                          "grid gap-1.5",
+                          directionGroups.length >= 2
+                            ? "grid-cols-2"
+                            : "grid-cols-1",
+                        )}
+                      >
+                        {directionGroups.map((group, idx) => {
+                          const isActive =
+                            activeDirectionGroup?.directionId ===
+                            group.directionId;
+                          const dirBadge =
+                            group.savedCorridorStatus === "published"
+                              ? "★"
+                              : group.savedCorridorStatus === "local-modified"
+                                ? "●"
+                                : null;
+                          return (
+                            <button
+                              key={group.directionId}
+                              type="button"
+                              data-testid={`editor-direction-${group.directionId}`}
+                              onClick={() => selectDirection(group.directionId)}
+                              className={cn(
+                                "rounded-lg border px-2 py-1.5 text-left transition-all",
+                                isActive
+                                  ? "border-brand bg-brand/10 ring-1 ring-brand/40"
+                                  : "border-line bg-surface hover:border-line-strong",
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span
+                                  className={cn(
+                                    "flex items-center gap-1 text-[8.5px] font-extrabold uppercase tracking-[0.06em]",
+                                    isActive ? "text-brand-ink" : "text-mute",
+                                  )}
+                                >
+                                  {idx === 0 ? (
+                                    <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+                                  ) : (
+                                    <ArrowLeft className="h-2.5 w-2.5 shrink-0" />
+                                  )}
+                                  Kier. {idx + 1}
+                                </span>
+                                <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
+                                  {dirBadge && (
+                                    <span
+                                      className={cn(
+                                        group.savedCorridorStatus ===
+                                          "published"
+                                          ? "text-emerald-600 dark:text-emerald-400"
+                                          : "text-amber-600 dark:text-amber-400",
+                                      )}
+                                      title="Zapisana wspólna trasa kierunku"
+                                    >
+                                      {dirBadge}
+                                    </span>
+                                  )}
+                                  {group.variants.length} war.
+                                </span>
+                              </div>
+                              <div
+                                className="mt-0.5 truncate text-[9px] font-extrabold text-ink"
+                                title={`${group.masterVariant.firstStop} → ${group.masterVariant.lastStop}`}
+                              >
+                                {group.masterVariant.firstStop}
+                              </div>
+                              <div
+                                className="truncate text-[8.5px] font-semibold text-ink-soft"
+                                title={`${group.masterVariant.firstStop} → ${group.masterVariant.lastStop}`}
+                              >
+                                → {group.masterVariant.lastStop}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Pokrycie wariantów tego kierunku na żywo */}
+                      {directionCoverage && (
+                        <div
+                          className="rounded-lg border border-line bg-surface px-2 py-1.5"
+                          data-testid="editor-direction-coverage"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1 text-[8.5px] font-bold text-ink">
+                              <Check className="h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                              Obejmuje{" "}
+                              <strong className="text-brand-ink">
+                                {directionCoverage.coveredCount} z{" "}
+                                {directionCoverage.total}
+                              </strong>{" "}
+                              wariantów ({directionCoverage.coveredTrips} kursów)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCoverageDetailsOpen((prev) => !prev)
+                              }
+                              className="text-[8px] font-bold text-brand-ink hover:underline"
+                            >
+                              {coverageDetailsOpen ? "Ukryj" : "Szczegóły"}
+                            </button>
+                          </div>
+                          <p className="mt-0.5 text-[7.5px] leading-snug text-mute">
+                            Kursy skrócone zostaną automatycznie przycięte od ich
+                            pierwszego do ostatniego przystanku, a kursy w
+                            przeciwną stronę dopasowane do drugiego kierunku.
+                          </p>
+
+                          {coverageDetailsOpen && (
+                            <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto border-t border-line pt-1.5">
+                              {directionCoverage.items.map(
+                                ({ variant, status }) => (
+                                  <li
+                                    key={variant.key}
+                                    className="flex items-center justify-between gap-1.5 rounded bg-raised/70 px-1.5 py-1 text-[8px]"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate font-bold text-ink">
+                                        {variant.firstStop} → {variant.lastStop}
+                                      </div>
+                                      <div className="text-[7.5px] text-mute">
+                                        {variant.stopCount} przyst. ·{" "}
+                                        {variant.refCount} kursów
+                                      </div>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      {status === "covered" ? (
+                                        <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-extrabold text-emerald-700 dark:text-emerald-300">
+                                          Pokryty
+                                        </span>
+                                      ) : status === "own-override" ? (
+                                        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-extrabold text-sky-700 dark:text-sky-300">
+                                          Własna edycja
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-extrabold text-amber-700 dark:text-amber-300">
+                                          <AlertTriangle className="h-2.5 w-2.5" />
+                                          Inna odnoga
+                                        </span>
+                                      )}
+                                      {status !== "covered" && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            switchScope("variant", variant.key)
+                                          }
+                                          className="rounded border border-line bg-surface px-1 py-0.5 font-bold text-brand-ink hover:border-brand/50"
+                                        >
+                                          Edytuj
+                                        </button>
+                                      )}
+                                    </div>
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          )}
+
+                          {/* Opcjonalny wybór bazy z innego wariantu tego kierunku */}
+                          {activeDirectionGroup &&
+                            activeDirectionGroup.variants.length > 1 && (
+                              <div className="mt-1.5 border-t border-line pt-1.5">
+                                <label className="flex items-center gap-1.5 text-[7.5px] font-semibold text-mute">
+                                  <span className="shrink-0">Baza GTFS:</span>
+                                  <select
+                                    aria-label="Wczytaj bazowy przebieg GTFS z innego wariantu"
+                                    value=""
+                                    onChange={(e) => {
+                                      const picked =
+                                        activeDirectionGroup.variants.find(
+                                          (v) => v.key === e.target.value,
+                                        );
+                                      if (picked)
+                                        handleLoadBaseFromVariant(picked);
+                                    }}
+                                    className="h-6 min-w-0 flex-1 rounded border border-line bg-raised px-1.5 text-[8px] font-semibold text-ink outline-none"
+                                  >
+                                    <option value="">
+                                      Wczytaj punkty startowe z innego wariantu…
+                                    </option>
+                                    {activeDirectionGroup.variants.map((v) => (
+                                      <option key={v.key} value={v.key}>
+                                        {v.firstStop} → {v.lastStop} (
+                                        {v.stopCount} przyst.)
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            )}
+                        </div>
+                      )}
+
+                      {/* Przejmowanie trasy z kierunku przeciwnego */}
+                      {oppositeDirectionGroup?.savedCorridor && (
+                        <div
+                          className="rounded-lg border border-brand/35 bg-brand/8 p-2"
+                          data-testid="editor-opposite-helper"
+                        >
+                          <div className="flex items-center gap-1 text-[8.5px] font-extrabold text-brand-ink">
+                            <ArrowLeftRight className="h-3 w-3 shrink-0" />
+                            Przejmij z kierunku przeciwnego
+                          </div>
+                          <p className="mt-0.5 text-[7.5px] leading-snug text-ink-soft">
+                            Zapisano już kierunek{" "}
+                            <b>
+                              {oppositeDirectionGroup.savedCorridor.firstStopName}{" "}
+                              →{" "}
+                              {oppositeDirectionGroup.savedCorridor.lastStopName}
+                            </b>
+                            . Możesz go odwrócić po drogach (uwzględniając ulice
+                            jednokierunkowe).
+                          </p>
+                          <div className="mt-1.5 grid grid-cols-2 gap-1">
+                            <button
+                              type="button"
+                              data-testid="editor-copy-opposite-osrm"
+                              onClick={() =>
+                                void handleCopyFromOppositeDirection(true)
+                              }
+                              className="flex h-7 items-center justify-center gap-1 rounded-md bg-brand px-1.5 text-[8.5px] font-extrabold text-on-brand hover:opacity-90"
+                            >
+                              <Sparkles className="h-2.5 w-2.5 shrink-0" />
+                              Po drogach (OSRM)
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="editor-copy-opposite-exact"
+                              onClick={() =>
+                                void handleCopyFromOppositeDirection(false)
+                              }
+                              className="flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-surface px-1.5 text-[8.5px] font-bold text-ink hover:border-brand/50"
+                            >
+                              <ArrowLeftRight className="h-2.5 w-2.5 shrink-0" />
+                              Odwróć dokładnie
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block">
+                        <span className="text-[8px] font-bold uppercase tracking-[0.1em] text-mute">
+                          Wyjątek dla pojedynczego wariantu (
+                          {selectedLine.variants.length})
+                        </span>
+                        <select
+                          data-testid="editor-variant-select"
+                          value={selectedVariant?.key ?? ""}
+                          onChange={(e) =>
+                            selectLineAndVariant(
+                              selectedLine.shortName,
+                              e.target.value,
+                            )
+                          }
+                          className="mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2 text-[9.5px] font-bold text-ink outline-none focus:border-brand/60"
+                        >
+                          {selectedLine.variants.map((variant) => {
+                            const scopeTag =
+                              variant.customScope === "direction"
+                                ? " [Kierunek]"
+                                : variant.customScope === "variant"
+                                  ? " [Własny]"
+                                  : "";
+                            const tag =
+                              variant.customStatus === "published"
+                                ? ` ★${scopeTag}`
+                                : variant.customStatus === "local-modified"
+                                  ? ` ●${scopeTag}`
+                                  : "";
+                            return (
+                              <option key={variant.key} value={variant.key}>
+                                {variant.firstStop} → {variant.lastStop} (
+                                {variant.stopCount} przyst.){tag}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      <p className="mt-1 text-[7.5px] leading-snug text-mute">
+                        Zapis w trybie pojedynczego wariantu nadpisuje wspólną
+                        trasę kierunku tylko dla tej jednej odnogi.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -1116,21 +1869,31 @@ export default function LineRouteEditorPanel({
                           id: "vertices",
                           label: "Wierzchołki",
                           icon: MousePointerClick,
+                          spanFull: false,
                         },
                         {
                           id: "segment",
                           label: "Fragment A→B",
                           icon: Scissors,
+                          spanFull: false,
                         },
                         {
                           id: "draw",
                           label: "Rysuj / dopisz",
                           icon: Pencil,
+                          spanFull: false,
                         },
                         {
                           id: "delete",
-                          label: "Usuń punkty",
+                          label: "Usuń pojedynczo",
                           icon: Trash2,
+                          spanFull: false,
+                        },
+                        {
+                          id: "box-delete",
+                          label: "Zaznacz ramką i usuń wiele",
+                          icon: BoxSelect,
+                          spanFull: true,
                         },
                       ] as const
                     ).map((tool) => {
@@ -1149,11 +1912,17 @@ export default function LineRouteEditorPanel({
                               setSegmentDraftPoints([]);
                               setSegmentPreviewPath([]);
                             }
+                            if (tool.id !== "box-delete" && tool.id !== "delete") {
+                              setSelectedVertexIndices([]);
+                            }
                           }}
                           className={cn(
                             "flex h-8 items-center justify-center gap-1.5 rounded-lg border px-2 text-[9.5px] font-bold transition-colors",
+                            tool.spanFull && "col-span-2",
                             active
-                              ? "border-brand bg-brand text-on-brand"
+                              ? tool.id === "box-delete"
+                                ? "border-red-600 bg-red-600 text-white"
+                                : "border-brand bg-brand text-on-brand"
                               : "border-line bg-surface text-ink-soft hover:border-line-strong hover:text-ink",
                           )}
                         >
@@ -1190,8 +1959,38 @@ export default function LineRouteEditorPanel({
                     {mode === "delete" && (
                       <>
                         <b>Kliknij dowolny czerwony punkt</b> na trasie, aby go
-                        natychmiast usunąć.
+                        natychmiast usunąć, albo przytrzymaj <b>Shift i przeciągnij</b>,
+                        aby zaznaczyć ramką wiele punktów.
                       </>
+                    )}
+                    {mode === "box-delete" && (
+                      <div className="space-y-1.5">
+                        <span>
+                          <b>Przeciągnij prostokąt (ramkę)</b> po mapie, aby zaznaczyć
+                          wiele punktów trasy naraz (<b>Shift+ramka</b> dodaje kolejne,
+                          klik w punkt przełącza, <b>Delete</b> usuwa, <b>Esc</b> odznacza).
+                        </span>
+                        {selectedVertexIndices.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                            <button
+                              type="button"
+                              data-testid="editor-delete-selected"
+                              onClick={handleDeleteSelectedVertices}
+                              className="flex h-7 items-center gap-1 rounded-md bg-red-600 px-2.5 text-[9px] font-extrabold text-white hover:bg-red-700"
+                            >
+                              <Trash2 className="h-3 w-3" /> Usuń zaznaczone (
+                              {selectedVertexIndices.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedVertexIndices([])}
+                              className="h-7 rounded-md border border-line bg-raised px-2 text-[8.5px] font-bold text-ink-soft hover:text-ink"
+                            >
+                              Odznacz
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {mode === "segment" && (
                       <>
@@ -1398,7 +2197,9 @@ export default function LineRouteEditorPanel({
                           ) : (
                             <CloudUpload className="h-3.5 w-3.5" />
                           )}
-                          Zapisz i opublikuj dla wszystkich
+                          {editScope === "direction"
+                            ? `Zapisz i opublikuj kierunek (${directionCoverage?.coveredCount ?? activeDirectionGroup?.variants.length ?? 1} war.)`
+                            : "Zapisz i opublikuj wariant dla wszystkich"}
                         </button>
                         <button
                           type="button"
@@ -1423,20 +2224,49 @@ export default function LineRouteEditorPanel({
                         ) : (
                           <Save className="h-3.5 w-3.5" />
                         )}
-                        {summary.devApiAvailable
-                          ? "Zapisz trasę (wspólny plik)"
-                          : "Zapisz trasę"}
+                        {editScope === "direction"
+                          ? summary.devApiAvailable
+                            ? `Zapisz wspólny kierunek (${directionCoverage?.coveredCount ?? activeDirectionGroup?.variants.length ?? 1} war.)`
+                            : `Zapisz kierunek (${directionCoverage?.coveredCount ?? activeDirectionGroup?.variants.length ?? 1} war.)`
+                          : summary.devApiAvailable
+                            ? "Zapisz wariant (wspólny plik)"
+                            : "Zapisz wariant"}
                       </button>
                     )}
 
-                    {selectedVariant.customized && (
+                    {justSavedOppositeDirId !== null && oppositeDirectionGroup && (
+                      <div
+                        className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 p-2"
+                        data-testid="editor-saved-next-direction"
+                      >
+                        <p className="text-[8.5px] font-bold text-emerald-800 dark:text-emerald-200">
+                          Zapisano ten kierunek! Chcesz od razu ustawić kierunek
+                          powrotny (
+                          {oppositeDirectionGroup.masterVariant.firstStop} →{" "}
+                          {oppositeDirectionGroup.masterVariant.lastStop})?
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => selectDirection(justSavedOppositeDirId)}
+                          className="mt-1.5 flex h-7 w-full items-center justify-center gap-1 rounded-md bg-emerald-600 px-2 text-[8.5px] font-extrabold text-white hover:bg-emerald-700"
+                        >
+                          <ArrowLeftRight className="h-3 w-3" />
+                          Przejdź do kierunku powrotnego →
+                        </button>
+                      </div>
+                    )}
+
+                    {hasSavedTarget && (
                       <button
                         type="button"
                         data-testid="editor-restore-gtfs"
                         onClick={() => void handleRestoreGtfs()}
                         className="flex h-7 w-full items-center justify-center gap-1 rounded-lg border border-warning/30 bg-warning-soft text-[9px] font-bold text-warning hover:border-warning/60"
                       >
-                        <RotateCcw className="h-3 w-3" /> Przywróć oryginał GTFS
+                        <RotateCcw className="h-3 w-3" />
+                        {editScope === "direction"
+                          ? "Przywróć oryginał GTFS dla tego kierunku"
+                          : "Przywróć oryginał GTFS dla wariantu"}
                       </button>
                     )}
                   </div>
@@ -1692,16 +2522,12 @@ export default function LineRouteEditorPanel({
                             e.shortName.toUpperCase() ===
                             ovr.lineShort.toUpperCase(),
                         );
+                        const isDir = isDirectionOverride(ovr);
                         return (
                           <li key={`${ovr.lineShort}::${ovr.variantKey}`}>
                             <button
                               type="button"
-                              onClick={() =>
-                                selectLineAndVariant(
-                                  ovr.lineShort,
-                                  ovr.variantKey,
-                                )
-                              }
+                              onClick={() => selectOverrideTarget(ovr)}
                               className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-left transition-colors hover:border-brand/50"
                             >
                               <span
@@ -1714,8 +2540,20 @@ export default function LineRouteEditorPanel({
                                 {ovr.lineShort}
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[9px] font-bold text-ink">
-                                  {ovr.firstStopName} → {ovr.lastStopName}
+                                <span className="flex items-center gap-1">
+                                  <span className="truncate text-[9px] font-bold text-ink">
+                                    {ovr.firstStopName} → {ovr.lastStopName}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "shrink-0 rounded px-1 py-0.5 text-[7px] font-extrabold",
+                                      isDir
+                                        ? "bg-brand/15 text-brand-ink"
+                                        : "bg-raised text-mute",
+                                    )}
+                                  >
+                                    {isDir ? "Kierunek" : "Wariant"}
+                                  </span>
                                 </span>
                                 {ovr.note && (
                                   <span className="block truncate text-[8px] text-mute">

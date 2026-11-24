@@ -44,6 +44,8 @@ import {
   findLineRouteOverride,
   getOverridesRevision,
   initLineRouteOverrides,
+  listDirectionOverridesForLine,
+  type OverrideScope,
 } from "./lineRouteOverrides";
 import type { BuilderStop, BuilderTrip } from "./brigadeBuilder";
 import { CSV_CHUNK_ROWS, yieldToMain } from "../core/cooperative";
@@ -1756,13 +1758,27 @@ export interface ResolvedTripShape {
   path: [number, number][];
   /** true = pochodzi z ręcznej edycji Planisty (wspólny rejestr tras). */
   isOverride: boolean;
+  /** Zakres dopasowanej korekty: pojedynczy wariant lub wspólny korytarz kierunku. */
+  overrideScope?: OverrideScope;
   /** true = brak shapes.txt i brak edycji — łamana po przystankach. */
   approximate: boolean;
 }
 
+function tripStopCoordsFor(
+  base: ParsedArchiveBase,
+  rawTripId: string,
+): Array<{ lat: number; lon: number }> {
+  const out: Array<{ lat: number; lon: number }> = [];
+  for (const st of base.rawStopTimesByTrip.get(rawTripId) ?? []) {
+    const stop = stopPointFor(base, st.stopId);
+    if (stop) out.push({ lat: stop.lat, lon: stop.lon });
+  }
+  return out;
+}
+
 /**
  * Jedno źródło prawdy dla geometrii kursu w całej aplikacji:
- * 1. Zapisany przebieg Planisty (`line-route-overrides.json` / IndexedDB / GitHub)
+ * 1. Zapisany przebieg Planisty (wariant lub wspólny korytarz kierunku)
  * 2. Oficjalny kształt z `shapes.txt` przycięty i dociągnięty do skrajnych przystanków
  * 3. Przybliżona łamana po przystankach kursu
  */
@@ -1773,6 +1789,8 @@ export function resolveTripShape(
   last: { lat: number; lon: number; name?: string } | null,
   fallbackStopPath?: [number, number][],
 ): ResolvedTripShape {
+  const hasDirOverrides = listDirectionOverridesForLine(trip.routeShort).length > 0;
+  const tripStops = hasDirOverrides ? tripStopCoordsFor(base, trip.rawTripId) : undefined;
   const overrideMatch = findLineRouteOverride({
     lineShort: trip.routeShort,
     shapeId: trip.shapeId,
@@ -1781,17 +1799,25 @@ export function resolveTripShape(
     firstStopName: first?.name || trip.firstStopName,
     lastStopName: last?.name || trip.lastStopName,
     directionId: trip.directionId,
+    tripStops,
   });
 
   if (overrideMatch && overrideMatch.override.path.length >= 2) {
-    const path = overrideMatch.exactVariantMatch
-      ? overrideMatch.override.path.map(([lat, lon]): [number, number] => [lat, lon])
-      : connectEndsToStops(
-          trimShapeToStops(overrideMatch.override.path, first, last),
-          first,
-          last,
-        );
-    return { path, isOverride: true, approximate: false };
+    const path = overrideMatch.slicedPath
+      ? overrideMatch.slicedPath.map(([lat, lon]): [number, number] => [lat, lon])
+      : overrideMatch.exactVariantMatch
+        ? overrideMatch.override.path.map(([lat, lon]): [number, number] => [lat, lon])
+        : connectEndsToStops(
+            trimShapeToStops(overrideMatch.override.path, first, last),
+            first,
+            last,
+          );
+    return {
+      path,
+      isOverride: true,
+      overrideScope: overrideMatch.matchScope,
+      approximate: false,
+    };
   }
 
   const shape = trip.shapeId ? base.shapesById.get(trip.shapeId) : undefined;
@@ -2685,9 +2711,13 @@ export async function getTripLengthMap(): Promise<Map<string, number>> {
   for (const trip of store.base.rawTrips) {
     const stops = store.base.rawStopTimesByTrip.get(trip.rawTripId) ?? [];
     const stopPoints: [number, number][] = [];
+    const stopCoords: Array<{ lat: number; lon: number }> = [];
     for (const st of stops) {
       const stop = store.base.stopsById.get(st.stopId);
-      if (stop) stopPoints.push([stop.lat, stop.lon]);
+      if (stop) {
+        stopPoints.push([stop.lat, stop.lon]);
+        stopCoords.push({ lat: stop.lat, lon: stop.lon });
+      }
     }
     const firstPoint = stops[0] ? stopPointFor(store.base, stops[0].stopId) : null;
     const lastPoint = stops.length ? stopPointFor(store.base, stops[stops.length - 1].stopId) : null;
@@ -2699,11 +2729,17 @@ export async function getTripLengthMap(): Promise<Map<string, number>> {
       firstStopName: firstPoint?.name || trip.firstStopName,
       lastStopName: lastPoint?.name || trip.lastStopName,
       directionId: trip.directionId,
+      tripStops:
+        listDirectionOverridesForLine(trip.routeShort).length > 0
+          ? stopCoords
+          : undefined,
     });
     if (override && override.override.path.length >= 2) {
-      const resolvedPath = override.exactVariantMatch
-        ? override.override.path
-        : connectEndsToStops(trimShapeToStops(override.override.path, firstPoint, lastPoint), firstPoint, lastPoint);
+      const resolvedPath = override.slicedPath
+        ? override.slicedPath
+        : override.exactVariantMatch
+          ? override.override.path
+          : connectEndsToStops(trimShapeToStops(override.override.path, firstPoint, lastPoint), firstPoint, lastPoint);
       lengths.set(trip.rawTripId, Math.max(0, Math.round(polylineMeters(resolvedPath))));
       continue;
     }

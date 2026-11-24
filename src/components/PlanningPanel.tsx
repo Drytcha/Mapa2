@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Bookmark,
   FileDown,
+  GitCompareArrows,
   MousePointer2,
   Pencil,
   Share2,
@@ -150,6 +151,7 @@ interface PlanningPanelProps {
   onOpenKursowka: (kursowkaId: string, kursowkaCode: string) => void;
   onOpenLineEditor?: () => void;
   editedRoutesCount?: number;
+  onOpenScheduleDiff?: () => void;
 }
 
 export default function PlanningPanel(props: PlanningPanelProps) {
@@ -215,7 +217,7 @@ export default function PlanningPanel(props: PlanningPanelProps) {
             type="button"
             data-testid="open-line-route-editor"
             onClick={props.onOpenLineEditor}
-            className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
+            className="mb-2 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
           >
             <span className="flex items-center gap-2">
               <Pencil className="h-3.5 w-3.5 text-brand-ink" /> Edytor przebiegu tras linii
@@ -224,6 +226,22 @@ export default function PlanningPanel(props: PlanningPanelProps) {
               {props.editedRoutesCount && props.editedRoutesCount > 0
                 ? `${props.editedRoutesCount} popraw.`
                 : "Dla wszystkich"}
+            </span>
+          </button>
+        )}
+
+        {props.onOpenScheduleDiff && (
+          <button
+            type="button"
+            data-testid="open-schedule-diff"
+            onClick={props.onOpenScheduleDiff}
+            className="mb-2.5 flex h-9 w-full items-center justify-between rounded-lg border border-line bg-raised px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-brand/50 hover:bg-brand-soft/60"
+          >
+            <span className="flex items-center gap-2">
+              <GitCompareArrows className="h-3.5 w-3.5 text-brand-ink" /> Porównanie rozkładów GTFS
+            </span>
+            <span className="text-[8px] font-bold text-brand-ink">
+              Okresy · wzkm
             </span>
           </button>
         )}
