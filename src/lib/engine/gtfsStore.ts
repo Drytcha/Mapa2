@@ -1553,6 +1553,16 @@ export async function ensureGtfsSeeded(): Promise<GtfsMemoryStore> {
   return seedLock;
 }
 
+/** Zwraca surowe bajty aktualnie załadowanego archiwum źródłowego GTFS (.zip). */
+export async function getLoadedGtfsArchiveBytes(): Promise<{
+  bytes: Uint8Array;
+  source: string;
+} | null> {
+  await ensureGtfsSeeded();
+  if (!currentArchive?.bytes?.length) return null;
+  return { bytes: currentArchive.bytes, source: currentArchive.source };
+}
+
 export async function syncWalbrzychGtfs(
   options: { forceLive?: boolean } = {},
 ): Promise<SyncResult> {
