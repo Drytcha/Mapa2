@@ -462,9 +462,16 @@ export default function LinesDialog({
                                 {variant.customized && (
                                   <span
                                     className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/12 px-1 py-px text-[7px] font-extrabold uppercase text-emerald-700 dark:text-emerald-300"
-                                    title={variant.customNote || "Trasa skorygowana przez Planistę"}
+                                    title={
+                                      variant.customNote ||
+                                      (variant.customScope === "direction"
+                                        ? "Wspólna trasa kierunku skorygowana przez Planistę"
+                                        : "Trasa wariantu skorygowana przez Planistę")
+                                    }
                                   >
-                                    {variant.customStatus === "local-modified" ? "Lokalnie" : "Poprawiona"}
+                                    {variant.customStatus === "local-modified"
+                                      ? "Lokalnie"
+                                      : "Poprawiona"}
                                   </span>
                                 )}
                               </span>

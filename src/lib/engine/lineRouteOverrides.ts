@@ -14,7 +14,12 @@
 import bundledFileRaw from "@/data/line-route-overrides.json";
 import { emitRuntimeEvent, runDeduped } from "../core/runtimeHub";
 import { foldStopKey } from "../core/text";
-import { isValidLatLng, sanitizePath, type LatLng } from "../routeEditorGeometry";
+import {
+  isValidLatLng,
+  sanitizePath,
+  sliceCorridorForTrip,
+  type LatLng,
+} from "../routeEditorGeometry";
 import { idbGetKv, idbSetKv } from "./storage";
 
 export const DEFAULT_GITHUB_OWNER = "Drytcha";
@@ -27,9 +32,16 @@ const REMOTE_CACHE_KV_KEY = "line_route_overrides_remote_cache_v1";
 const GITHUB_CONFIG_STORAGE_KEY = "mapplaner.githubPublish.v1";
 const DEV_API_ENDPOINT = "/api/line-route-overrides";
 
+export type OverrideScope = "variant" | "direction";
+
 export interface LineRouteOverride {
   lineShort: string;
   variantKey: string;
+  /**
+   * "direction" = shared master corridor for an entire line direction (auto-sliced for
+   * all full & shortened trips going that way). "variant" (or omitted) = single variant.
+   */
+  scope?: OverrideScope;
   directionId: number;
   firstStopId?: string;
   firstStopName: string;
@@ -100,6 +112,16 @@ export function makeOverrideKey(lineShort: string, variantKey: string): string {
   return `${normalizeLineShort(lineShort)}::${variantKey.trim()}`;
 }
 
+export function makeDirectionVariantKey(directionId: number): string {
+  return `__DIR_${Math.trunc(directionId)}__`;
+}
+
+export function isDirectionOverride(
+  override: Pick<LineRouteOverride, "scope" | "variantKey">,
+): boolean {
+  return override.scope === "direction" || override.variantKey.startsWith("__DIR_");
+}
+
 export function sanitizeOverrideEntry(raw: unknown): LineRouteOverride | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
@@ -119,9 +141,17 @@ export function sanitizeOverrideEntry(raw: unknown): LineRouteOverride | null {
       ? Math.trunc(obj.directionId)
       : 0;
 
+  const scope: OverrideScope | undefined =
+    obj.scope === "direction" || variantKey.startsWith("__DIR_")
+      ? "direction"
+      : obj.scope === "variant"
+        ? "variant"
+        : undefined;
+
   return {
     lineShort,
     variantKey,
+    ...(scope ? { scope } : {}),
     directionId,
     firstStopId:
       typeof obj.firstStopId === "string" && obj.firstStopId.trim()
@@ -235,6 +265,33 @@ export function getLineRouteOverride(
   return mergedMap.get(makeOverrideKey(lineShort, variantKey)) ?? null;
 }
 
+export function getDirectionOverride(
+  lineShort: string,
+  directionId: number,
+): LineRouteOverride | null {
+  return mergedMap.get(makeOverrideKey(lineShort, makeDirectionVariantKey(directionId))) ?? null;
+}
+
+export function getDirectionOverrideStatus(
+  lineShort: string,
+  directionId: number,
+): OverrideSyncStatus {
+  return getOverrideStatus(lineShort, makeDirectionVariantKey(directionId));
+}
+
+export function listDirectionOverridesForLine(lineShort: string): LineRouteOverride[] {
+  const line = normalizeLineShort(lineShort);
+  if (!line || mergedMap.size === 0) return [];
+  const out: LineRouteOverride[] = [];
+  for (const override of mergedMap.values()) {
+    if (override.lineShort === line && isDirectionOverride(override)) {
+      out.push(override);
+    }
+  }
+  out.sort((a, b) => a.directionId - b.directionId);
+  return out;
+}
+
 export function listLineRouteOverrides(): LineRouteOverride[] {
   return [...mergedMap.values()].sort(
     (a, b) =>
@@ -277,10 +334,13 @@ export function getOverridesSummary(): LineRouteOverridesSummary {
 /**
  * Resolves the best matching saved route override for a GTFS trip or variant.
  * Matches in priority order:
- *  1. Exact `(lineShort, shapeId)` key
- *  2. Exact `(lineShort, firstStopId>lastStopId)` key
- *  3. Semantic fallback `(lineShort, directionId, firstStop, lastStop)` so edits
- *     remain active even after Wałbrzych publishes a new GTFS feed with new shape_ids.
+ *  1. Exact variant `(lineShort, shapeId)` key
+ *  2. Exact variant `(lineShort, firstStopId>lastStopId)` key
+ *  3. Semantic variant fallback `(lineShort, directionId, firstStop, lastStop)`
+ *  4. Shared direction-wide corridor (`scope: "direction"`): automatically scores every
+ *     direction corridor of this line against `tripStops` (distinguishing outbound vs
+ *     return geometrically even without relying solely on `direction_id`) and slices it
+ *     cleanly between the trip's first and last stop while rejecting divergent branches.
  */
 export function findLineRouteOverride(params: {
   lineShort: string;
@@ -290,14 +350,20 @@ export function findLineRouteOverride(params: {
   firstStopName?: string | null;
   lastStopName?: string | null;
   directionId?: number;
-}): { override: LineRouteOverride; exactVariantMatch: boolean } | null {
+  tripStops?: ReadonlyArray<{ lat: number; lon: number }>;
+}): {
+  override: LineRouteOverride;
+  exactVariantMatch: boolean;
+  matchScope: OverrideScope;
+  slicedPath?: LatLng[];
+} | null {
   if (mergedMap.size === 0) return null;
   const line = normalizeLineShort(params.lineShort);
   if (!line) return null;
 
   if (params.shapeId) {
     const byShape = mergedMap.get(makeOverrideKey(line, params.shapeId));
-    if (byShape) {
+    if (byShape && !isDirectionOverride(byShape)) {
       const sameFirst =
         !byShape.firstStopId ||
         !params.firstStopId ||
@@ -306,15 +372,19 @@ export function findLineRouteOverride(params: {
         !byShape.lastStopId ||
         !params.lastStopId ||
         byShape.lastStopId === params.lastStopId;
-      return { override: byShape, exactVariantMatch: sameFirst && sameLast };
+      return {
+        override: byShape,
+        exactVariantMatch: sameFirst && sameLast,
+        matchScope: "variant",
+      };
     }
   }
 
   if (params.firstStopId && params.lastStopId) {
     const stopPairKey = `${params.firstStopId}>${params.lastStopId}`;
     const byPair = mergedMap.get(makeOverrideKey(line, stopPairKey));
-    if (byPair) {
-      return { override: byPair, exactVariantMatch: true };
+    if (byPair && !isDirectionOverride(byPair)) {
+      return { override: byPair, exactVariantMatch: true, matchScope: "variant" };
     }
   }
 
@@ -326,7 +396,7 @@ export function findLineRouteOverride(params: {
     : "";
 
   for (const override of mergedMap.values()) {
-    if (override.lineShort !== line) continue;
+    if (override.lineShort !== line || isDirectionOverride(override)) continue;
     if (
       params.directionId !== undefined &&
       override.directionId !== params.directionId
@@ -339,7 +409,7 @@ export function findLineRouteOverride(params: {
       override.firstStopId === params.firstStopId &&
       override.lastStopId === params.lastStopId
     ) {
-      return { override, exactVariantMatch: true };
+      return { override, exactVariantMatch: true, matchScope: "variant" };
     }
     if (
       wantedFirstName &&
@@ -349,7 +419,56 @@ export function findLineRouteOverride(params: {
       foldStopKey(override.firstStopName) === wantedFirstName &&
       foldStopKey(override.lastStopName) === wantedLastName
     ) {
-      return { override, exactVariantMatch: true };
+      return { override, exactVariantMatch: true, matchScope: "variant" };
+    }
+  }
+
+  // 4. Shared direction-wide corridor matching (automatic outbound vs return detection).
+  const dirOverrides = listDirectionOverridesForLine(line);
+  if (dirOverrides.length === 0) return null;
+
+  if (params.tripStops && params.tripStops.length >= 2) {
+    let best: {
+      override: LineRouteOverride;
+      score: number;
+      slicedPath: LatLng[];
+    } | null = null;
+
+    for (const dirOverride of dirOverrides) {
+      const { match, path } = sliceCorridorForTrip(dirOverride.path, params.tripStops);
+      if (!match.matched || !path || path.length < 2) continue;
+      // Geometric forward-order progression dominates (+1000); matching GTFS directionId
+      // is only a gentle tiebreaker (+15) for symmetric edge cases.
+      const dirTiebreak =
+        params.directionId !== undefined && dirOverride.directionId === params.directionId
+          ? 15
+          : 0;
+      const totalScore = match.score + dirTiebreak;
+      if (!best || totalScore > best.score) {
+        best = { override: dirOverride, score: totalScore, slicedPath: path };
+      }
+    }
+
+    if (best) {
+      return {
+        override: best.override,
+        exactVariantMatch: true,
+        matchScope: "direction",
+        slicedPath: best.slicedPath,
+      };
+    }
+    return null;
+  }
+
+  // Fallback when caller does not supply tripStops (e.g. generic line-direction preview).
+  if (params.directionId !== undefined) {
+    const byDir = getDirectionOverride(line, params.directionId);
+    if (byDir) {
+      return {
+        override: byDir,
+        exactVariantMatch: false,
+        matchScope: "direction",
+      };
     }
   }
 

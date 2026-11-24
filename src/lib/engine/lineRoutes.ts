@@ -20,6 +20,8 @@ import {
   getOverridesRevision,
   getOverrideStatus,
   initLineRouteOverrides,
+  listDirectionOverridesForLine,
+  type OverrideScope,
   type OverrideSyncStatus,
 } from "./lineRouteOverrides";
 
@@ -57,9 +59,13 @@ export interface LineVariant {
   originalPath: LatLng[];
   /** true = wariant ma zapisany poprawiony przebieg z edytora Planisty. */
   customized: boolean;
+  /** "direction" = dziedziczy wspólną trasę kierunku; "variant" = indywidualna korekta wariantu. */
+  customScope?: OverrideScope;
   customStatus: OverrideSyncStatus;
   customNote?: string;
   customUpdatedAt?: string;
+  /** Uporządkowane współrzędne przystanków kursu (do oceny pokrycia wspólnego kierunku). */
+  orderedStopCoords: ReadonlyArray<{ lat: number; lon: number }>;
 }
 
 export interface LineEntry {
@@ -189,15 +195,17 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         ? stopPointFor(base, tripStopTimes[tripStopTimes.length - 1].stopId)
         : null;
 
+      const orderedStopCoords: Array<{ lat: number; lon: number }> = [];
+      for (const st of tripStopTimes) {
+        const stop = stopPointFor(base, st.stopId);
+        if (stop) orderedStopCoords.push({ lat: stop.lat, lon: stop.lon });
+      }
+
       let originalPath: LatLng[];
       if (shape && shape.length >= 2) {
         originalPath = shapeForTripStops(shape, firstPoint, lastPoint);
       } else {
-        originalPath = [];
-        for (const st of tripStopTimes) {
-          const stop = stopPointFor(base, st.stopId);
-          if (stop) originalPath.push([stop.lat, stop.lon]);
-        }
+        originalPath = orderedStopCoords.map((s): LatLng => [s.lat, s.lon]);
       }
 
       const resolved = resolveTripShape(
@@ -221,7 +229,15 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         firstStopName: origin,
         lastStopName: terminus,
         directionId: representative.directionId,
+        tripStops:
+          listDirectionOverridesForLine(route.shortName).length > 0
+            ? orderedStopCoords
+            : undefined,
       });
+
+      const resolvedStatus = matchedOverride
+        ? getOverrideStatus(route.shortName, matchedOverride.override.variantKey)
+        : getOverrideStatus(route.shortName, key);
 
       variants.push({
         key,
@@ -242,9 +258,11 @@ export async function getLineCatalogue(): Promise<LineEntry[]> {
         path,
         originalPath: originalPath.length >= 2 ? originalPath : path,
         customized: resolved.isOverride,
-        customStatus: getOverrideStatus(route.shortName, key),
+        customScope: matchedOverride?.matchScope ?? resolved.overrideScope,
+        customStatus: resolvedStatus,
         customNote: matchedOverride?.override.note,
         customUpdatedAt: matchedOverride?.override.updatedAt,
+        orderedStopCoords,
       });
     }
     if (!variants.length) continue;
