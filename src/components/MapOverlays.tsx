@@ -593,7 +593,12 @@ export function LiveBusCard({
 
   return (
     <div
-      className="pointer-events-auto flex max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93 max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:z-[620] max-sm:max-h-[52dvh] max-sm:w-auto max-sm:max-w-none max-sm:rounded-2xl max-sm:shadow-[0_-10px_40px_rgba(9,35,23,0.35)]"
+      className={cn(
+        "pointer-events-auto flex select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93 max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:z-[620] max-sm:w-auto max-sm:max-w-none max-sm:rounded-2xl max-sm:shadow-[0_-10px_40px_rgba(9,35,23,0.35)]",
+        isPlanner
+          ? "max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] max-sm:max-h-[52dvh]"
+          : "max-h-[calc(100dvh-190px)] w-[300px] max-w-[calc(100vw-24px)] max-sm:max-h-[38dvh]",
+      )}
       data-mobile-sheet="bus"
     >
       {/* Uchwyt dolnej karty: na telefonie zwija kartę do paska z kierunkiem. */}
@@ -835,6 +840,7 @@ export function LiveBusCard({
             loading={stopsLoading}
             delaySeconds={bus.delaySeconds}
             isRealtime
+            compact={!isPlanner}
           />
         ) : (
         <>
