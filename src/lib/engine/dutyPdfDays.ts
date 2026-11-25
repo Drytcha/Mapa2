@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 
-export type TimetableDayKind = "weekday" | "saturday" | "sunday";
+export type TimetableDayKind = "weekday" | "saturday" | "sunday" | "tradingSunday";
 export interface TimetableDayChoice {
   dateId: string;
   serviceIds: string[];
@@ -14,14 +14,15 @@ export function timetableBlockForDate(item: { blockId: string; number: string; u
 }
 
 /** List actual calendar dates, never combine services from different dates.
- * R&G's RS/SO/NS/NH identify the service pattern, including holiday exceptions.
+ * R&G's RS/SO/NS/NH identify the service pattern, including holiday exceptions
+ * and trading Sundays (NH), which run different trips on several lines.
  * For other feeds without such codes, use the actual calendar weekday. */
 export function timetableDayChoices(
   dates: Map<number, Set<string>>,
   from: number,
   to: number,
 ): TimetableDayChoices {
-  const result: TimetableDayChoices = { weekday: [], saturday: [], sunday: [] };
+  const result: TimetableDayChoices = { weekday: [], saturday: [], sunday: [], tradingSunday: [] };
   for (const [date, services] of dates) {
     if (!services.size || (from > 0 && date < from) || (to > 0 && date > to)) continue;
     const dateId = String(date);
@@ -31,7 +32,8 @@ export function timetableDayChoices(
     for (const service of services) {
       if (/_RS$/i.test(service)) kinds.add("weekday");
       else if (/_SO$/i.test(service)) kinds.add("saturday");
-      else if (/_(NS|NH)$/i.test(service)) kinds.add("sunday");
+      else if (/_NH$/i.test(service)) kinds.add("tradingSunday");
+      else if (/_NS$/i.test(service)) kinds.add("sunday");
     }
     if (!kinds.size) kinds.add(day.weekday === 6 ? "saturday" : day.weekday === 7 ? "sunday" : "weekday");
     const choice = { dateId, serviceIds: [...services].sort() };

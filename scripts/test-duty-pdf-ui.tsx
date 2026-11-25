@@ -15,6 +15,7 @@ assert.match(planner, /Rodzaj dnia/);
 assert.match(planner, /Roboczy/);
 assert.match(planner, /Sobota/);
 assert.match(planner, /Niedziela \/ święto/);
+assert.match(planner, /Niedziela handlowa/);
 const traveler = renderToStaticMarkup(<BrigadesPanel {...props} showTechnicalNotes={false} />);
 assert.doesNotMatch(traveler, /Rozkład PDF|Pobierz PDF/);
 console.log("duty PDF planner-only UI tests passed");
