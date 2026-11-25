@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { BusFront, DownloadCloud, Loader2, X } from "lucide-react";
+import { BusFront, DownloadCloud, Loader2, ShoppingBag, X } from "lucide-react";
 import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import {
   getGtfsLines,
@@ -22,6 +22,7 @@ interface Props {
   /** Uwagi techniczne, rozliczenie km/godzin i podział wg firm widzi planista. */
   isPlanner?: boolean;
   onClose: () => void;
+  onOpenNsNhDiff?: () => void;
   onShowShapeOverlay?: (overlay: KursowkaShapeOverlay) => void;
   onPreviewCourse?: (tripId: string, dateId: string) => Promise<boolean>;
   onLoadTripToPlanner: (payload: {
@@ -42,6 +43,7 @@ export default function KursowkiDialog({
   liveVehicles,
   onSelectBus,
   onClose,
+  onOpenNsNhDiff,
   onShowShapeOverlay,
   onPreviewCourse,
   onLoadTripToPlanner,
@@ -129,6 +131,18 @@ export default function KursowkiDialog({
             : "Kursy i brygady według aktualnego rozkładu"}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {onOpenNsNhDiff && (
+            <button
+              type="button"
+              data-testid="kursowki-open-ns-nh-diff"
+              onClick={onOpenNsNhDiff}
+              title="Porównaj rozkład niedzieli niehandlowej (NS) z niedzielą handlową (NH)"
+              className="flex h-6 items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-[9px] font-bold text-amber-800 transition-colors hover:border-amber-500 hover:bg-amber-500/20 dark:text-amber-200"
+            >
+              <ShoppingBag className="h-3 w-3" />
+              <span>NS vs NH</span>
+            </button>
+          )}
           {isPlanner && (
             <button
               type="button"

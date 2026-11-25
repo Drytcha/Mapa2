@@ -8,6 +8,7 @@ import {
   Pencil,
   Share2,
   ShieldAlert,
+  ShoppingBag,
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
@@ -154,6 +155,7 @@ interface PlanningPanelProps {
   onOpenLineEditor?: () => void;
   editedRoutesCount?: number;
   onOpenScheduleDiff?: () => void;
+  onOpenNsNhDiff?: () => void;
   onOpenRouteAudit?: () => void;
   onOpenCustomGtfsBuilder?: () => void;
 }
@@ -246,6 +248,22 @@ export default function PlanningPanel(props: PlanningPanelProps) {
             </span>
             <span className="text-[8px] font-bold text-brand-ink">
               Okresy · wzkm
+            </span>
+          </button>
+        )}
+
+        {props.onOpenNsNhDiff && (
+          <button
+            type="button"
+            data-testid="open-ns-nh-diff"
+            onClick={props.onOpenNsNhDiff}
+            className="mb-2 flex h-9 w-full items-center justify-between rounded-lg border border-amber-500/35 bg-amber-500/8 px-3 text-[10.5px] font-bold text-ink transition-colors hover:border-amber-500/60 hover:bg-amber-500/15"
+          >
+            <span className="flex items-center gap-2">
+              <ShoppingBag className="h-3.5 w-3.5 text-amber-700 dark:text-amber-300" /> Porównywarka NS vs NH
+            </span>
+            <span className="text-[8px] font-bold text-amber-700 dark:text-amber-300">
+              Niedziele handlowe
             </span>
           </button>
         )}

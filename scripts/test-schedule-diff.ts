@@ -6,9 +6,12 @@ import { strToU8, zipSync } from "fflate";
 import {
   compareScheduleTrips,
   exportScheduleDiffCsv,
+  listNsNhPairs,
   parseExternalGtfsZipForDiff,
   parseServiceIdParts,
   pickDefaultComparison,
+  pickNsNhComparison,
+  summarizeNsNhDifferences,
   type ScheduleTripSnapshot,
 } from "../src/lib/engine/scheduleDiff";
 
@@ -234,6 +237,133 @@ import {
   assert.ok(zipDiff.totals.metersDelta > 6_000, "wzkm wzrosły o długość nowego kursu (~6.67 km)");
 }
 
+// 4. Porównywarka NS vs NH (niedziela niehandlowa / święto vs niedziela handlowa)
+{
+  const nsNhZip = zipSync({
+    "feed_info.txt": strToU8(
+      "feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date,feed_version\n" +
+        "ZDKiUM,https://walbrzych.pl,pl,20261101,20261231,387-388-ns-nh\n",
+    ),
+    "routes.txt": strToU8(
+      "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n" +
+        "r5,5,Szczawienko - Rusinowa,3,0d9488,ffffff\n" +
+        "r8,8,Szczawienko - Sobięcin,3,1565c0,ffffff\n" +
+        "rC,C,Podzamcze - Galeria Victoria,3,d97706,ffffff\n",
+    ),
+    "stops.txt": strToU8(
+      "stop_id,stop_name,stop_lat,stop_lon\n" +
+        "s1,Szczawienko,50.8200,16.2800\n" +
+        "s2,Centrum,50.7900,16.2800\n" +
+        "s3,Sobięcin,50.7600,16.2800\n" +
+        "s4,Galeria Victoria,50.7750,16.2700\n" +
+        "s5,Rusinowa,50.7650,16.3200\n",
+    ),
+    "calendar_dates.txt": strToU8(
+      "service_id,date,exception_type\n" +
+        "387_NS,20261108,1\n" +
+        "387_NH,20261129,1\n" +
+        "388_NS,20261206,1\n" +
+        "388_NH,20261213,1\n" +
+        "388_NH,20261220,1\n",
+    ),
+    "trips.txt": strToU8(
+      "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+        // Okres 387 (minimalny)
+        "r8,387_NS,t387_ns_8,Sobięcin,0,8/01\n" +
+        "r8,387_NH,t387_nh_8,Sobięcin,0,8/01\n" +
+        // Okres 388:
+        // Linia 8 — identyczna w NS i NH
+        "r8,388_NS,t388_ns_8,Sobięcin,0,8/01\n" +
+        "r8,388_NH,t388_nh_8,Sobięcin,0,8/01\n" +
+        // Linia 5 — w NS jedzie do Rusinowej, w NH ten kurs jest wydłużony / skierowany przez Galerię Victoria + dochodzi dodatkowy kurs do Galerii
+        "r5,388_NS,t388_ns_5_1,Rusinowa,0,5/01\n" +
+        "r5,388_NH,t388_nh_5_1,Galeria Victoria,0,5/01\n" +
+        "r5,388_NH,t388_nh_5_2,Galeria Victoria,0,5/01\n" +
+        // Linia C — kursuje WYŁĄCZNIE w niedzielę handlową (NH)
+        "rC,388_NH,t388_nh_c_1,Galeria Victoria,0,C/01\n",
+    ),
+    "stop_times.txt": strToU8(
+      "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+        "t387_ns_8,09:00:00,09:00:00,s1,1\n" +
+        "t387_ns_8,09:30:00,09:30:00,s3,2\n" +
+        "t387_nh_8,09:00:00,09:00:00,s1,1\n" +
+        "t387_nh_8,09:30:00,09:30:00,s3,2\n" +
+        "t388_ns_8,10:00:00,10:00:00,s1,1\n" +
+        "t388_ns_8,10:30:00,10:30:00,s3,2\n" +
+        "t388_nh_8,10:00:00,10:00:00,s1,1\n" +
+        "t388_nh_8,10:30:00,10:30:00,s3,2\n" +
+        "t388_ns_5_1,10:15:00,10:15:00,s1,1\n" +
+        "t388_ns_5_1,10:45:00,10:45:00,s5,2\n" +
+        "t388_nh_5_1,10:15:00,10:15:00,s1,1\n" +
+        "t388_nh_5_1,10:35:00,10:35:00,s2,2\n" +
+        "t388_nh_5_1,10:50:00,10:50:00,s4,3\n" +
+        "t388_nh_5_2,11:15:00,11:15:00,s1,1\n" +
+        "t388_nh_5_2,11:45:00,11:45:00,s4,2\n" +
+        "t388_nh_c_1,12:00:00,12:00:00,s2,1\n" +
+        "t388_nh_c_1,12:20:00,12:20:00,s4,2\n",
+    ),
+  });
+
+  const archive = parseExternalGtfsZipForDiff(nsNhZip, "GTFS-ns-nh.zip");
+  const pairs = listNsNhPairs(archive);
+  assert.equal(pairs.length, 2, "wykrywa 2 pary NS vs NH (okres 388 i 387)");
+  assert.equal(pairs[0].periodId, "388", "posortowane od najnowszego okresu");
+  assert.equal(pairs[1].periodId, "387");
+
+  // Wybór aktywnego okresu wg daty dzisiejszej
+  const pickedNov = pickNsNhComparison(archive, undefined, 20261115);
+  assert.ok(pickedNov);
+  assert.equal(pickedNov.serviceIdA, "387_NS");
+  assert.equal(pickedNov.serviceIdB, "387_NH");
+
+  // Wybór domyślny (najnowszy okres) oraz wg jawnego periodId
+  const pickedLatest = pickNsNhComparison(archive);
+  assert.ok(pickedLatest);
+  assert.equal(pickedLatest.serviceIdA, "388_NS");
+  assert.equal(pickedLatest.serviceIdB, "388_NH");
+
+  const pickedExplicit = pickNsNhComparison(archive, "387");
+  assert.ok(pickedExplicit);
+  assert.equal(pickedExplicit.serviceIdA, "387_NS");
+  assert.equal(pickedExplicit.serviceIdB, "387_NH");
+
+  // Podsumowanie różnic NS -> NH w okresie 388
+  const nsNhDiff = compareScheduleTrips(
+    archive.tripsByService.get("388_NS")!,
+    archive.tripsByService.get("388_NH")!,
+    "388_NS",
+    "388_NH",
+  );
+  const summary = summarizeNsNhDifferences(nsNhDiff);
+  assert.deepEqual(
+    summary.changedLines.map((l) => l.routeShort).sort(),
+    ["5", "C"],
+    "zmienione w NH są linie 5 i C",
+  );
+  assert.deepEqual(
+    summary.unchangedLines.map((l) => l.routeShort),
+    ["8"],
+    "linia 8 ma identyczny rozkład w NS i NH",
+  );
+  assert.deepEqual(
+    summary.addedOnlyInNhLines.map((l) => l.routeShort),
+    ["C"],
+    "linia C pojawia się wyłącznie w niedzielę handlową",
+  );
+  assert.ok(
+    summary.distinctNewRelations.some(
+      (r) => r.routeShort === "5" && r.relation === "Szczawienko → Galeria Victoria" && r.count === 2,
+    ),
+    "wykrywa 2 kursy linii 5 w relacji do Galerii Victoria (1 zmieniony + 1 dodany)",
+  );
+  assert.ok(
+    summary.distinctNewRelations.some(
+      (r) => r.routeShort === "C" && r.relation === "Centrum → Galeria Victoria" && r.count === 1,
+    ),
+    "wykrywa kurs nowej linii handlowej C",
+  );
+}
+
 console.log(
-  "OK: porównanie dwóch wersji rozkładu GTFS (okresy 387 vs 388, kursy +/-/~, przesunięcia odjazdów, wozokilometry brygad, eksport CSV)",
+  "OK: porównanie dwóch wersji rozkładu GTFS + porównywarka NS vs NH (okresy, kursy +/-/~, przesunięcia, relacje NH, wzkm brygad, CSV)",
 );

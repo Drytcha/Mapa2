@@ -463,6 +463,11 @@ function MapPlanerWorkspace() {
   const [kursowkiOpen, setKursowkiOpen] = useState(false);
   const [linesOpen, setLinesOpen] = useState(false);
   const [scheduleDiffOpen, setScheduleDiffOpen] = useState(false);
+  const [scheduleDiffPreset, setScheduleDiffPreset] = useState<"default" | "ns-nh">("default");
+  const openScheduleDiff = useCallback((preset: "default" | "ns-nh" = "default") => {
+    setScheduleDiffPreset(preset);
+    setScheduleDiffOpen(true);
+  }, []);
   const [routeAuditOpen, setRouteAuditOpen] = useState(false);
   const [customGtfsBuilderOpen, setCustomGtfsBuilderOpen] = useState(false);
   const [customGtfsMapSession, setCustomGtfsMapSession] =
@@ -2309,7 +2314,8 @@ function MapPlanerWorkspace() {
     onOpenKursowka: handleOpenKursowkaFromItem,
     onOpenLineEditor: () => openLineRouteEditor(null, null),
     editedRoutesCount,
-    onOpenScheduleDiff: () => setScheduleDiffOpen(true),
+    onOpenScheduleDiff: () => openScheduleDiff("default"),
+    onOpenNsNhDiff: () => openScheduleDiff("ns-nh"),
     onOpenRouteAudit: () => setRouteAuditOpen(true),
     onOpenCustomGtfsBuilder: () => setCustomGtfsBuilderOpen(true),
   };
@@ -3143,6 +3149,10 @@ function MapPlanerWorkspace() {
             initialKursowkaCode={kursowkaDeepLink.code}
             initialDateId={kursowkaReturnDateId}
             onClose={() => setKursowkiOpen(false)}
+            onOpenNsNhDiff={() => {
+              setKursowkiOpen(false);
+              openScheduleDiff("ns-nh");
+            }}
             liveVehicles={liveVehicles}
             onSelectBus={handleSelectBus}
             onShowShapeOverlay={(overlay) => {
@@ -3186,10 +3196,11 @@ function MapPlanerWorkspace() {
         </Suspense>
       )}
 
-      {isPlanner && scheduleDiffOpen && (
+      {scheduleDiffOpen && (
         <Suspense fallback={null}>
           <ScheduleDiffDialog
             open={scheduleDiffOpen}
+            initialPreset={scheduleDiffPreset}
             onClose={() => setScheduleDiffOpen(false)}
             onToast={showToast}
           />
