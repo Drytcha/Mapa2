@@ -143,6 +143,18 @@ assert.match(card, /Pojazd #1234/);
 assert.match(card, /Zadanie 9\/01/);
 assert.match(card, /data-testid="bus-pane-odjazdy"/);
 assert.match(card, /data-testid="bus-pane-szczegoly"/);
+assert.match(card, /max-sm:max-h-\[38dvh\]/, "karta podróżnego zajmuje mniej wysokości na telefonie");
+const compactRun = renderToStaticMarkup(
+  <LiveBusRunPanel
+    stops={stops}
+    complete
+    loading={false}
+    delaySeconds={120}
+    isRealtime
+    compact
+  />,
+);
+assert.match(compactRun, /max-h-\[130px\]/, "lista kursu w widoku podróżnego jest bardziej kompaktowa");
 // Domyślnie otwarta jest lista „Odjazdy” (myBus 3.0), a nie szczegóły.
 assert.match(
   card,
