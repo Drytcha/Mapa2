@@ -4,6 +4,7 @@ import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import CustomGtfsBuilderDialog from "../src/components/CustomGtfsBuilderDialog";
+import CustomGtfsMapDrawToolbar from "../src/components/CustomGtfsMapDrawToolbar";
 import LineRouteEditorPanel from "../src/components/LineRouteEditorPanel";
 
 // 1. SSR smoke test: CustomGtfsBuilderDialog
@@ -75,6 +76,84 @@ for (const marker of [
   );
 }
 
+// 3. SSR smoke test: CustomGtfsMapDrawToolbar (rysowanie trasy + wskazywanie przystanku na mapie)
+const drawToolbarHtml = renderToStaticMarkup(
+  React.createElement(CustomGtfsMapDrawToolbar, {
+    session: {
+      kind: "draw-route",
+      lineId: "l1",
+      variantId: "v1",
+      lineShort: "S5",
+      variantName: "Szczawienko → Park Nauki",
+      color: "#1d4ed8",
+      initialPath: [
+        [50.815, 16.292],
+        [50.771, 16.284],
+      ],
+      stops: [
+        { id: "s1", name: "Szczawienko", lat: 50.815, lon: 16.292, sequence: 1 },
+        { id: "s2", name: "Park Nauki", lat: 50.771, lon: 16.284, sequence: 2 },
+      ],
+    },
+    onMapStateChange: () => {},
+    handlersRef: { current: null },
+    onApplyRoute: () => {},
+    onPickStopCoords: () => {},
+    onCancel: () => {},
+  }),
+);
+for (const marker of [
+  "Rysowanie trasy GTFS",
+  "Klikaj trasę",
+  "Przesuwaj",
+  "Usuń pkt",
+  "Ramka",
+  "Po drogach (OSRM)",
+  "Zastosuj trasę i wróć",
+]) {
+  assert.ok(
+    drawToolbarHtml.includes(marker),
+    `CustomGtfsMapDrawToolbar should render "${marker}"`,
+  );
+}
+
+const pickStopHtml = renderToStaticMarkup(
+  React.createElement(CustomGtfsMapDrawToolbar, {
+    session: {
+      kind: "pick-stop",
+      lineId: "l1",
+      variantId: "v1",
+      lineShort: "S5",
+      variantName: "Szczawienko → Park Nauki",
+      color: "#1d4ed8",
+      existingPath: [],
+      stops: [],
+    },
+    onMapStateChange: () => {},
+    handlersRef: { current: null },
+    onApplyRoute: () => {},
+    onPickStopCoords: () => {},
+    onCancel: () => {},
+  }),
+);
+assert.ok(
+  pickStopHtml.includes("Kliknij na mapie lokalizację nowego przystanku"),
+  "Pick-stop banner should render",
+);
+
+const builderSrc = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/CustomGtfsBuilderDialog.tsx"),
+  "utf8",
+);
+assert.ok(
+  builderSrc.includes('data-testid="custom-gtfs-draw-on-map"'),
+  "CustomGtfsBuilderDialog should expose map route drawing button",
+);
+assert.ok(
+  builderSrc.includes('data-testid="custom-gtfs-pick-stop-map"'),
+  "CustomGtfsBuilderDialog should expose map stop picking button",
+);
+
 console.log(
-  "✓ GTFS export & custom line builder UI SSR tests passed (CustomGtfsBuilderDialog + LineRouteEditorPanel export bar)",
+  "✓ GTFS export & custom line builder UI SSR tests passed (CustomGtfsBuilderDialog + CustomGtfsMapDrawToolbar + LineRouteEditorPanel export bar)",
 );

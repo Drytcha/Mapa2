@@ -14,6 +14,7 @@ import {
   Layers,
   Loader2,
   MapPin,
+  Pencil,
   Plus,
   Route as RouteIcon,
   Save,
@@ -67,13 +68,24 @@ import {
   triggerTextDownload,
 } from "@/lib/routeExportFormats";
 import { cn } from "@/utils/cn";
+import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
 import type { KursowkaShapeOverlay } from "./MapView";
 import { Dialog } from "./Modals";
+
+export interface CustomGtfsResumeTarget {
+  lineId: string;
+  variantId: string;
+  tab?: "meta" | "stops" | "schedule" | "export";
+  pickedCoords?: { lat: number; lon: number };
+  nonce: number;
+}
 
 interface CustomGtfsBuilderDialogProps {
   open: boolean;
   onClose: () => void;
   onShowOnMap: (overlay: KursowkaShapeOverlay) => void;
+  onStartMapSession?: (session: CustomGtfsMapSession) => void;
+  resumeTarget?: CustomGtfsResumeTarget | null;
   onToast?: (message: string) => void;
 }
 
@@ -108,6 +120,8 @@ export default function CustomGtfsBuilderDialog({
   open,
   onClose,
   onShowOnMap,
+  onStartMapSession,
+  resumeTarget,
   onToast,
 }: CustomGtfsBuilderDialogProps) {
   const [lines, setLines] = useState<CustomGtfsLine[]>([]);
@@ -214,6 +228,18 @@ export default function CustomGtfsBuilderDialog({
     if (!open) return;
     void bootstrap();
   }, [open, bootstrap]);
+
+  useEffect(() => {
+    if (!open || !resumeTarget) return;
+    setSelectedLineId(resumeTarget.lineId);
+    setActiveVariantId(resumeTarget.variantId);
+    if (resumeTarget.tab) setActiveTab(resumeTarget.tab);
+    if (resumeTarget.pickedCoords) {
+      setCustomStopOpen(true);
+      setNewStopLat(resumeTarget.pickedCoords.lat.toFixed(6));
+      setNewStopLon(resumeTarget.pickedCoords.lon.toFixed(6));
+    }
+  }, [open, resumeTarget]);
 
   const activeSourceMeta =
     sourceMode === "uploaded-zip"
@@ -556,7 +582,7 @@ export default function CustomGtfsBuilderDialog({
         ? activeVariant.path
         : activeVariant.stops.map((s): [number, number] => [s.lat, s.lon]);
     if (path.length < 2) {
-      onToast?.("Dodaj co najmniej 2 przystanki przed podglądem na mapie.");
+      onToast?.("Zaznacz trasę na mapie lub dodaj co najmniej 2 przystanki przed podglądem.");
       return;
     }
     onShowOnMap({
@@ -571,6 +597,48 @@ export default function CustomGtfsBuilderDialog({
       })),
     });
     onClose();
+  };
+
+  const handleStartDrawOnMap = async () => {
+    if (!activeLine || !activeVariant || !onStartMapSession) return;
+    await persistLineUpdate(activeLine);
+    onStartMapSession({
+      kind: "draw-route",
+      lineId: activeLine.id,
+      variantId: activeVariant.id,
+      lineShort: activeLine.shortName,
+      variantName: activeVariant.name,
+      color: activeLine.color,
+      initialPath: activeVariant.path,
+      stops: activeVariant.stops.map((s, idx) => ({
+        id: s.id,
+        name: s.name,
+        lat: s.lat,
+        lon: s.lon,
+        sequence: idx + 1,
+      })),
+    });
+  };
+
+  const handleStartPickStopOnMap = async () => {
+    if (!activeLine || !activeVariant || !onStartMapSession) return;
+    await persistLineUpdate(activeLine);
+    onStartMapSession({
+      kind: "pick-stop",
+      lineId: activeLine.id,
+      variantId: activeVariant.id,
+      lineShort: activeLine.shortName,
+      variantName: activeVariant.name,
+      color: activeLine.color,
+      existingPath: activeVariant.path,
+      stops: activeVariant.stops.map((s, idx) => ({
+        id: s.id,
+        name: s.name,
+        lat: s.lat,
+        lon: s.lon,
+        sequence: idx + 1,
+      })),
+    });
   };
 
   // Schedule actions
@@ -1490,8 +1558,21 @@ export default function CustomGtfsBuilderDialog({
 
                       {customStopOpen && (
                         <div className="mt-2 space-y-1.5 rounded-lg border border-brand/30 bg-brand/6 p-2">
-                          <div className="text-[8.5px] font-extrabold text-brand-ink">
-                            Nowy przystanek (dopisany do stops.txt)
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[8.5px] font-extrabold text-brand-ink">
+                              Nowy przystanek (dopisany do stops.txt)
+                            </span>
+                            {onStartMapSession && (
+                              <button
+                                type="button"
+                                data-testid="custom-gtfs-pick-stop-map"
+                                onClick={() => void handleStartPickStopOnMap()}
+                                className="flex items-center gap-0.5 rounded border border-brand/40 bg-surface px-1.5 py-0.5 text-[7.5px] font-extrabold text-brand-ink hover:border-brand"
+                              >
+                                <MapPin className="h-2.5 w-2.5" />
+                                Wskaż na mapie
+                              </button>
+                            )}
                           </div>
                           <input
                             type="text"
@@ -1708,13 +1789,16 @@ export default function CustomGtfsBuilderDialog({
                             <p className="metric text-[8.5px] text-mute">
                               {activeVariant.path.length >= 2
                                 ? `Zapisano ${activeVariant.path.length} punktów (${formatKm(polylineLengthMeters(activeVariant.path))})`
-                                : "Brak ścieżki drogowej — wyznacz po drogach (OSRM) lub połącz przystanki."}
+                                : "Kliknij „Zaznacz trasę na mapie”, aby wyklikać punkty którędy ma jechać linia, albo wyznacz przez przystanki."}
                             </p>
                           </div>
                           <button
                             type="button"
                             onClick={handlePreviewVariantOnMap}
-                            disabled={activeVariant.stops.length < 2}
+                            disabled={
+                              activeVariant.path.length < 2 &&
+                              activeVariant.stops.length < 2
+                            }
                             className="flex h-7 items-center gap-1 rounded-md border border-line bg-raised px-2.5 text-[8.5px] font-bold text-brand-ink hover:border-brand/50 disabled:opacity-45"
                           >
                             <Eye className="h-3 w-3" />
@@ -1730,6 +1814,19 @@ export default function CustomGtfsBuilderDialog({
                         )}
 
                         <div className="mt-2 flex flex-wrap gap-1.5">
+                          {onStartMapSession && (
+                            <button
+                              type="button"
+                              data-testid="custom-gtfs-draw-on-map"
+                              onClick={() => void handleStartDrawOnMap()}
+                              className="flex h-8 items-center gap-1.5 rounded-lg bg-brand px-3 text-[9.5px] font-extrabold text-on-brand hover:opacity-90"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              {activeVariant.path.length >= 2
+                                ? "Edytuj / zaznacz trasę na mapie"
+                                : "Zaznacz trasę na mapie"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             data-testid="custom-gtfs-route-osrm"
@@ -1738,10 +1835,10 @@ export default function CustomGtfsBuilderDialog({
                               activeVariant.stops.length < 2
                             }
                             onClick={() => void handleRouteVariantViaOsrm()}
-                            className="flex h-8 items-center gap-1.5 rounded-lg bg-brand px-3 text-[9px] font-extrabold text-on-brand hover:opacity-90 disabled:opacity-45"
+                            className="flex h-8 items-center gap-1.5 rounded-lg border border-brand/40 bg-brand-soft px-3 text-[9px] font-extrabold text-brand-ink hover:border-brand disabled:opacity-45"
                           >
                             <Wand2 className="h-3.5 w-3.5" />
-                            Poprowadź po drogach (OSRM)
+                            Poprowadź przez przystanki (OSRM)
                           </button>
                           <button
                             type="button"
@@ -1750,7 +1847,7 @@ export default function CustomGtfsBuilderDialog({
                             className="flex h-8 items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 text-[9px] font-bold text-ink-soft hover:text-ink disabled:opacity-45"
                           >
                             <Sparkles className="h-3 w-3" />
-                            Połącz prosto po przystankach
+                            Połącz prosto
                           </button>
                         </div>
                       </section>
