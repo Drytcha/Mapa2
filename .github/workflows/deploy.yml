@@ -181,13 +181,14 @@ jobs:
           echo "Pliki w $BUILD_DIR (max 2 poziomy):"
           find "$BUILD_DIR" -maxdepth 2 -type f | sort | head -n 100
 
-          # Vite z pluginem singlefile wrzuca cały bundle + GTFS do index.html,
-          # więc nie ma osobnego dist/data/walbrzych-gtfs.zip - nie kopiujemy go.
+          # Vite dzieli build na lekkie chunki i osobny plik assets/walbrzych-gtfs-*.zip
+          # (zamiast pakować wszystko w jeden index.html). Cały katalog dist/ trafia na Pages.
           # .nojekyll zostawione na wypadek assetów z podkreśleniem w nazwie.
           touch "$BUILD_DIR/.nojekyll"
 
-          echo "Rozmiar $BUILD_DIR/index.html:"
+          echo "Rozmiar $BUILD_DIR/index.html i katalogu $BUILD_DIR/assets:"
           ls -lh "$BUILD_DIR/index.html"
+          du -sh "$BUILD_DIR/assets" 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

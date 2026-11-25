@@ -21,25 +21,29 @@ import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import { foldPolish } from "@/lib/core/text";
 import { minutesToClock } from "@/lib/core/time";
 import {
-  compareScheduleTrips,
+  compareScheduleTripsOffThread,
+  parseExternalGtfsZipForDiffOffThread,
+} from "@/lib/engine/gtfsComputeClient";
+import {
   dayTypeLabel,
   exportScheduleDiffCsv,
   formatYyyymmdd,
   listNsNhPairs,
   loadCurrentScheduleArchive,
-  parseExternalGtfsZipForDiff,
   pickDefaultComparison,
   pickNsNhComparison,
   summarizeNsNhDifferences,
   type BrigadeScheduleDiff,
   type EntityDiffStatus,
   type NsNhComparisonPair,
+  type ScheduleDiffResult,
   type ScheduleSourceArchive,
   type TripDiffItem,
   type TripDiffKind,
 } from "@/lib/engine/scheduleDiff";
 import { cn } from "@/utils/cn";
 import { Dialog } from "./Modals";
+import VirtualList from "./VirtualList";
 
 interface ScheduleDiffDialogProps {
   open: boolean;
@@ -51,8 +55,6 @@ interface ScheduleDiffDialogProps {
 type DiffTab = "lines" | "trips" | "brigades";
 type TripFilterKind = "all-changes" | "added" | "removed" | "changed" | "time-shifted";
 type BrigadeSortKey = "km-abs" | "km-desc" | "code" | "trips";
-
-const INITIAL_TRIP_PAGE_SIZE = 150;
 
 function formatKm(meters: number): string {
   return `${(meters / 1000).toLocaleString("pl-PL", {
@@ -175,12 +177,14 @@ export default function ScheduleDiffDialog({
     useState<TripFilterKind>("all-changes");
   const [brigadeSort, setBrigadeSort] = useState<BrigadeSortKey>("km-abs");
   const [query, setQuery] = useState("");
-  const [tripPageLimit, setTripPageLimit] = useState(INITIAL_TRIP_PAGE_SIZE);
   const [expandedBrigadeKey, setExpandedBrigadeKey] = useState<string | null>(
     null,
   );
+  const [diff, setDiff] = useState<ScheduleDiffResult | null>(null);
+  const [comparing, setComparing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const diffScrollRef = useRef<HTMLDivElement | null>(null);
   const pendingUploadTargetRef = useRef<"A" | "B">("A");
 
   const loadCurrent = useCallback(
@@ -313,7 +317,6 @@ export default function ScheduleDiffDialog({
     );
     if (nextA) setServiceIdA(nextA.serviceId);
     if (nextB) setServiceIdB(nextB.serviceId);
-    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
     setExpandedBrigadeKey(null);
   };
 
@@ -344,7 +347,10 @@ export default function ScheduleDiffDialog({
     setError("");
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const parsed = parseExternalGtfsZipForDiff(bytes, file.name);
+      const parsed = await parseExternalGtfsZipForDiffOffThread(
+        bytes,
+        file.name,
+      );
       if (!parsed.services.length) {
         throw new Error("Wgrany plik GTFS nie zawiera żadnych aktywnych kursów.");
       }
@@ -390,7 +396,6 @@ export default function ScheduleDiffDialog({
     setServiceIdA(pair.nsService.serviceId);
     setServiceIdB(pair.nhService.serviceId);
     setLineFilter("ALL");
-    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
     setExpandedBrigadeKey(null);
   };
 
@@ -403,7 +408,6 @@ export default function ScheduleDiffDialog({
     setServiceIdA(def.serviceIdA);
     setServiceIdB(def.serviceIdB);
     setLineFilter("ALL");
-    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
     setExpandedBrigadeKey(null);
   };
 
@@ -415,10 +419,14 @@ export default function ScheduleDiffDialog({
       (initialPreset === "ns-nh" && !serviceOptionA && !serviceOptionB),
   );
 
-  const diff = useMemo(() => {
+  useEffect(() => {
     if (!archiveA || !archiveB || !serviceOptionA || !serviceOptionB) {
-      return null;
+      setDiff(null);
+      setComparing(false);
+      return;
     }
+    let cancelled = false;
+    setComparing(true);
     const tripsA = archiveA.tripsByService.get(serviceOptionA.serviceId) ?? [];
     const tripsB = archiveB.tripsByService.get(serviceOptionB.serviceId) ?? [];
     const labelA =
@@ -429,7 +437,26 @@ export default function ScheduleDiffDialog({
       archiveB.id === "current"
         ? `${serviceOptionB.serviceId} (${serviceOptionB.label})`
         : `${archiveB.label} · ${serviceOptionB.serviceId}`;
-    return compareScheduleTrips(tripsA, tripsB, labelA, labelB);
+
+    void compareScheduleTripsOffThread(tripsA, tripsB, labelA, labelB)
+      .then((nextDiff) => {
+        if (cancelled) return;
+        setDiff(nextDiff);
+        setComparing(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setComparing(false);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Nie udało się porównać wybranych rozkładów.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [archiveA, archiveB, serviceOptionA, serviceOptionB]);
 
   const nsNhSummary = useMemo(
@@ -548,11 +575,9 @@ export default function ScheduleDiffDialog({
   const drillIntoLine = (routeShort: string, targetTab: "trips" | "brigades") => {
     setLineFilter(routeShort);
     setActiveTab(targetTab);
-    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
     setExpandedBrigadeKey(null);
+    diffScrollRef.current?.scrollTo({ top: 0 });
   };
-
-  const visibleTrips = filteredTrips.slice(0, tripPageLimit);
 
   return (
     <Dialog
@@ -752,7 +777,6 @@ export default function ScheduleDiffDialog({
                   value={serviceOptionA?.serviceId ?? ""}
                   onChange={(e) => {
                     setServiceIdA(e.target.value);
-                    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
                     setExpandedBrigadeKey(null);
                   }}
                   className="mt-1 h-8 w-full rounded-md border border-line bg-raised px-2 text-[10px] font-bold text-ink outline-none focus:border-brand/60"
@@ -845,7 +869,6 @@ export default function ScheduleDiffDialog({
                   value={serviceOptionB?.serviceId ?? ""}
                   onChange={(e) => {
                     setServiceIdB(e.target.value);
-                    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
                     setExpandedBrigadeKey(null);
                   }}
                   className="mt-1 h-8 w-full rounded-md border border-line bg-raised px-2 text-[10px] font-bold text-ink outline-none focus:border-brand/60"
@@ -904,6 +927,16 @@ export default function ScheduleDiffDialog({
               </div>
             )}
           </div>
+
+          {comparing && !diff && (
+            <div
+              role="status"
+              className="flex flex-1 items-center justify-center gap-2 p-8 text-[11px] text-mute"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Porównywanie kursów i wozokilometrów w wątku roboczym…
+            </div>
+          )}
 
           {diff && (
             <>
@@ -1186,7 +1219,7 @@ export default function ScheduleDiffDialog({
                   value={lineFilter}
                   onChange={(e) => {
                     setLineFilter(e.target.value);
-                    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
+                    diffScrollRef.current?.scrollTo({ top: 0 });
                   }}
                   className="h-7 rounded-md border border-line bg-surface px-2 text-[9.5px] font-bold text-ink outline-none focus:border-brand/60"
                 >
@@ -1219,7 +1252,7 @@ export default function ScheduleDiffDialog({
                         data-testid={`schedule-diff-trip-filter-${f.id}`}
                         onClick={() => {
                           setTripKindFilter(f.id);
-                          setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
+                          diffScrollRef.current?.scrollTo({ top: 0 });
                         }}
                         className={cn(
                           "h-7 rounded-md border px-2 text-[8.5px] font-bold transition-colors",
@@ -1288,7 +1321,10 @@ export default function ScheduleDiffDialog({
               </div>
 
               {/* ── Zawartość aktywnej zakładki ─────────────────────── */}
-              <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-3.5 py-2.5">
+              <div
+                ref={diffScrollRef}
+                className="scroll-area min-h-0 flex-1 overflow-y-auto px-3.5 py-2.5"
+              >
                 {/* 1. TAB: LINIE */}
                 {activeTab === "lines" && (
                   <div className="space-y-1.5">
@@ -1411,7 +1447,7 @@ export default function ScheduleDiffDialog({
                   </div>
                 )}
 
-                {/* 2. TAB: KURSY */}
+                {/* 2. TAB: KURSY (wirtualizowana lista 60 FPS) */}
                 {activeTab === "trips" && (
                   <div className="space-y-1.5">
                     {filteredTrips.length === 0 ? (
@@ -1420,25 +1456,30 @@ export default function ScheduleDiffDialog({
                       </div>
                     ) : (
                       <>
-                        <div className="text-[8.5px] font-semibold text-mute">
-                          Wyświetlono {visibleTrips.length} z{" "}
-                          {filteredTrips.length} kursów
+                        <div className="flex items-center justify-between text-[8.5px] font-semibold text-mute">
+                          <span>
+                            Łącznie {filteredTrips.length} kursów
+                            {filteredTrips.length > 48
+                              ? " · lista wirtualizowana"
+                              : ""}
+                          </span>
+                          {comparing && (
+                            <span className="inline-flex items-center gap-1 text-brand-ink">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Przeliczanie w tle…
+                            </span>
+                          )}
                         </div>
-                        {visibleTrips.map((item) => (
-                          <TripDiffRow key={item.id} item={item} />
-                        ))}
-                        {visibleTrips.length < filteredTrips.length && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setTripPageLimit((prev) => prev + 200)
-                            }
-                            className="flex h-8 w-full items-center justify-center rounded-lg border border-line bg-raised text-[9.5px] font-bold text-brand-ink hover:border-brand/50"
-                          >
-                            Pokaż kolejne kursy (pozostało{" "}
-                            {filteredTrips.length - visibleTrips.length})
-                          </button>
-                        )}
+                        <VirtualList
+                          items={filteredTrips}
+                          itemHeight={54}
+                          gap={6}
+                          overscan={10}
+                          scrollParentRef={diffScrollRef}
+                          listClassName="space-y-1.5"
+                          getKey={(item) => item.id}
+                          renderItem={(item) => <TripDiffRow item={item} />}
+                        />
                       </>
                     )}
                   </div>

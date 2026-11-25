@@ -1,5 +1,9 @@
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8 } from "fflate";
 import { DateTime } from "luxon";
+import {
+  parseGtfsShapesOffThread,
+  unzipGtfsWithoutShapesOffThread,
+} from "./gtfsComputeClient";
 import {
   emitRuntimeEvent,
   getLatestFleetSnapshot,
@@ -49,7 +53,7 @@ import {
 } from "./lineRouteOverrides";
 import type { BuilderStop, BuilderTrip } from "./brigadeBuilder";
 import { CSV_CHUNK_ROWS, yieldToMain } from "../core/cooperative";
-import { createLap, measureSync, recordTiming } from "../core/perfMarks";
+import { createLap, recordTiming } from "../core/perfMarks";
 import {
   idbGetKv,
   idbSetKv,
@@ -517,10 +521,10 @@ async function parseArchiveBytes(
   source: string,
 ): Promise<ParsedArchiveBase> {
   // `shapes.txt` rozpakowujemy osobno i tylko wtedy, gdy ktoś rysuje trasę —
-  // dekompresja największego pliku paczki nie może opóźniać pierwszego ekranu.
-  const files = measureSync("gtfs:unzip", () =>
-    unzipSync(zipBytes, { filter: (file) => file.name !== "shapes.txt" })
-  );
+  // dekompresja największego pliku paczki odbywa się w Web Workerze bez blokady UI.
+  const unzipStarted = performance.now();
+  const files = await unzipGtfsWithoutShapesOffThread(zipBytes);
+  recordTiming("gtfs:unzip", performance.now() - unzipStarted);
   const lap = createLap();
   const readTxt = (name: string) => (files[name] ? strFromU8(files[name]) : "");
 
@@ -1427,58 +1431,11 @@ async function loadAndBuild(forceLive: boolean): Promise<GtfsMemoryStore> {
 
 const shapeTaskByBase = new WeakMap<ParsedArchiveBase, Promise<void>>();
 
-/** Wypełnia `base.shapesById` z paczki (raz na bazę, porcjami, bez blokady UI). */
+/** Wypełnia `base.shapesById` z paczki w Web Workerze (raz na bazę, bez blokady UI). */
 async function parseShapesInto(base: ParsedArchiveBase, zipBytes: Uint8Array): Promise<void> {
-  const files = unzipSync(zipBytes, { filter: (file) => file.name === "shapes.txt" });
-  const entry = files["shapes.txt"];
-  if (!entry) return;
-  const reader = createCsvReader(strFromU8(entry));
-  const col = reader.index;
-  const iId = col("shape_id");
-  const iLat = col("shape_pt_lat");
-  const iLon = col("shape_pt_lon");
-  const iSeq = col("shape_pt_sequence");
-  const buckets = new Map<
-    string,
-    Array<{ block: number; seq: number; lat: number; lon: number }>
-  >();
-  // Ten sam `shape_id` bywa w paczce opisany w kilku blokach (np. osobno dla
-  // obu kierunków) — wtedy numeracja `shape_pt_sequence` zaczyna się od nowa.
-  // Bez rozdzielenia bloków sortowanie mieszało punkty i linia „skakała”.
-  const lastSeqByShape = new Map<string, number>();
-  const blockByShape = new Map<string, number>();
-  let cols = reader.next();
-  let processed = 0;
-  while (cols !== null) {
-    const shapeId = iId >= 0 ? cols[iId] : "";
-    if (shapeId) {
-      const lat = iLat >= 0 ? Number.parseFloat(cols[iLat]) : Number.NaN;
-      const lon = iLon >= 0 ? Number.parseFloat(cols[iLon]) : Number.NaN;
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        const seq = iSeq >= 0 ? Number.parseInt(cols[iSeq], 10) || 0 : 0;
-        const previous = lastSeqByShape.get(shapeId);
-        let block = blockByShape.get(shapeId) ?? 0;
-        if (previous !== undefined && seq <= previous) {
-          block += 1;
-          blockByShape.set(shapeId, block);
-        }
-        lastSeqByShape.set(shapeId, seq);
-        const point = { block, seq, lat, lon };
-        const list = buckets.get(shapeId);
-        if (list) list.push(point);
-        else buckets.set(shapeId, [point]);
-        processed += 1;
-        if (processed % CSV_CHUNK_ROWS === 0) await yieldToMain();
-      }
-    }
-    cols = reader.next();
-  }
-  for (const [shapeId, points] of buckets) {
-    points.sort((a, b) => a.block - b.block || a.seq - b.seq);
-    base.shapesById.set(
-      shapeId,
-      points.map((point) => [point.lat, point.lon] as [number, number]),
-    );
+  const parsed = await parseGtfsShapesOffThread(zipBytes);
+  for (const [shapeId, coords] of parsed) {
+    base.shapesById.set(shapeId, coords);
   }
 }
 

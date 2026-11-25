@@ -62,6 +62,7 @@ import {
 import { cn } from "@/utils/cn";
 import LineRestrictions from "./LineRestrictions";
 import type { KursowkaShapeOverlay } from "./MapView";
+import VirtualList from "./VirtualList";
 
 interface Props {
   routes: GtfsLineItem[];
@@ -165,7 +166,7 @@ export default function BrigadesPanel({
   const [loadingTripId, setLoadingTripId] = useState<string | null>(null);
   const [previewingTripId, setPreviewingTripId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
-  const [listLimit, setListLimit] = useState(100);
+  const brigadeListScrollRef = useRef<HTMLDivElement | null>(null);
   const [reload, setReload] = useState(0);
   const [pdfScope, setPdfScope] = useState<"duty" | "line" | "mzuk" | "ska" | "other">("duty");
   const [pdfDayKind, setPdfDayKind] = useState<"current" | TimetableDayKind>("current");
@@ -252,7 +253,7 @@ export default function BrigadesPanel({
     setSelectedBlockId(null);
     setDetail(null);
     setMobileView("list");
-    setListLimit(100);
+    brigadeListScrollRef.current?.scrollTo({ top: 0 });
     loadBrigades(routes, lineId, dateId)
       .then((data) => {
         if (!cancelled) {
@@ -436,10 +437,6 @@ export default function BrigadesPanel({
     [filtered]
   );
 
-  const shown = useMemo(
-    () => filtered.slice(0, listLimit),
-    [filtered, listLimit]
-  );
   const selected =
     visibleItems.find((entry) => entry.blockId === selectedBlockId) ?? null;
 
@@ -844,7 +841,7 @@ export default function BrigadesPanel({
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
-              setListLimit(100);
+              brigadeListScrollRef.current?.scrollTo({ top: 0 });
             }}
             placeholder="Brygada, linia, kraniec lub firma (np. 5/02, 30, MZUK)"
             aria-label="Filtruj brygady"
@@ -1183,7 +1180,10 @@ export default function BrigadesPanel({
             {showTechnicalNotes && <span className="text-right">Km</span>}
           </div>
 
-          <div className="duty-list-scroll min-h-0 flex-1 overflow-y-auto">
+          <div
+            ref={brigadeListScrollRef}
+            className="duty-list-scroll min-h-0 flex-1 overflow-y-auto"
+          >
             {loading ? (
               <div
                 className="space-y-1 p-2"
@@ -1220,8 +1220,13 @@ export default function BrigadesPanel({
                 )}
               </div>
             ) : (
-              <>
-                {shown.map((item) => {
+              <VirtualList
+                items={filtered}
+                itemHeight={34}
+                overscan={10}
+                scrollParentRef={brigadeListScrollRef}
+                getKey={(item) => item.blockId}
+                renderItem={(item) => {
                   const active = selectedBlockId === item.blockId;
                   const gps = vehicleFor(item);
                   const m = item.metrics;
@@ -1234,7 +1239,6 @@ export default function BrigadesPanel({
                   const isSplit = m.shiftCount >= 2;
                   return (
                     <button
-                      key={item.blockId}
                       type="button"
                       data-testid="brigade-card"
                       aria-pressed={active}
@@ -1252,7 +1256,7 @@ export default function BrigadesPanel({
                         setMobileView("detail");
                       }}
                       className={cn(
-                        "grid w-full min-w-0 items-center gap-1 border-b border-line/60 px-2 py-1 text-left text-[10px] transition-colors last:border-b-0",
+                        "grid w-full min-w-0 items-center gap-1 border-b border-line/60 px-2 py-1 text-left text-[10px] transition-colors",
                         listColumns,
                         active ? "bg-brand-soft/80" : "hover:bg-raised"
                       )}
@@ -1319,17 +1323,8 @@ export default function BrigadesPanel({
                       )}
                     </button>
                   );
-                })}
-                {filtered.length > shown.length && (
-                  <button
-                    type="button"
-                    onClick={() => setListLimit((current) => current + 100)}
-                    className="h-7 w-full border-t border-line text-[9.5px] font-bold text-brand-ink hover:bg-brand-soft"
-                  >
-                    Pokaż kolejne ({filtered.length - shown.length})
-                  </button>
-                )}
-              </>
+                }}
+              />
             )}
           </div>
         </section>

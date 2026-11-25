@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:singlefile": "SINGLEFILE=1 vite build",
     "preview": "vite preview",
     "test:bus": "tsx scripts/test-live-bus-progress.ts && tsx scripts/test-live-bus-card.tsx && tsx scripts/test-live-bus-route.ts && tsx scripts/test-route-progress.ts",
     "test:progress": "tsx scripts/test-route-progress.ts",

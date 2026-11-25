@@ -20,14 +20,19 @@ import type {
 import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
 import type { CustomGtfsResumeTarget } from "./CustomGtfsBuilderDialog";
 import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
-import TopBar from "./TopBar";
+import {
+  ConnectedLiveBusCard,
+  ConnectedLiveFleetControl,
+  ConnectedTopBar,
+  VisibleLiveBusCountLabel,
+  WithLiveVehicles,
+  WithVisibleLiveBuses,
+} from "./LiveFleetConnected";
 import UserLocationHud from "./UserLocationHud";
 import StopFinder from "./StopFinder";
 import { useUserLocation } from "@/lib/useUserLocation";
 import {
   BusStopCard,
-  LiveBusCard,
-  LiveFleetControl,
   MapContextMenu,
   MapControls,
   MapDrawingBanner,
@@ -109,16 +114,17 @@ import {
   type Bounds,
 } from "@/lib/busStops";
 import {
-  getLatestFleetSnapshot,
   onRuntimeEvent,
   setFleetDemand,
   subscribeSharedClock,
   triggerFleetRefresh,
-  type LiveFleetSnapshot,
 } from "@/lib/core/runtimeHub";
 import { coordKey } from "@/lib/core/spatial";
 import PerfHud from "@/components/PerfHud";
-import { isPlannerOnlyLine } from "@/lib/core/text";
+import {
+  ensureLiveFleetStoreConnected,
+  useLiveTraffic,
+} from "@/lib/liveFleetStore";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
 import { liveBusTap } from "@/lib/liveBusProgress";
@@ -176,7 +182,6 @@ import {
   type BrigadeInfo,
   type BusStop,
   type LiveBusVehicle,
-  type LiveTrafficSummary,
   type MapStyle,
   type Place,
   type RouteData,
@@ -453,9 +458,9 @@ function MapPlanerWorkspace() {
   const [turnaroundSpots, setTurnaroundSpots] = useState<TurnaroundSpot[]>([]);
 
   // Live GPS Wałbrzych buses (MZUK, ŚKA)
-  const [liveVehicles, setLiveVehicles] = useState<LiveBusVehicle[]>([]);
-  const [liveTraffic, setLiveTraffic] = useState<LiveTrafficSummary | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
+  // Stan floty live (pojazdy + loading) jest w zewnętrznym store `liveFleetStore`
+  // (useSyncExternalStore), dzięki czemu częste ticki GPS nie re-renderują MapPlanerApp.
+  const liveTraffic = useLiveTraffic();
   const [operatorFilter, setOperatorFilter] = useState<"all" | WalbrzychOperatorKey>("all");
   const [selectedLiveBus, setSelectedLiveBus] = useState<LiveBusVehicle | null>(null);
 
@@ -604,45 +609,9 @@ function MapPlanerWorkspace() {
     await triggerFleetRefresh(force);
   }, []);
 
-  // Subscribe once to the central deduplicated live-fleet stream (re-renders only when fleet changes)
+  // Podłącz zewnętrzny store floty live (deduplikowany przez `fleetSignature` w `liveFleetStore.ts`).
   useEffect(() => {
-    // Każdy tick floty to pełny re-render planisty, a pozycje często się nie
-    // zmieniają (te same wozy, ten sam przystanek). Porównujemy więc odcisk
-    // danych i pomijamy identyczne aktualizacje — inaczej mapa „drga” co 2,5 s.
-    const fleetSignature = (vehicles: LiveBusVehicle[]) =>
-      vehicles
-        .map(
-          (vehicle) =>
-            `${vehicle.vehicleId}:${vehicle.lat.toFixed(5)}:${vehicle.lon.toFixed(5)}:` +
-            `${vehicle.delaySeconds}:${vehicle.speedKmh?.toFixed(1) ?? ""}:` +
-            `${vehicle.routeName}:${vehicle.kursowka ?? ""}:${vehicle.bearing?.toFixed(0) ?? ""}:` +
-            `${vehicle.tripId ?? ""}:${vehicle.upcomingStops[0]?.sequence ?? ""}:${vehicle.upcomingStops[0]?.scheduledDeparture ?? ""}`
-        )
-        .join("|");
-    let lastVehicleSignature = "";
-    const applySnapshot = (snapshot: LiveFleetSnapshot) => {
-      const signature = fleetSignature(snapshot.vehicles);
-      setLiveTraffic(snapshot.traffic);
-      if (signature === lastVehicleSignature) return;
-      lastVehicleSignature = signature;
-      setLiveVehicles(snapshot.vehicles);
-      setSelectedLiveBus((prev) =>
-        prev ? snapshot.vehicles.find((v) => v.vehicleId === prev.vehicleId) ?? prev : null
-      );
-    };
-
-    const initial = getLatestFleetSnapshot();
-    if (initial) {
-      applySnapshot(initial);
-    }
-    const offUpdate = onRuntimeEvent("fleet:updated", ({ snapshot }) => {
-      applySnapshot(snapshot);
-    });
-    const offLoading = onRuntimeEvent("fleet:loading", setLiveLoading);
-    return () => {
-      offUpdate();
-      offLoading();
-    };
+    ensureLiveFleetStoreConnected();
   }, []);
 
   // Adaptive single-timer demand: fast (2.5s) when tracking a bus, standard (4s) when visible,
@@ -795,15 +764,6 @@ function MapPlanerWorkspace() {
     [activeRoute, metrics.duration]
   );
   const visibleStops = useMemo(() => filterStops(busStops, busQuery), [busStops, busQuery]);
-  const visibleLiveBuses = useMemo(() => {
-    // Special "S" lines stay planner-only on the live map as well.
-    const base = isPlanner
-      ? liveVehicles
-      : liveVehicles.filter((v) => !isPlannerOnlyLine(v.routeName));
-    return operatorFilter === "all"
-      ? base
-      : base.filter((v) => v.operatorKey === operatorFilter);
-  }, [liveVehicles, operatorFilter, isPlanner]);
 
   const usedStopKeys = useMemo(
     () =>
@@ -2340,14 +2300,13 @@ function MapPlanerWorkspace() {
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <PerfHud />
-      <TopBar
+      <ConnectedTopBar
         route={activeRoute}
         isRouting={isRouting}
         routeReady={routeReady}
         role={role}
         onRoleChange={handleRoleChange}
         theme={theme}
-        liveBusCount={liveVehicles.length}
         showLiveBuses={showLiveBuses}
         kursowkiOpen={kursowkiOpen}
         linesOpen={linesOpen}
@@ -2416,9 +2375,14 @@ function MapPlanerWorkspace() {
               </div>
             }
           >
-            <MapView
-              ref={mapRef}
-              route={activeRoute}
+            <WithVisibleLiveBuses
+              isPlanner={isPlanner}
+              operatorFilter={operatorFilter}
+            >
+              {(visibleLiveBuses) => (
+                <MapView
+                  ref={mapRef}
+                  route={activeRoute}
               waypoints={isPlanner ? waypoints : []}
               mapStyle={mapStyle}
               theme={theme}
@@ -2587,6 +2551,8 @@ function MapPlanerWorkspace() {
                 )?.onClearSelection()
               }
             />
+              )}
+            </WithVisibleLiveBuses>
           </Suspense>
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
@@ -2720,15 +2686,12 @@ function MapPlanerWorkspace() {
               ) : (
                 <div className="pointer-events-none flex min-h-0 flex-col items-start gap-2">
                   <div className={selectedStop || selectedLiveBus ? "hidden sm:contents" : "contents"}>
-                    <LiveFleetControl
+                    <ConnectedLiveFleetControl
                       isPlanner={isPlanner}
                       showLiveBuses={showLiveBuses}
                       onToggleLiveBuses={() => toggleVisibility("liveBuses")}
                       operatorFilter={operatorFilter}
                       onOperatorFilter={setOperatorFilter}
-                      liveVehicles={liveVehicles}
-                      liveTraffic={liveTraffic}
-                      liveLoading={liveLoading}
                       onRefreshLive={() => void fetchLiveBuses(true)}
                       signalCount={trafficSignals.length}
                       showTrafficSignals={showTrafficSignals}
@@ -2740,30 +2703,34 @@ function MapPlanerWorkspace() {
                     />
                     {!isPlanner && tripOpen && (
                       <Suspense fallback={null}>
-                        <TripPlannerPanel
-                          buses={liveVehicles}
-                          origin={tripOrigin}
-                          destination={tripDest}
-                          onOriginChange={updateTripOrigin}
-                          onDestinationChange={updateTripDest}
-                          onSwap={handleSwapTripPoints}
-                          onClearAll={handleClearTripPoints}
-                          savedPlaces={savedPlaces}
-                          onDeleteSavedPlace={handleDeleteSavedPlace}
-                          lastSavedTrip={lastSavedTrip}
-                          onRestoreLastTrip={handleRestoreLastTrip}
-                          pickTarget={tripPick}
-                          onPickTargetChange={setTripPick}
-                          onSelectBus={handleSelectBus}
-                          onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
-                          onPreview={setTripPreview}
-                          onRefresh={() => setTripNonce((value) => value + 1)}
-                          onClose={() => {
-                            setTripOpen(false);
-                            setTripPick(null);
-                          }}
-                          refreshNonce={tripNonce}
-                        />
+                        <WithLiveVehicles>
+                          {(liveVehicles) => (
+                            <TripPlannerPanel
+                              buses={liveVehicles}
+                              origin={tripOrigin}
+                              destination={tripDest}
+                              onOriginChange={updateTripOrigin}
+                              onDestinationChange={updateTripDest}
+                              onSwap={handleSwapTripPoints}
+                              onClearAll={handleClearTripPoints}
+                              savedPlaces={savedPlaces}
+                              onDeleteSavedPlace={handleDeleteSavedPlace}
+                              lastSavedTrip={lastSavedTrip}
+                              onRestoreLastTrip={handleRestoreLastTrip}
+                              pickTarget={tripPick}
+                              onPickTargetChange={setTripPick}
+                              onSelectBus={handleSelectBus}
+                              onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
+                              onPreview={setTripPreview}
+                              onRefresh={() => setTripNonce((value) => value + 1)}
+                              onClose={() => {
+                                setTripOpen(false);
+                                setTripPick(null);
+                              }}
+                              refreshNonce={tripNonce}
+                            />
+                          )}
+                        </WithLiveVehicles>
                       </Suspense>
                     )}
                     {isPlanner && (
@@ -2799,14 +2766,14 @@ function MapPlanerWorkspace() {
                     />
                   )}
                   {selectedLiveBus && (
-                    <LiveBusCard
+                    <ConnectedLiveBusCard
                       isPlanner={isPlanner}
-                      bus={selectedLiveBus}
+                      initialBus={selectedLiveBus}
                       onClose={closeLiveBus}
                       onOpenKursowka={(code) => handleOpenKursowkaFromItem("", code)}
                       onSetOperator={handleSetOperator}
-                      onCenter={() =>
-                        mapRef.current?.centerOn(selectedLiveBus.lat, selectedLiveBus.lon, 16)
+                      onCenterBus={(bus) =>
+                        mapRef.current?.centerOn(bus.lat, bus.lon, 16)
                       }
                     />
                   )}
@@ -2997,7 +2964,10 @@ function MapPlanerWorkspace() {
                 </>
               )}
               <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                GPS autobusów ({visibleLiveBuses.length})
+                <VisibleLiveBusCountLabel
+                  isPlanner={isPlanner}
+                  operatorFilter={operatorFilter}
+                />
               </span>
               {trafficSignals.length > 0 && (
                 <>
@@ -3143,32 +3113,36 @@ function MapPlanerWorkspace() {
 
       {kursowkiOpen && (
         <Suspense fallback={null}>
-          <KursowkiDialog
-            open={kursowkiOpen}
-            initialKursowkaId={kursowkaDeepLink.id}
-            initialKursowkaCode={kursowkaDeepLink.code}
-            initialDateId={kursowkaReturnDateId}
-            onClose={() => setKursowkiOpen(false)}
-            onOpenNsNhDiff={() => {
-              setKursowkiOpen(false);
-              openScheduleDiff("ns-nh");
-            }}
-            liveVehicles={liveVehicles}
-            onSelectBus={handleSelectBus}
-            onShowShapeOverlay={(overlay) => {
-              if (overlayEpoch !== overlayEpochRef.current) return;
-              setKursowkaOverlay(overlay);
-              showToast(
-                overlay.unresolvedGaps
-                  ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
-                  : `Wyświetlono przebieg: ${overlay.title}.`,
-              );
-            }}
-            onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
-            onLoadTripToPlanner={handleLoadTripToPlanner}
-            canLoadToPlanner={isPlanner}
-            isPlanner={isPlanner}
-          />
+          <WithLiveVehicles>
+            {(liveVehicles) => (
+              <KursowkiDialog
+                open={kursowkiOpen}
+                initialKursowkaId={kursowkaDeepLink.id}
+                initialKursowkaCode={kursowkaDeepLink.code}
+                initialDateId={kursowkaReturnDateId}
+                onClose={() => setKursowkiOpen(false)}
+                onOpenNsNhDiff={() => {
+                  setKursowkiOpen(false);
+                  openScheduleDiff("ns-nh");
+                }}
+                liveVehicles={liveVehicles}
+                onSelectBus={handleSelectBus}
+                onShowShapeOverlay={(overlay) => {
+                  if (overlayEpoch !== overlayEpochRef.current) return;
+                  setKursowkaOverlay(overlay);
+                  showToast(
+                    overlay.unresolvedGaps
+                      ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
+                      : `Wyświetlono przebieg: ${overlay.title}.`,
+                  );
+                }}
+                onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
+                onLoadTripToPlanner={handleLoadTripToPlanner}
+                canLoadToPlanner={isPlanner}
+                isPlanner={isPlanner}
+              />
+            )}
+          </WithLiveVehicles>
         </Suspense>
       )}
 

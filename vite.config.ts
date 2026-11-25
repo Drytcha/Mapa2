@@ -109,6 +109,12 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH
   ? `${process.env.NEXT_PUBLIC_BASE_PATH.replace(/\/+$/, "")}/`
   : "/";
 
+// Domyślny build dzieli kod na lekkie chunki ładowane na żądanie (React.lazy +
+// osobne paczki vendorów i walbrzych-gtfs.zip z cache HTTP). Jednoplikowy
+// wariant offline nadal można zbudować poleceniem `npm run build:singlefile`.
+const singleFileBuild =
+  process.env.SINGLEFILE === "1" || process.env.SINGLEFILE === "true";
+
 // https://vite.dev/config/
 export default defineConfig({
   base: basePath,
@@ -116,7 +122,39 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: [".e2b.app"],
   },
-  plugins: [lineRouteOverridesDevApi(), react(), tailwindcss(), viteSingleFile()],
+  worker: {
+    format: "es",
+  },
+  plugins: [
+    lineRouteOverridesDevApi(),
+    react(),
+    tailwindcss(),
+    ...(singleFileBuild ? [viteSingleFile()] : []),
+  ],
+  build: singleFileBuild
+    ? undefined
+    : {
+        // Nie pakuj dużych archiwów (walbrzych-gtfs.zip) jako base64 w JS.
+        assetsInlineLimit: 4096,
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (id.includes("line-route-overrides.json")) {
+                return "data-route-overrides";
+              }
+              if (!id.includes("node_modules")) return undefined;
+              if (/[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+                return "vendor-react";
+              }
+              if (id.includes("leaflet")) return "vendor-leaflet";
+              if (id.includes("fflate")) return "vendor-zip";
+              if (id.includes("lucide-react")) return "vendor-icons";
+              if (id.includes("luxon")) return "vendor-luxon";
+              return undefined;
+            },
+          },
+        },
+      },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

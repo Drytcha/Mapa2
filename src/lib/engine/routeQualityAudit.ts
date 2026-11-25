@@ -576,7 +576,8 @@ export async function runRouteQualityAudit(
   thresholds: RouteAuditThresholds = DEFAULT_ROUTE_AUDIT_THRESHOLDS,
 ): Promise<RouteQualityAuditReport> {
   const entries = await getLineCatalogue();
-  return auditLineCatalogue(entries, thresholds);
+  const { auditLineCatalogueOffThread } = await import("./gtfsComputeClient");
+  return auditLineCatalogueOffThread(entries, thresholds);
 }
 
 /**

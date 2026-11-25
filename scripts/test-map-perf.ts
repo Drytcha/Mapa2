@@ -1,11 +1,27 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { computeVirtualWindow } from "../src/components/VirtualList";
+import {
+  packShapesForTransfer,
+  unpackShapesFromTransfer,
+} from "../src/lib/engine/gtfsShapesParser";
+import {
+  applyFleetSnapshotToStore,
+  fleetSignature,
+  getLiveVehiclesSnapshot,
+} from "../src/lib/liveFleetStore";
+import type { LiveBusVehicle } from "../src/lib/types";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const css = read("src/app/globals.css");
 const mapView = read("src/components/MapView.tsx");
 const app = read("src/components/MapPlanerApp.tsx");
+const fleetStore = read("src/lib/liveFleetStore.ts");
+const gtfsStore = read("src/lib/engine/gtfsStore.ts");
+const scheduleDiffUi = read("src/components/ScheduleDiffDialog.tsx");
+const brigadesPanel = read("src/components/BrigadesPanel.tsx");
+const viteConfig = read("vite.config.ts");
 const location = read("src/lib/useUserLocation.ts");
 const hud = read("src/components/PerfHud.tsx");
 
@@ -68,8 +84,51 @@ assert.match(mapView, /updateWhenZooming: false/, "kafle aktualizują się po zo
 assert.match(location, /movedMeters >= 1\.5/, "próg ruchu GPS");
 assert.match(location, /lastEmittedRef/, "ostatnia wysłana pozycja jest pamiętana");
 
-// 8. Flota: identyczny odcisk danych nie powoduje re-rendera.
-assert.match(app, /fleetSignature/, "aktualizacje floty są deduplikowane");
+// 8. Flota: identyczny odcisk danych nie powoduje re-rendera, a stan floty żyje
+//    w zewnętrznym store (useSyncExternalStore), nie w useState w MapPlanerApp.
+assert.match(fleetStore, /fleetSignature/, "aktualizacje floty są deduplikowane w liveFleetStore");
+assert.match(fleetStore, /useSyncExternalStore/, "flota używa useSyncExternalStore");
+assert.doesNotMatch(
+  app,
+  /useState<LiveBusVehicle\[\]>/,
+  "MapPlanerApp nie trzyma liveVehicles w lokalnym useState (brak re-renderów na każdy tick GPS)",
+);
+
+// Test jednostkowy stabilizacji referencji w liveFleetStore
+{
+  const mkBus = (id: string, lat: number): LiveBusVehicle => ({
+    vehicleId: id,
+    routeName: "8",
+    lat,
+    lon: 16.28,
+    delaySeconds: 0,
+    speedKmh: 30,
+    bearing: 90,
+    kursowka: "8/01",
+    operatorKey: "SKA",
+    operatorName: "ŚKA",
+    operatorSource: "gtfs",
+    upcomingStops: [],
+  });
+  const b1 = mkBus("101", 50.77);
+  const b2 = mkBus("102", 50.78);
+  applyFleetSnapshotToStore({
+    vehicles: [b1, b2],
+    traffic: null,
+    fetchedAt: Date.now(),
+  });
+  const snap1 = getLiveVehiclesSnapshot();
+  assert.equal(fleetSignature(snap1), fleetSignature([b1, b2]));
+  // Przesuwa się tylko wóz 102 — wóz 101 musi zachować tę samą referencję obiektu!
+  applyFleetSnapshotToStore({
+    vehicles: [mkBus("101", 50.77), mkBus("102", 50.79)],
+    traffic: null,
+    fetchedAt: Date.now(),
+  });
+  const snap2 = getLiveVehiclesSnapshot();
+  assert.equal(snap2[0], snap1[0], "niezmieniony autobus zachowuje referencję obiektu");
+  assert.notEqual(snap2[1], snap1[1], "przesunięty autobus otrzymuje nowy obiekt");
+}
 
 // 9. Licznik FPS jest opt-in i nic nie robi bez ?perf=1.
 assert.match(hud, /get\("perf"\) === "1"/, "HUD włącza się parametrem ?perf=1");
@@ -93,4 +152,35 @@ assert.ok(
 );
 assert.match(mapView, /createPane\("routeDone"\)/, "przejechany odcinek ma własną warstwę nad trasą");
 
-console.log("map performance guards passed (canvas dark tiles, no blur, labels, GPS, fleet)");
+// 11. Build domyślnie dzieli kod na chunki (singlefile tylko na żądanie SINGLEFILE=1).
+assert.match(viteConfig, /singleFileBuild/, "vite.config.ts rozdziela domyślny build chunked od singlefile");
+assert.match(viteConfig, /manualChunks/, "vite.config.ts definiuje manualChunks dla vendorów i danych");
+
+// 12. Ciężkie operacje GTFS (unzip, shapes.txt, scheduleDiff) korzystają z Web Workera.
+assert.match(gtfsStore, /unzipGtfsWithoutShapesOffThread/, "gtfsStore rozpakowuje ZIP w Web Workerze");
+assert.match(gtfsStore, /parseGtfsShapesOffThread/, "gtfsStore parsuje shapes.txt w Web Workerze");
+assert.match(scheduleDiffUi, /compareScheduleTripsOffThread/, "ScheduleDiffDialog porównuje rozkłady w Web Workerze");
+{
+  const original = new Map<string, [number, number][]>([
+    ["s1", [[50.77, 16.28], [50.78, 16.29]]],
+    ["s2", [[50.80, 16.30]]],
+  ]);
+  const unpacked = unpackShapesFromTransfer(packShapesForTransfer(original));
+  assert.deepEqual(unpacked.get("s1"), original.get("s1"), "zero-copy pack/unpack shapes zachowuje współrzędne");
+  assert.deepEqual(unpacked.get("s2"), original.get("s2"));
+}
+
+// 13. Długie listy kursów i brygad są wirtualizowane (VirtualList).
+assert.match(scheduleDiffUi, /<VirtualList/, "ScheduleDiffDialog wirtualizuje listę kursów");
+assert.match(brigadesPanel, /<VirtualList/, "BrigadesPanel wirtualizuje listę brygad");
+{
+  const win = computeVirtualWindow(2500, 1200, 600, 60, 5);
+  assert.equal(win.startIndex, 15, "start okna uwzględnia overscan=5");
+  assert.equal(win.endIndex, 35, "koniec okna obejmuje widoczne wiersze + overscan");
+  assert.equal(win.paddingTop, 15 * 60);
+  assert.equal(win.paddingBottom, (2500 - 35) * 60);
+}
+
+console.log(
+  "map performance guards passed (chunked build, Web Worker GTFS, external fleet store, VirtualList, canvas dark tiles, no blur, labels, GPS)",
+);

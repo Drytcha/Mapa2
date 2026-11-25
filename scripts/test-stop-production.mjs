@@ -40,16 +40,40 @@ try {
     env: { ...process.env, GITHUB_PAGES: "true", NEXT_PUBLIC_STATIC_EXPORT: "1", NEXT_PUBLIC_BASE_PATH: "/Mapa2" },
     maxBuffer: 10_000_000,
   });
-  const html = await readFile(path.join(scratch, "dist/index.html"));
-  assert.match(html.toString("utf8"), /data:application\/(?:zip|octet-stream);base64,/);
-  server = createServer((request, response) => {
-    if (request.url === "/Mapa2/" || request.url === "/Mapa2/index.html") {
+  const distDir = path.join(scratch, "dist");
+  const html = await readFile(path.join(distDir, "index.html"));
+  const mimeTypes = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".zip": "application/zip",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+  };
+  server = createServer(async (request, response) => {
+    const pathname = new URL(request.url || "/", "http://127.0.0.1").pathname;
+    if (pathname === "/Mapa2/" || pathname === "/Mapa2/index.html") {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end(html);
-    } else {
-      response.writeHead(404);
-      response.end();
+      return;
     }
+    if (pathname.startsWith("/Mapa2/")) {
+      const rel = pathname.slice("/Mapa2/".length);
+      const target = path.resolve(distDir, rel);
+      if (target.startsWith(distDir + path.sep)) {
+        try {
+          const body = await readFile(target);
+          const ext = path.extname(target).toLowerCase();
+          response.writeHead(200, { "Content-Type": mimeTypes[ext] || "application/octet-stream" });
+          response.end(body);
+          return;
+        } catch {
+          // fall through to 404
+        }
+      }
+    }
+    response.writeHead(404);
+    response.end();
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "0.0.0.0", resolve); });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -63,7 +87,7 @@ try {
     const context = await browser.newContext({ viewport, permissions: ["geolocation"], geolocation: { latitude: 51.1079, longitude: 17.0385 } });
     const page = await context.newPage();
     const errors = [];
-    const archiveRequests = [];
+    const rawDataZipRequests = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.addInitScript(() => {
       const NativeDate = Date;
@@ -76,7 +100,12 @@ try {
       window.__embeddedGtfsFetched = false;
       window.fetch = (input, init) => {
         const url = String(input instanceof Request ? input.url : input);
-        if (/^data:application\/(?:zip|octet-stream);base64,/i.test(url)) window.__embeddedGtfsFetched = true;
+        if (
+          /^data:application\/(?:zip|octet-stream);base64,/i.test(url) ||
+          /\/assets\/walbrzych-gtfs[^/?#]*\.zip/i.test(url)
+        ) {
+          window.__embeddedGtfsFetched = true;
+        }
         return nativeFetch(input, init);
       };
     });
@@ -84,7 +113,7 @@ try {
       const url = new URL(route.request().url());
       if (url.protocol === "data:") return route.continue();
       if (url.origin === baseUrl) {
-        if (url.pathname.endsWith("walbrzych-gtfs.zip")) archiveRequests.push(url.href);
+        if (url.pathname.endsWith("/data/walbrzych-gtfs.zip")) rawDataZipRequests.push(url.href);
         return route.continue();
       }
       if (url.hostname === "tile.openstreetmap.org") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: tile });
@@ -110,8 +139,8 @@ try {
     await departure.click();
     await page.getByRole("region", { name: "Szczegóły odjazdu" }).waitFor();
     assert.equal(await page.getByText(/Rozkład awaryjny: zbiorkom.live/).count(), 0);
-    assert.equal(await page.evaluate(() => window.__embeddedGtfsFetched), true, "the ZIP should be read from the built HTML itself");
-    assert.deepEqual(archiveRequests, [], "no separate ZIP should be needed on GitHub Pages");
+    assert.equal(await page.evaluate(() => window.__embeddedGtfsFetched), true, "the ZIP should be served from the built bundle asset");
+    assert.deepEqual(rawDataZipRequests, [], "no external /data/walbrzych-gtfs.zip should be needed on GitHub Pages");
     assert.deepEqual(errors, []);
     console.log(`${viewport.width}px: embedded synthetic GTFS marker and timetable work under /Mapa2/`);
     await context.close();
