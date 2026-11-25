@@ -19,6 +19,7 @@ export default function LiveBusRunPanel({
   loading,
   delaySeconds,
   isRealtime,
+  compact = false,
   emptyLabel = "Brak danych o przystankach tego kursu.",
 }: {
   stops: Parameters<typeof buildTripProgress>[0];
@@ -26,6 +27,8 @@ export default function LiveBusRunPanel({
   loading: boolean;
   delaySeconds: number;
   isRealtime: boolean;
+  /** Mniejsza lista w karcie podróżnego, aby zostawić więcej miejsca na mapę. */
+  compact?: boolean;
   emptyLabel?: string;
 }) {
   const rows = buildTripProgress(stops, { delaySeconds, isRealtime });
@@ -57,7 +60,10 @@ export default function LiveBusRunPanel({
         </p>
       )}
       <ul
-        className="scroll-area mt-1.5 max-h-[260px] overflow-y-auto pr-1"
+        className={cn(
+          "scroll-area mt-1.5 overflow-y-auto pr-1",
+          compact ? "max-h-[130px]" : "max-h-[260px]",
+        )}
         aria-label="Przebieg kursu — wszystkie przystanki"
       >
         {rows.map((row) => (
