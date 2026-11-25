@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import TopBar from "../src/components/TopBar";
 import CoursePreviewCard from "../src/components/CoursePreviewCard";
@@ -29,4 +30,17 @@ const course = {
 const card = renderToStaticMarkup(<CoursePreviewCard course={course} onClose={noop} onFit={noop} onBack={noop} onSelectStop={noop} />);
 assert.doesNotMatch(card, /12,5 km/);
 assert.match(card, /przystanków/);
+assert.match(card, /course-preview-sidebar-root/);
+assert.match(card, /course-drawer-collapse/);
+
+// Symulacja telefonu (< 768px): prawy sidebar startuje zwinięty z uchwytem po prawej krawędzi,
+// dzięki czemu cała mapa trasy jest od razu widoczna.
+(globalThis as unknown as { window?: unknown }).window = {
+  matchMedia: () => ({ matches: false }),
+};
+const mobileCard = renderToStaticMarkup(<CoursePreviewCard course={course} onClose={noop} onFit={noop} onBack={noop} onSelectStop={noop} />);
+assert.match(mobileCard, /course-drawer-toggle/, "na telefonie renderuje uchwyt do wysuwania prawego sidebara");
+assert.match(mobileCard, /data-open="false"/, "na telefonie prawy sidebar startuje zwinięty, nie zasłaniając mapy");
+delete (globalThis as unknown as { window?: unknown }).window;
+
 console.log("user view tests passed");
