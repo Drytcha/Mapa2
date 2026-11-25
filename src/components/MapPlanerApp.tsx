@@ -18,6 +18,8 @@ import type {
   MapHandle,
 } from "./MapView";
 import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
+import type { CustomGtfsResumeTarget } from "./CustomGtfsBuilderDialog";
+import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
 import TopBar from "./TopBar";
 import UserLocationHud from "./UserLocationHud";
 import StopFinder from "./StopFinder";
@@ -57,6 +59,7 @@ const LinesDialog = lazy(() => import("./LinesDialog"));
 const ScheduleDiffDialog = lazy(() => import("./ScheduleDiffDialog"));
 const RouteAuditDialog = lazy(() => import("./RouteAuditDialog"));
 const CustomGtfsBuilderDialog = lazy(() => import("./CustomGtfsBuilderDialog"));
+const CustomGtfsMapDrawToolbar = lazy(() => import("./CustomGtfsMapDrawToolbar"));
 const PdfExportDialog = lazy(() => import("./PdfExportDialog"));
 const TripPlannerPanel = lazy(() => import("./TripPlannerPanel"));
 const CoursePreviewCard = lazy(() => import("./CoursePreviewCard"));
@@ -455,6 +458,13 @@ function MapPlanerWorkspace() {
   const [scheduleDiffOpen, setScheduleDiffOpen] = useState(false);
   const [routeAuditOpen, setRouteAuditOpen] = useState(false);
   const [customGtfsBuilderOpen, setCustomGtfsBuilderOpen] = useState(false);
+  const [customGtfsMapSession, setCustomGtfsMapSession] =
+    useState<CustomGtfsMapSession | null>(null);
+  const [customGtfsMapState, setCustomGtfsMapState] =
+    useState<LineRouteEditorMapState | null>(null);
+  const customGtfsMapHandlersRef = useRef<LineEditorMapHandlers | null>(null);
+  const [customGtfsResumeTarget, setCustomGtfsResumeTarget] =
+    useState<CustomGtfsResumeTarget | null>(null);
   const [kursowkaDeepLink, setKursowkaDeepLink] = useState<{
     id?: string | null;
     code?: string | null;
@@ -2479,40 +2489,143 @@ function MapPlanerWorkspace() {
               onMarkerDrag={handleMarkerDrag}
               onMapClick={handleMapClick}
               onMapContextMenu={handleMapContextMenu}
-              lineRouteEditor={isPlanner && lineEditorOpen ? lineEditorMapState : null}
+              lineRouteEditor={
+                isPlanner && customGtfsMapSession
+                  ? customGtfsMapState
+                  : isPlanner && lineEditorOpen
+                    ? lineEditorMapState
+                    : null
+              }
               onLineEditorVertexMove={(index, lat, lon) =>
-                lineEditorHandlersRef.current?.onVertexMove(index, lat, lon)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onVertexMove(index, lat, lon)
               }
               onLineEditorVertexInsert={(lat, lon) =>
-                lineEditorHandlersRef.current?.onVertexInsert(lat, lon)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onVertexInsert(lat, lon)
               }
               onLineEditorVertexRemove={(index) =>
-                lineEditorHandlersRef.current?.onVertexRemove(index)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onVertexRemove(index)
               }
               onLineEditorMapClick={(lat, lon) =>
-                lineEditorHandlersRef.current?.onMapClick(lat, lon)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onMapClick(lat, lon)
               }
               onLineEditorSegmentPickVertex={(index) =>
-                lineEditorHandlersRef.current?.onSegmentPickVertex(index)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onSegmentPickVertex(index)
               }
               onLineEditorBoxSelect={(indices, additive) =>
-                lineEditorHandlersRef.current?.onBoxSelect(indices, additive)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onBoxSelect(indices, additive)
               }
               onLineEditorToggleSelectVertex={(index) =>
-                lineEditorHandlersRef.current?.onToggleSelectVertex(index)
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onToggleSelectVertex(index)
               }
               onLineEditorDeleteSelected={() =>
-                lineEditorHandlersRef.current?.onDeleteSelected()
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onDeleteSelected()
               }
               onLineEditorClearSelection={() =>
-                lineEditorHandlersRef.current?.onClearSelection()
+                (customGtfsMapSession
+                  ? customGtfsMapHandlersRef.current
+                  : lineEditorHandlersRef.current
+                )?.onClearSelection()
               }
             />
           </Suspense>
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
             <div className="pointer-events-none absolute left-3 top-5 flex max-h-[calc(100%-100px)] max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
-              {addMode ? (
+              {isPlanner && customGtfsMapSession ? (
+                <Suspense fallback={null}>
+                  <CustomGtfsMapDrawToolbar
+                    session={customGtfsMapSession}
+                    onMapStateChange={setCustomGtfsMapState}
+                    handlersRef={customGtfsMapHandlersRef}
+                    onApplyRoute={(lineId, variantId, drawnPath) => {
+                      void (async () => {
+                        const [{ loadCustomGtfsLines, upsertCustomGtfsLine }, { polylineLengthMeters }] =
+                          await Promise.all([
+                            import("@/lib/engine/customGtfsLines"),
+                            import("@/lib/core/spatial"),
+                          ]);
+                        const all = await loadCustomGtfsLines();
+                        const target = all.find((l) => l.id === lineId);
+                        if (target) {
+                          const updated = {
+                            ...target,
+                            updatedAt: new Date().toISOString(),
+                            variants: target.variants.map((v) =>
+                              v.id === variantId ? { ...v, path: drawnPath } : v,
+                            ),
+                          };
+                          await upsertCustomGtfsLine(updated);
+                        }
+                        const km = (polylineLengthMeters(drawnPath) / 1000).toFixed(2);
+                        setCustomGtfsMapSession(null);
+                        setCustomGtfsMapState(null);
+                        setCustomGtfsResumeTarget({
+                          lineId,
+                          variantId,
+                          tab: "stops",
+                          nonce: Date.now(),
+                        });
+                        setCustomGtfsBuilderOpen(true);
+                        showToast(
+                          `Zapisano trasę na mapie (${drawnPath.length} pkt · ${km} km).`,
+                        );
+                      })();
+                    }}
+                    onPickStopCoords={(lineId, variantId, lat, lon) => {
+                      setCustomGtfsMapSession(null);
+                      setCustomGtfsMapState(null);
+                      setCustomGtfsResumeTarget({
+                        lineId,
+                        variantId,
+                        tab: "stops",
+                        pickedCoords: { lat, lon },
+                        nonce: Date.now(),
+                      });
+                      setCustomGtfsBuilderOpen(true);
+                      showToast(
+                        `Wskazano lokalizację przystanku: ${lat.toFixed(5)}, ${lon.toFixed(5)}.`,
+                      );
+                    }}
+                    onCancel={() => {
+                      const prev = customGtfsMapSession;
+                      setCustomGtfsMapSession(null);
+                      setCustomGtfsMapState(null);
+                      setCustomGtfsResumeTarget({
+                        lineId: prev.lineId,
+                        variantId: prev.variantId,
+                        tab: "stops",
+                        nonce: Date.now(),
+                      });
+                      setCustomGtfsBuilderOpen(true);
+                    }}
+                    onToast={showToast}
+                  />
+                </Suspense>
+              ) : addMode ? (
                 <MapDrawingBanner
                   count={assignedCount}
                   onDone={() => setAddMode(false)}
@@ -3024,6 +3137,18 @@ function MapPlanerWorkspace() {
               setKursowkaOverlay(overlay);
               showToast(`Wyświetlono na mapie: ${overlay.title}.`);
             }}
+            onStartMapSession={(session) => {
+              setLineEditorOpen(false);
+              setCustomGtfsBuilderOpen(false);
+              setCustomGtfsMapSession(session);
+              setMobileExpanded(false);
+              showToast(
+                session.kind === "pick-stop"
+                  ? `Kliknij na mapie miejsce nowego przystanku dla linii ${session.lineShort}.`
+                  : `Klikaj na mapie punkty trasy linii ${session.lineShort} (Po drogach OSRM włączone).`,
+              );
+            }}
+            resumeTarget={customGtfsResumeTarget}
             onToast={showToast}
           />
         </Suspense>
