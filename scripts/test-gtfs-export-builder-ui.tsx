@@ -153,6 +153,23 @@ assert.ok(
   builderSrc.includes('data-testid="custom-gtfs-pick-stop-map"'),
   "CustomGtfsBuilderDialog should expose map stop picking button",
 );
+assert.ok(
+  builderSrc.includes('data-testid="custom-gtfs-estimate-times"'),
+  "CustomGtfsBuilderDialog should expose automatic travel-time estimator button",
+);
+assert.ok(
+  builderSrc.includes('data-testid="custom-gtfs-live-preview"'),
+  "CustomGtfsBuilderDialog should expose live GTFS preview loader button",
+);
+
+const appSrc = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/MapPlanerApp.tsx"),
+  "utf8",
+);
+assert.ok(
+  appSrc.includes('data-testid="gtfs-preview-banner"'),
+  "MapPlanerApp should render live GTFS preview banner with restore button",
+);
 
 console.log(
   "✓ GTFS export & custom line builder UI SSR tests passed (CustomGtfsBuilderDialog + CustomGtfsMapDrawToolbar + LineRouteEditorPanel export bar)",

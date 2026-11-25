@@ -11,14 +11,23 @@ import {
   buildMergedGtfsZip,
   createEmptyCustomLine,
   createOppositeVariant,
+  estimateVariantStopTimes,
   exportCustomGtfsLinesJson,
   formatGtfsClockHms,
   generateHeadwayTrips,
   inspectGtfsSourceZip,
   parseCustomGtfsLinesJson,
   parseDepartureTimesText,
+  validateCustomGtfsLines,
   type CustomGtfsLine,
 } from "../src/lib/engine/customGtfsLines";
+import {
+  ensureGtfsSeeded,
+  getGtfsLines,
+  getGtfsPreviewStatus,
+  loadCustomGtfsArchivePreview,
+  restoreOriginalGtfsArchive,
+} from "../src/lib/engine/gtfsStore";
 import type { LineRouteOverride } from "../src/lib/engine/lineRouteOverrides";
 
 // ── 1. Eksport GIS / GTFS (shapes.txt, GeoJSON, GPX) ───────────────────────
@@ -337,6 +346,90 @@ for (const required of [
 }
 assert.ok(strFromU8(standaloneFiles["routes.txt"]).includes("S5"));
 
+// ── 5. Automatyczne szacowanie czasów przejazdu między przystankami ────────
+
+const estWithPath = estimateVariantStopTimes(lineS5.variants[0], {
+  averageSpeedKmh: 22,
+  stopPenaltySeconds: 25,
+});
+assert.equal(estWithPath.usedRoutePath, true, "Should use drawn route polyline distance");
+assert.equal(estWithPath.stops[0].offsetMinutes, 0);
+assert.ok(
+  estWithPath.stops[1].offsetMinutes > 0 &&
+    estWithPath.stops[2].offsetMinutes > estWithPath.stops[1].offsetMinutes,
+  "Estimated stop offsets should increase monotonically",
+);
+assert.ok(estWithPath.totalMeters > 5000, "Total route distance > 5 km");
+assert.ok(estWithPath.totalMinutes >= 12 && estWithPath.totalMinutes <= 25);
+
+const estSlower = estimateVariantStopTimes(lineS5.variants[0], {
+  averageSpeedKmh: 16,
+  stopPenaltySeconds: 30,
+});
+assert.ok(
+  estSlower.totalMinutes > estWithPath.totalMinutes,
+  "Lower commercial speed should produce longer travel time",
+);
+
+const estNoPath = estimateVariantStopTimes(
+  { stops: lineS5.variants[0].stops, path: [] },
+  { averageSpeedKmh: 22, stopPenaltySeconds: 25 },
+);
+assert.equal(estNoPath.usedRoutePath, false, "Should fall back to stop coordinates when path empty");
+assert.ok(estNoPath.totalMeters > 5000, "Detour-adjusted straight distance > 5 km");
+assert.equal(estNoPath.stops[0].offsetMinutes, 0);
+assert.ok(estNoPath.stops[2].offsetMinutes > estNoPath.stops[1].offsetMinutes);
+
+// ── 6. Walidacja własnych linii przed eksportem / podglądem ────────────────
+
+const validCheck = validateCustomGtfsLines([lineS5], ["388_RS"]);
+assert.equal(validCheck.errors.length, 0, "Valid line S5 should have zero errors");
+
+const brokenLine = createEmptyCustomLine("X1", "388_RS");
+brokenLine.variants[0].stops = [
+  { ...lineS5.variants[0].stops[0], offsetMinutes: 10 },
+  { ...lineS5.variants[0].stops[1], offsetMinutes: 5 }, // błąd: czas się cofa!
+];
+const invalidCheck = validateCustomGtfsLines([brokenLine], ["388_RS"]);
+assert.ok(invalidCheck.errors.length >= 1, "Backwards stop times must trigger error");
+assert.ok(invalidCheck.warnings.length >= 1, "Zero trips & missing path should warn");
+
+// ── 7. Podgląd połączonego GTFS na żywo w silniku aplikacji + powrót ───────
+
+// Najpierw załadujmy bazowy źródłowy ZIP jako symulację bazy, a potem połączony z linią S5
+const origLoaded = await loadCustomGtfsArchivePreview(sourceZipBytes, "Oryginał testowy");
+assert.equal(origLoaded.routeCount, 1);
+
+const previewLoaded = await loadCustomGtfsArchivePreview(
+  merged.zipBytes,
+  "Połączony GTFS (linie S5)",
+);
+assert.equal(previewLoaded.routeCount, 2, "Preview must contain original route 2 + custom S5");
+assert.equal(previewLoaded.stopCount, 3, "Preview must contain 2 source stops + custom Park Nauki");
+assert.equal(previewLoaded.tripCount, 3, "Preview must contain 1 source trip + 2 custom trips");
+
+const status = getGtfsPreviewStatus();
+assert.equal(status.active, true);
+assert.equal(status.label, "Połączony GTFS (linie S5)");
+
+const liveLines = await getGtfsLines();
+const shortNames = liveLines.routes.map((r) => r.shortName);
+assert.ok(shortNames.includes("2"), "Original line 2 present in live preview");
+assert.ok(shortNames.includes("S5"), "New custom line S5 present in live preview");
+
+const liveStore = await ensureGtfsSeeded();
+assert.ok(
+  liveStore.base.stops.some((s) => s.name === "Park Nauki"),
+  "Custom GPS stop Park Nauki present in live store",
+);
+assert.ok(
+  liveStore.base.shapesById.has("SHP_2_0"),
+  "Shapes eagerly loaded in live preview",
+);
+
+await restoreOriginalGtfsArchive().catch(() => {});
+assert.equal(getGtfsPreviewStatus().active, false, "Preview status cleared after restore");
+
 console.log(
-  "✓ GTFS export & custom line builder tests passed (shapes.txt, GeoJSON, GPX, selective ZIP merge, idempotency, override baking, standalone ZIP)",
+  "✓ GTFS export, auto-time estimator, validator & live preview sandbox tests passed!",
 );

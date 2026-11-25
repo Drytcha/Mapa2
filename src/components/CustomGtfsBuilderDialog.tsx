@@ -11,11 +11,14 @@ import {
   Download,
   Eye,
   FileArchive,
+  Gauge,
   Layers,
   Loader2,
   MapPin,
   Pencil,
+  Play,
   Plus,
+  RotateCcw,
   Route as RouteIcon,
   Save,
   Search,
@@ -34,6 +37,7 @@ import {
   createOppositeVariant,
   customLinesToExportEntries,
   deleteCustomGtfsLine,
+  estimateVariantStopTimes,
   exportCustomGtfsLinesJson,
   formatGtfsClockHm,
   generateHeadwayTrips,
@@ -44,6 +48,7 @@ import {
   parseDepartureTimesText,
   saveAllCustomGtfsLines,
   upsertCustomGtfsLine,
+  validateCustomGtfsLines,
   type CustomGtfsLine,
   type CustomGtfsServiceDef,
   type CustomGtfsStop,
@@ -54,7 +59,11 @@ import {
 } from "@/lib/engine/customGtfsLines";
 import {
   ensureGtfsSeeded,
+  getGtfsPreviewStatus,
   getLoadedGtfsArchiveBytes,
+  loadCustomGtfsArchivePreview,
+  restoreOriginalGtfsArchive,
+  type GtfsPreviewStatus,
   type GtfsStopRecord,
 } from "@/lib/engine/gtfsStore";
 import { listLineRouteOverrides } from "@/lib/engine/lineRouteOverrides";
@@ -157,6 +166,8 @@ export default function CustomGtfsBuilderDialog({
   const [newStopLon, setNewStopLon] = useState("16.2843");
   const [newStopCode, setNewStopCode] = useState("");
   const [routingBusy, setRoutingBusy] = useState<string | null>(null);
+  const [estimateSpeedKmh, setEstimateSpeedKmh] = useState(22);
+  const [estimateStopPenaltySec, setEstimateStopPenaltySec] = useState(25);
 
   // Schedule entry state
   const [activeServiceId, setActiveServiceId] = useState("");
@@ -179,6 +190,10 @@ export default function CustomGtfsBuilderDialog({
   // Export result & loading
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<GtfsPreviewStatus>(() =>
+    getGtfsPreviewStatus(),
+  );
   const [lastExportSummary, setLastExportSummary] =
     useState<GtfsExportSummary | null>(null);
   const [lastExportWarnings, setLastExportWarnings] = useState<string[]>([]);
@@ -219,6 +234,7 @@ export default function CustomGtfsBuilderDialog({
         }
       }
       setOverridesCount(listLineRouteOverrides().length);
+      setPreviewStatus(getGtfsPreviewStatus());
     } finally {
       setLoading(false);
     }
@@ -769,12 +785,34 @@ export default function CustomGtfsBuilderDialog({
     [lines, selectedForExportIds],
   );
 
-  // Merge & export complete GTFS .zip
-  const handleExportMergedGtfs = () => {
-    setExportError("");
-    setLastExportSummary(null);
-    setLastExportWarnings([]);
+  const validationReport = useMemo(
+    () =>
+      validateCustomGtfsLines(
+        selectedLinesForExport,
+        activeSourceMeta?.serviceIds ?? [],
+      ),
+    [selectedLinesForExport, activeSourceMeta],
+  );
 
+  const handleEstimateStopTimes = () => {
+    if (!activeVariant || activeVariant.stops.length < 2) {
+      onToast?.("Dodaj co najmniej 2 przystanki, aby wyliczyć czasy przejazdu.");
+      return;
+    }
+    const result = estimateVariantStopTimes(activeVariant, {
+      averageSpeedKmh: estimateSpeedKmh,
+      stopPenaltySeconds: estimateStopPenaltySec,
+    });
+    updateActiveVariant((v) => ({ ...v, stops: result.stops }));
+    const basis = result.usedRoutePath
+      ? "wg narysowanej trasy"
+      : "wg odległości przystanków";
+    onToast?.(
+      `Wyliczono czasy dla ${result.stops.length} przystanków: łącznie ${result.totalMinutes} min · ${formatKm(result.totalMeters)} (śr. ${result.effectiveCommercialSpeedKmh.toLocaleString("pl-PL")} km/h, ${basis}).`,
+    );
+  };
+
+  const buildCurrentMergedZip = () => {
     const sourceBytes =
       sourceMode === "uploaded-zip"
         ? uploadedZipBytes
@@ -783,27 +821,36 @@ export default function CustomGtfsBuilderDialog({
           : null;
 
     if (sourceMode === "uploaded-zip" && !sourceBytes) {
-      setExportError("Wgraj najpierw plik źródłowy GTFS (.zip) albo wybierz aktualną paczkę z aplikacji.");
-      return;
+      throw new Error(
+        "Wgraj najpierw plik źródłowy GTFS (.zip) albo wybierz aktualną paczkę z aplikacji.",
+      );
     }
 
     const overridesToBake =
       includeRouteOverrides && sourceBytes ? listLineRouteOverrides() : [];
 
     if (!selectedLinesForExport.length && overridesToBake.length === 0) {
-      setExportError(
+      throw new Error(
         "Zaznacz co najmniej jedną dodatkową linię do dołączenia (albo włącz dołączenie poprawek z Edytora linii).",
       );
-      return;
     }
+
+    return buildMergedGtfsZip({
+      sourceZipBytes: sourceBytes,
+      selectedLines: selectedLinesForExport,
+      routeOverrides: overridesToBake,
+    });
+  };
+
+  // Merge & export complete GTFS .zip
+  const handleExportMergedGtfs = () => {
+    setExportError("");
+    setLastExportSummary(null);
+    setLastExportWarnings([]);
 
     setExporting(true);
     try {
-      const result = buildMergedGtfsZip({
-        sourceZipBytes: sourceBytes,
-        selectedLines: selectedLinesForExport,
-        routeOverrides: overridesToBake,
-      });
+      const result = buildCurrentMergedZip();
       const tag = selectedLinesForExport.length
         ? selectedLinesForExport
             .map((l) => sanitizeGtfsId(l.shortName))
@@ -826,6 +873,55 @@ export default function CustomGtfsBuilderDialog({
       );
     } finally {
       setExporting(false);
+    }
+  };
+
+  // Połącz i załaduj gotową paczkę GTFS bezpośrednio do podglądu na żywo w aplikacji
+  const handleLoadMergedGtfsPreview = async () => {
+    setExportError("");
+    setLastExportSummary(null);
+    setLastExportWarnings([]);
+
+    setPreviewLoading(true);
+    try {
+      const result = buildCurrentMergedZip();
+      const linesTag = result.summary.includedLines.length
+        ? `linie ${result.summary.includedLines.join(", ")}`
+        : "poprawki tras";
+      const previewLabel =
+        sourceMode === "standalone"
+          ? `Tylko własne (${linesTag})`
+          : `Połączony GTFS (${linesTag})`;
+      const loaded = await loadCustomGtfsArchivePreview(
+        result.zipBytes,
+        previewLabel,
+      );
+      setLastExportSummary(result.summary);
+      setLastExportWarnings(result.warnings);
+      setPreviewStatus(getGtfsPreviewStatus());
+      onToast?.(
+        `Załadowano podgląd GTFS w aplikacji (${loaded.routeCount} linii, ${loaded.stopCount} przystanków, ${loaded.tripCount} kursów)! Sprawdź mapę, przystanki, Linie, Kursówki i Planer podróży.`,
+      );
+      onClose();
+    } catch (err) {
+      setExportError(
+        err instanceof Error
+          ? err.message
+          : "Nie udało się załadować podglądu paczki GTFS.",
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleRestoreOriginalGtfs = async () => {
+    setPreviewLoading(true);
+    try {
+      await restoreOriginalGtfsArchive();
+      setPreviewStatus(getGtfsPreviewStatus());
+      onToast?.("Przywrócono oryginalny rozkład GTFS Wałbrzych.");
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -1678,6 +1774,80 @@ export default function CustomGtfsBuilderDialog({
                           </div>
                         </div>
 
+                        {activeVariant.stops.length >= 2 && (
+                          <div
+                            data-testid="custom-gtfs-time-estimator"
+                            className="mt-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-brand/25 bg-brand/6 px-2.5 py-2"
+                          >
+                            <div className="flex items-center gap-1 text-[8.5px] font-extrabold text-brand-ink">
+                              <Gauge className="h-3.5 w-3.5 shrink-0" />
+                              Auto-czasy przejazdu:
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {[
+                                { speed: 18, label: "18 (centrum)" },
+                                { speed: 22, label: "22 (miejska)" },
+                                { speed: 28, label: "28 (podmiejska)" },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.speed}
+                                  type="button"
+                                  onClick={() => setEstimateSpeedKmh(preset.speed)}
+                                  className={cn(
+                                    "rounded px-1.5 py-0.5 text-[7.5px] font-extrabold transition-colors",
+                                    estimateSpeedKmh === preset.speed
+                                      ? "bg-brand text-on-brand"
+                                      : "border border-line bg-surface text-ink-soft hover:text-ink",
+                                  )}
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                            </div>
+                            <label className="flex items-center gap-1 text-[8px] font-bold text-ink-soft">
+                              <span>km/h</span>
+                              <input
+                                type="number"
+                                min={5}
+                                max={80}
+                                aria-label="Średnia prędkość komunikacyjna km/h"
+                                value={estimateSpeedKmh}
+                                onChange={(e) =>
+                                  setEstimateSpeedKmh(
+                                    Math.max(5, Math.min(80, Number(e.target.value) || 22)),
+                                  )
+                                }
+                                className="metric h-6 w-12 rounded border border-line bg-surface px-1 text-center text-[8.5px] font-extrabold text-ink outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[8px] font-bold text-ink-soft">
+                              <span>postój (s)</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={180}
+                                aria-label="Czas obsługi przystanku w sekundach"
+                                value={estimateStopPenaltySec}
+                                onChange={(e) =>
+                                  setEstimateStopPenaltySec(
+                                    Math.max(0, Math.min(180, Number(e.target.value) || 0)),
+                                  )
+                                }
+                                className="metric h-6 w-12 rounded border border-line bg-surface px-1 text-center text-[8.5px] font-extrabold text-ink outline-none"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              data-testid="custom-gtfs-estimate-times"
+                              onClick={handleEstimateStopTimes}
+                              className="ml-auto flex h-7 items-center gap-1 rounded-md bg-brand px-2.5 text-[8.5px] font-extrabold text-on-brand hover:opacity-90"
+                            >
+                              <Clock className="h-3 w-3" />
+                              Wylicz czasy (auto)
+                            </button>
+                          </div>
+                        )}
+
                         {activeVariant.stops.length === 0 ? (
                           <div className="mt-2.5 rounded-lg border border-dashed border-line bg-raised/30 p-6 text-center text-[9.5px] text-mute">
                             Klikaj przystanki po lewej (albo dodaj nowy GPS), aby
@@ -1692,7 +1862,14 @@ export default function CustomGtfsBuilderDialog({
                               <span className="text-center">Postój</span>
                               <span className="text-right">Kolejność</span>
                             </div>
-                            {activeVariant.stops.map((stop, idx) => (
+                            {activeVariant.stops.map((stop, idx) => {
+                              const prevOffset =
+                                idx > 0
+                                  ? activeVariant.stops[idx - 1].offsetMinutes
+                                  : 0;
+                              const legMin =
+                                idx > 0 ? stop.offsetMinutes - prevOffset : null;
+                              return (
                               <div
                                 key={stop.id}
                                 className="grid grid-cols-[24px_1fr_76px_64px_72px] items-center gap-1.5 rounded-lg border border-line bg-raised/50 px-1.5 py-1 text-[9px]"
@@ -1708,6 +1885,11 @@ export default function CustomGtfsBuilderDialog({
                                     {stop.isCustomStop && (
                                       <span className="shrink-0 rounded bg-brand/15 px-1 text-[7px] font-extrabold text-brand-ink">
                                         Nowy
+                                      </span>
+                                    )}
+                                    {legMin !== null && (
+                                      <span className="metric shrink-0 rounded bg-surface px-1 text-[7px] font-bold text-mute">
+                                        {legMin >= 0 ? `+${legMin}m` : `${legMin}m!`}
                                       </span>
                                     )}
                                   </div>
@@ -1774,7 +1956,8 @@ export default function CustomGtfsBuilderDialog({
                                   </button>
                                 </div>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </section>
@@ -2395,8 +2578,71 @@ export default function CustomGtfsBuilderDialog({
                     )}
                   </section>
 
-                  {/* Krok C: Przyciski eksportu i wynik */}
+                  {/* Krok C: Walidacja, podgląd na żywo w aplikacji i eksport */}
                   <section className="rounded-xl border border-line bg-surface p-3">
+                    {previewStatus.active && (
+                      <div
+                        data-testid="custom-gtfs-preview-active-card"
+                        className="mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[9px]"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-extrabold text-amber-900 dark:text-amber-200">
+                            Aktywny podgląd testowego GTFS: {previewStatus.label}
+                          </div>
+                          <div className="metric text-[8px] text-amber-800/80 dark:text-amber-300/80">
+                            {previewStatus.routeCount ?? 0} linii ·{" "}
+                            {previewStatus.stopCount ?? 0} przystanków ·{" "}
+                            {previewStatus.tripCount ?? 0} kursów (działa tylko w
+                            pamięci — oryginał nie został nadpisany)
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid="custom-gtfs-restore-original"
+                          disabled={previewLoading}
+                          onClick={() => void handleRestoreOriginalGtfs()}
+                          className="flex h-7 items-center gap-1 rounded-md border border-amber-600/40 bg-surface px-2.5 text-[8.5px] font-extrabold text-amber-900 hover:bg-raised dark:text-amber-200"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Wróć do oryginalnego GTFS
+                        </button>
+                      </div>
+                    )}
+
+                    {(validationReport.errors.length > 0 ||
+                      validationReport.warnings.length > 0) && (
+                      <div
+                        data-testid="custom-gtfs-validation-box"
+                        className="mb-2.5 space-y-1.5"
+                      >
+                        {validationReport.errors.length > 0 && (
+                          <div className="rounded-lg border border-warning/35 bg-warning-soft px-3 py-2 text-[8.5px] text-warning">
+                            <div className="font-extrabold">
+                              Wykryto błędy przed eksportem (
+                              {validationReport.errors.length}):
+                            </div>
+                            <ul className="mt-0.5 list-disc pl-4">
+                              {validationReport.errors.map((err, i) => (
+                                <li key={i}>{err}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {validationReport.warnings.length > 0 && (
+                          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[8.5px] text-amber-900 dark:text-amber-200">
+                            <div className="font-extrabold">
+                              Uwagi ({validationReport.warnings.length}):
+                            </div>
+                            <ul className="mt-0.5 list-disc pl-4">
+                              {validationReport.warnings.map((w, i) => (
+                                <li key={i}>{w}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {exportError && (
                       <div
                         role="alert"
@@ -2412,7 +2658,7 @@ export default function CustomGtfsBuilderDialog({
                         data-testid="custom-gtfs-export-result"
                       >
                         <div className="font-extrabold">
-                          Paczka GTFS (.zip) wygenerowana i pobrana (
+                          Paczka GTFS (.zip) gotowa (
                           {formatBytes(lastExportSummary.zipSizeBytes)} ·{" "}
                           {lastExportSummary.totalFilesInZip} plików)!
                         </div>
@@ -2438,13 +2684,28 @@ export default function CustomGtfsBuilderDialog({
                       </div>
                     )}
 
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        data-testid="custom-gtfs-live-preview"
+                        disabled={previewLoading || exporting}
+                        onClick={() => void handleLoadMergedGtfsPreview()}
+                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-600/40 bg-emerald-600 px-3.5 text-[10.5px] font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        {previewLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                        Załaduj połączony GTFS do podglądu w aplikacji
+                      </button>
+
                       <button
                         type="button"
                         data-testid="custom-gtfs-export-zip"
-                        disabled={exporting}
+                        disabled={exporting || previewLoading}
                         onClick={handleExportMergedGtfs}
-                        className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-brand px-4 text-[11px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:opacity-50"
+                        className="flex h-10 items-center justify-center gap-2 rounded-lg bg-brand px-3.5 text-[10.5px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:opacity-50"
                       >
                         {exporting ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -2453,12 +2714,19 @@ export default function CustomGtfsBuilderDialog({
                         )}
                         Połącz ze źródłem i eksportuj GTFS (.zip)
                       </button>
+                    </div>
 
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-line/70 pt-2">
+                      <span className="text-[8px] text-mute">
+                        Podgląd ładuje połączony GTFS na żywo na mapę, do
+                        przystanków, Linii, Kursówek i Planera podróży (1 klik
+                        przywraca oryginał).
+                      </span>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={() => handleExportSelectedGeometry("shapes")}
-                          className="flex h-10 items-center gap-1 rounded-lg border border-line bg-raised px-2.5 text-[9px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                          className="flex h-7 items-center gap-1 rounded-md border border-line bg-raised px-2 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
                         >
                           <Download className="h-3 w-3" />
                           shapes.txt
@@ -2466,7 +2734,7 @@ export default function CustomGtfsBuilderDialog({
                         <button
                           type="button"
                           onClick={() => handleExportSelectedGeometry("geojson")}
-                          className="flex h-10 items-center gap-1 rounded-lg border border-line bg-raised px-2.5 text-[9px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                          className="flex h-7 items-center gap-1 rounded-md border border-line bg-raised px-2 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
                         >
                           <Download className="h-3 w-3" />
                           GeoJSON
@@ -2474,7 +2742,7 @@ export default function CustomGtfsBuilderDialog({
                         <button
                           type="button"
                           onClick={() => handleExportSelectedGeometry("gpx")}
-                          className="flex h-10 items-center gap-1 rounded-lg border border-line bg-raised px-2.5 text-[9px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
+                          className="flex h-7 items-center gap-1 rounded-md border border-line bg-raised px-2 text-[8.5px] font-bold text-ink-soft hover:border-brand/50 hover:text-brand-ink"
                         >
                           <Download className="h-3 w-3" />
                           GPX

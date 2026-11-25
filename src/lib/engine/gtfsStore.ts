@@ -1553,11 +1553,123 @@ export async function ensureGtfsSeeded(): Promise<GtfsMemoryStore> {
   return seedLock;
 }
 
-/** Zwraca surowe bajty aktualnie załadowanego archiwum źródłowego GTFS (.zip). */
+export interface GtfsPreviewStatus {
+  active: boolean;
+  label: string | null;
+  loadedAt?: number;
+  routeCount?: number;
+  stopCount?: number;
+  tripCount?: number;
+  kursowkiCount?: number;
+}
+
+interface OriginalGtfsBackup {
+  archive: { bytes: Uint8Array; source: string; identity: string } | null;
+  store: GtfsMemoryStore | null;
+  bakedIdentity: string | null;
+}
+
+let originalGtfsBackup: OriginalGtfsBackup | null = null;
+let activePreviewStatus: GtfsPreviewStatus = { active: false, label: null };
+
+export function getGtfsPreviewStatus(): GtfsPreviewStatus {
+  return { ...activePreviewStatus };
+}
+
+/**
+ * Ładuje dowolne archiwum GTFS (.zip) bezpośrednio w pamięci do podglądu na żywo
+ * w całej aplikacji (mapa, przystanki, Linie, Kursówki, Planer podróży) BEZ
+ * nadpisywania oryginalnego cache'u IndexedDB — w każdej chwili można wrócić do oryginału.
+ */
+export async function loadCustomGtfsArchivePreview(
+  bytes: Uint8Array,
+  label = "Podgląd własnego GTFS",
+): Promise<{
+  version: string;
+  routeCount: number;
+  stopCount: number;
+  tripCount: number;
+  kursowkiCount: number;
+}> {
+  // Przed pierwszym podglądem zabezpieczamy aktualną, oryginalną paczkę GTFS w pamięci.
+  if (!originalGtfsBackup) {
+    try {
+      await ensureGtfsSeeded();
+    } catch {
+      /* Samodzielny podgląd działa również bez bazowej paczki. */
+    }
+    originalGtfsBackup = {
+      archive: currentArchive,
+      store: memoryStore,
+      bakedIdentity,
+    };
+  }
+
+  const identity = archiveIdentity(bytes, `preview:${label}:${Date.now()}`);
+  const base = await parseArchiveBytes(bytes, label);
+  await parseShapesInto(base, bytes);
+  const observations = await loadLiveObservations();
+  registerMissingLineSevenDuty(base, observations);
+  const store = buildDutyIndex(base, observations);
+
+  currentArchive = { bytes, source: label, identity };
+  memoryStore = store;
+  bakedIdentity = identity;
+  observationsDirty = false;
+  tripMatchCache.clear();
+  activePreviewStatus = {
+    active: true,
+    label,
+    loadedAt: Date.now(),
+    routeCount: store.feed.routesCount,
+    stopCount: store.feed.stopsCount,
+    tripCount: store.feed.tripsCount,
+    kursowkiCount: store.feed.kursowkiCount,
+  };
+  emitRuntimeEvent("gtfs:updated", { version: store.feed.version });
+
+  return {
+    version: store.feed.version,
+    routeCount: store.feed.routesCount,
+    stopCount: store.feed.stopsCount,
+    tripCount: store.feed.tripsCount,
+    kursowkiCount: store.feed.kursowkiCount,
+  };
+}
+
+/** Przywraca oryginalny rozkład GTFS Wałbrzych po zakończeniu testowania podglądu. */
+export async function restoreOriginalGtfsArchive(): Promise<boolean> {
+  const backup = originalGtfsBackup;
+  originalGtfsBackup = null;
+  activePreviewStatus = { active: false, label: null };
+  tripMatchCache.clear();
+
+  if (backup?.store) {
+    currentArchive = backup.archive;
+    memoryStore = backup.store;
+    bakedIdentity = backup.bakedIdentity;
+    observationsDirty = false;
+    emitRuntimeEvent("gtfs:updated", { version: backup.store.feed.version });
+    return true;
+  }
+
+  memoryStore = null;
+  bakedIdentity = null;
+  await loadAndBuild(false);
+  return true;
+}
+
+/** Zwraca surowe bajty bazowego archiwum źródłowego GTFS (.zip) aplikacji. */
 export async function getLoadedGtfsArchiveBytes(): Promise<{
   bytes: Uint8Array;
   source: string;
 } | null> {
+  if (originalGtfsBackup?.archive?.bytes?.length) {
+    return {
+      bytes: originalGtfsBackup.archive.bytes,
+      source: originalGtfsBackup.archive.source,
+    };
+  }
   await ensureGtfsSeeded();
   if (!currentArchive?.bytes?.length) return null;
   return { bytes: currentArchive.bytes, source: currentArchive.source };
@@ -1568,6 +1680,8 @@ export async function syncWalbrzychGtfs(
 ): Promise<SyncResult> {
   if (activeSync) return activeSync;
   activeSync = (async () => {
+    originalGtfsBackup = null;
+    activePreviewStatus = { active: false, label: null };
     const store = await loadAndBuild(Boolean(options.forceLive));
     return {
       source: store.feed.source,
