@@ -35,7 +35,7 @@ export default function StopFinder({
         aria-expanded={open}
         aria-controls="stop-finder"
         onClick={() => setOpen((current) => !current)}
-        className="pointer-events-auto flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 py-2 text-[10px] font-extrabold text-ink shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-colors hover:bg-raised"
+        className="pointer-events-auto flex min-h-8 items-center gap-1.5 rounded-xl border border-line bg-surface px-2.5 py-1.5 text-[9.5px] font-extrabold text-ink shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-colors hover:bg-raised sm:min-h-9 sm:px-3 sm:py-2 sm:text-[10px]"
       >
         <Bus className="h-3.5 w-3.5 text-brand-ink" strokeWidth={2.4} />
         Przystanki
@@ -45,7 +45,7 @@ export default function StopFinder({
           id="stop-finder"
           role="dialog"
           aria-label="Znajdź przystanek"
-          className="pointer-events-auto absolute bottom-[calc(100%+8px)] left-0 flex max-h-[min(440px,60dvh)] w-[340px] max-w-[calc(100vw-72px)] flex-col rounded-xl border border-line bg-surface p-2 shadow-[0_16px_44px_rgba(0,0,0,0.28)]"
+          className="pointer-events-auto absolute bottom-[calc(100%+8px)] left-0 flex max-h-[min(440px,60dvh)] w-[min(340px,calc(100vw-24px))] flex-col rounded-xl border border-line bg-surface p-2 shadow-[0_16px_44px_rgba(0,0,0,0.28)]"
           onKeyDown={(event) => {
             if (event.key === "Escape") setOpen(false);
           }}

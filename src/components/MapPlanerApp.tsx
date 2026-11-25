@@ -471,6 +471,7 @@ function MapPlanerWorkspace() {
   }>({});
   const [kursowkaReturnDateId, setKursowkaReturnDateId] = useState<string | null>(null);
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
+  const [courseDrawerOpen, setCourseDrawerOpen] = useState(false);
   /** Czy widoczna trasa pochodzi z kliknięcia autobusu (wtedy znika z kartą). */
   const [busOverlay, setBusOverlay] = useState(false);
   const [routeProgressStatus, setRouteProgressStatus] = useState<LiveRouteProgressStatus | null>(null);
@@ -2301,6 +2302,23 @@ function MapPlanerWorkspace() {
     onOpenCustomGtfsBuilder: () => setCustomGtfsBuilderOpen(true),
   };
 
+  // Na telefonie ukrywamy dolne guziki („Przystanki” / „Planer podróży”), gdy otwarta
+  // jest karta przystanku, autobusu, planer podróży, rozsuwany panel kursu lub rysowanie
+  // na mapie — dzięki temu nic nigdy na siebie nie nachodzi.
+  const hideMobileBottomActions = Boolean(
+    selectedStop ||
+      selectedLiveBus ||
+      tripOpen ||
+      courseDrawerOpen ||
+      customGtfsMapSession ||
+      addMode ||
+      pickTarget ||
+      (isPlanner && (mobileExpanded || lineEditorOpen)),
+  );
+  const lowerBottomActionsZ = Boolean(
+    hideMobileBottomActions || (kursowkaOverlay?.course && !busOverlay),
+  );
+
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <PerfHud />
@@ -2667,22 +2685,6 @@ function MapPlanerWorkspace() {
                       onToggleTurnarounds={() => toggleVisibility("turnarounds")}
                       onSelectBus={handleSelectBus}
                     />
-                    {!isPlanner && kursowkaOverlay?.course && !busOverlay && (
-                      <Suspense fallback={null}>
-                        <CoursePreviewCard
-                          key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
-                          course={kursowkaOverlay.course}
-                          onClose={() => setKursowkaOverlay(null)}
-                          onFit={() => mapRef.current?.fitOverlay()}
-                          onBack={() => {
-                            setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
-                            setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
-                            setKursowkiOpen(true);
-                          }}
-                          onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
-                        />
-                      </Suspense>
-                    )}
                     {!isPlanner && tripOpen && (
                       <Suspense fallback={null}>
                         <TripPlannerPanel
@@ -2812,7 +2814,15 @@ function MapPlanerWorkspace() {
               )}
             </div>
 
-            <div className="pointer-events-none absolute bottom-3 right-3 lg:bottom-auto lg:right-[52px] lg:top-3">
+            <div
+              className={`pointer-events-none absolute right-3 sm:bottom-3 lg:bottom-auto lg:right-[52px] lg:top-3 ${
+                hideMobileBottomActions
+                  ? "bottom-3"
+                  : isPlanner
+                    ? "bottom-[114px]"
+                    : "bottom-[56px]"
+              }`}
+            >
               <UserLocationHud
                 status={locationStatus}
                 location={userLocation}
@@ -2957,7 +2967,14 @@ function MapPlanerWorkspace() {
             </div>
           </div>
 
-          <div className={`pointer-events-none absolute bottom-10 left-3 flex items-end gap-1.5 ${selectedStop ? "z-[490]" : "z-[600]"}`}>
+          <div
+            data-testid="map-bottom-actions"
+            className={`pointer-events-none absolute left-3 items-end gap-1.5 pb-[env(safe-area-inset-bottom)] sm:bottom-10 sm:flex sm:pb-0 ${
+              hideMobileBottomActions ? "hidden" : "flex"
+            } ${isPlanner ? "bottom-[68px]" : "bottom-3"} ${
+              lowerBottomActionsZ ? "z-[490]" : "z-[540]"
+            }`}
+          >
             <StopFinder stops={busStops} isPlanner={isPlanner} onSelect={selectStopFromFinder} />
             {!isPlanner && (
               <button
@@ -2968,7 +2985,7 @@ function MapPlanerWorkspace() {
                 }}
                 aria-expanded={tripOpen}
                 title="Planer podróży — możesz też kliknąć prawym przyciskiem na mapie, aby ustawić start lub cel"
-                className={`pointer-events-auto flex min-h-9 items-center gap-1.5 rounded-xl border px-3 py-2 text-[9px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-all hover:opacity-90 active:scale-[0.98] ${
+                className={`pointer-events-auto flex min-h-8 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[9.5px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-all hover:opacity-90 active:scale-[0.98] sm:min-h-9 sm:px-3 sm:py-2 sm:text-[9px] ${
                   tripOpen
                     ? "border-line-strong bg-surface text-ink"
                     : "border-brand-deep/20 bg-brand text-on-brand"
@@ -2989,6 +3006,27 @@ function MapPlanerWorkspace() {
               </button>
             )}
           </div>
+
+          {!isPlanner && kursowkaOverlay?.course && !busOverlay && (
+            <Suspense fallback={null}>
+              <CoursePreviewCard
+                key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
+                course={kursowkaOverlay.course}
+                onClose={() => {
+                  setCourseDrawerOpen(false);
+                  setKursowkaOverlay(null);
+                }}
+                onFit={() => mapRef.current?.fitOverlay()}
+                onBack={() => {
+                  setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
+                  setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
+                  setKursowkiOpen(true);
+                }}
+                onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
+                onDrawerOpenChange={setCourseDrawerOpen}
+              />
+            </Suspense>
+          )}
 
           {contextMenu && (
             <div className="pointer-events-none absolute inset-0 z-[1200]">
