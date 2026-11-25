@@ -123,7 +123,14 @@ import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText 
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
 import { liveBusTap } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
-import { ensureGtfsSeeded, getCoursePreview, getVehicleRouteOverlay } from "@/lib/engine/gtfsStore";
+import {
+  ensureGtfsSeeded,
+  getCoursePreview,
+  getGtfsPreviewStatus,
+  getVehicleRouteOverlay,
+  restoreOriginalGtfsArchive,
+  type GtfsPreviewStatus,
+} from "@/lib/engine/gtfsStore";
 import { getOverridesSummary, initLineRouteOverrides } from "@/lib/engine/lineRouteOverrides";
 import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
 import { detectTurnaroundSpotsAlongRoute, type TurnaroundSpot } from "@/lib/engine/turnarounds";
@@ -465,6 +472,9 @@ function MapPlanerWorkspace() {
   const customGtfsMapHandlersRef = useRef<LineEditorMapHandlers | null>(null);
   const [customGtfsResumeTarget, setCustomGtfsResumeTarget] =
     useState<CustomGtfsResumeTarget | null>(null);
+  const [gtfsPreviewStatus, setGtfsPreviewStatus] = useState<GtfsPreviewStatus>(() =>
+    getGtfsPreviewStatus(),
+  );
   const [kursowkaDeepLink, setKursowkaDeepLink] = useState<{
     id?: string | null;
     code?: string | null;
@@ -1095,6 +1105,8 @@ function MapPlanerWorkspace() {
     const offGtfs = onRuntimeEvent("gtfs:updated", () => {
       // The event has already invalidated the caches. Do not block initial stops
       // on the optional Overpass request for shelter information.
+      setGtfsPreviewStatus(getGtfsPreviewStatus());
+      setTripNonce((value) => value + 1);
       void loadBusStops(WALBRZYCH_BOUNDS, "Wałbrzych i okolice");
     });
     return () => {
@@ -2573,6 +2585,41 @@ function MapPlanerWorkspace() {
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
             <div className="pointer-events-none absolute left-3 top-5 flex max-h-[calc(100%-100px)] max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+              {gtfsPreviewStatus.active && (
+                <div
+                  role="status"
+                  data-testid="gtfs-preview-banner"
+                  className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border border-emerald-500/45 bg-surface/96 px-2.5 py-1.5 text-[9px] font-bold text-ink shadow-[0_10px_28px_rgba(13,42,28,0.22)]"
+                >
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                  <span className="max-w-[240px] truncate font-extrabold text-emerald-700 dark:text-emerald-300">
+                    Podgląd GTFS: {gtfsPreviewStatus.label}
+                  </span>
+                  {isPlanner && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomGtfsBuilderOpen(true)}
+                      className="rounded-md border border-line bg-raised px-2 py-0.5 text-[8px] font-extrabold text-ink hover:border-brand/50"
+                    >
+                      Kreator
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="gtfs-preview-restore"
+                    onClick={() => {
+                      void restoreOriginalGtfsArchive().then(() => {
+                        setKursowkaOverlay(null);
+                        setSelectedStop(null);
+                        showToast("Przywrócono oryginalny rozkład GTFS Wałbrzych.");
+                      });
+                    }}
+                    className="rounded-md border border-amber-500/45 bg-amber-500/15 px-2 py-0.5 text-[8px] font-extrabold text-amber-800 hover:bg-amber-500/25 dark:text-amber-200"
+                  >
+                    Wróć do oryginału
+                  </button>
+                </div>
+              )}
               {isPlanner && customGtfsMapSession ? (
                 <Suspense fallback={null}>
                   <CustomGtfsMapDrawToolbar

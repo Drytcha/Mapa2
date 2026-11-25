@@ -11,7 +11,11 @@
  */
 
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { cumulativeRouteMeters } from "../core/spatial";
+import {
+  cumulativeRouteMeters,
+  distanceCoords,
+  pointToSegmentMeters,
+} from "../core/spatial";
 import {
   sanitizePath,
   sliceCorridorForTrip,
@@ -1237,3 +1241,273 @@ export function buildMergedGtfsZip(options: GtfsMergeOptions): GtfsMergeResult {
     warnings,
   };
 }
+
+/* ── Automatyczny generator czasów przejazdu między przystankami ────────── */
+
+export interface EstimateStopTimesOptions {
+  /** Prędkość jazdy między przystankami w km/h (np. 18 centrum, 22 miejska, 28 podmiejska). */
+  averageSpeedKmh?: number;
+  /** Dodatkowy czas obsługi przystanku (hamowanie, drzwi, wymiana pasażerów, ruszenie) w sekundach. */
+  stopPenaltySeconds?: number;
+  /** Współczynnik wydłużenia trasy po ulicach względem linii prostej, gdy brak narysowanej polilinii. */
+  straightLineDetourFactor?: number;
+}
+
+export interface EstimatedStopTimesResult {
+  stops: CustomGtfsStop[];
+  segmentMeters: number[];
+  totalMeters: number;
+  totalMinutes: number;
+  usedRoutePath: boolean;
+  effectiveCommercialSpeedKmh: number;
+}
+
+/**
+ * Rzutuje punkt na polilinię od zadanego indeksu odcinka w przód (monotonicznie),
+ * zwracając dystans wzdłuż ścieżki oraz odległość boczną od trasy.
+ */
+function projectStopAlongPathMonotonic(
+  path: readonly LatLng[],
+  cumMeters: readonly number[],
+  stop: { lat: number; lon: number },
+  minSegmentIndex: number,
+): { segIndex: number; alongMeters: number; offsetMeters: number } | null {
+  if (path.length < 2) return null;
+  let bestSeg = -1;
+  let bestAlong = 0;
+  let bestDist = Infinity;
+
+  const start = Math.max(0, Math.min(minSegmentIndex, path.length - 2));
+  for (let i = start; i < path.length - 1; i += 1) {
+    const a = path[i];
+    const b = path[i + 1];
+    const res = pointToSegmentMeters(stop.lat, stop.lon, a[0], a[1], b[0], b[1]);
+    if (res.distance < bestDist) {
+      bestDist = res.distance;
+      bestSeg = i;
+      const segLen = Math.max(0, (cumMeters[i + 1] ?? 0) - (cumMeters[i] ?? 0));
+      bestAlong = (cumMeters[i] ?? 0) + res.t * segLen;
+    }
+  }
+  if (bestSeg < 0) return null;
+  return { segIndex: bestSeg, alongMeters: bestAlong, offsetMeters: bestDist };
+}
+
+/**
+ * Automatycznie szacuje czasy przejazdu (`offsetMinutes`) między kolejnymi przystankami
+ * wariantu na podstawie długości odcinków wzdłuż narysowanej / OSRM trasy (albo odległości
+ * drogowej szacowanej z współrzędnych przystanków) oraz zadanej prędkości i czasu obsługi przystanku.
+ */
+export function estimateVariantStopTimes(
+  variant: Pick<CustomGtfsVariant, "stops" | "path">,
+  options: EstimateStopTimesOptions = {},
+): EstimatedStopTimesResult {
+  const stops = variant.stops;
+  const speedKmh = Math.max(5, Math.min(90, options.averageSpeedKmh ?? 22));
+  const stopPenaltySec = Math.max(0, Math.min(300, options.stopPenaltySeconds ?? 25));
+  const detourFactor = Math.max(1, Math.min(2, options.straightLineDetourFactor ?? 1.22));
+
+  if (stops.length === 0) {
+    return {
+      stops: [],
+      segmentMeters: [],
+      totalMeters: 0,
+      totalMinutes: 0,
+      usedRoutePath: false,
+      effectiveCommercialSpeedKmh: 0,
+    };
+  }
+  if (stops.length === 1) {
+    return {
+      stops: [{ ...stops[0], offsetMinutes: 0 }],
+      segmentMeters: [],
+      totalMeters: 0,
+      totalMinutes: 0,
+      usedRoutePath: false,
+      effectiveCommercialSpeedKmh: 0,
+    };
+  }
+
+  const cleanPath = sanitizePath(variant.path);
+  const hasPath = cleanPath.length >= 2;
+  const cumPath = hasPath ? cumulativeRouteMeters(cleanPath) : [];
+
+  // Rzutujemy przystanki wzdłuż trasy (jeśli trasa istnieje i przystanki leżą blisko niej <= 450 m).
+  const projections: Array<number | null> = [];
+  let searchFromSeg = 0;
+  let projectedCount = 0;
+  if (hasPath) {
+    for (const stop of stops) {
+      const proj = projectStopAlongPathMonotonic(
+        cleanPath,
+        cumPath,
+        stop,
+        searchFromSeg,
+      );
+      if (proj && proj.offsetMeters <= 450) {
+        projections.push(proj.alongMeters);
+        searchFromSeg = proj.segIndex;
+        projectedCount += 1;
+      } else {
+        projections.push(null);
+      }
+    }
+  }
+
+  const speedMps = (speedKmh * 1000) / 3600;
+  const segmentMeters: number[] = [];
+  let usedRoutePath = false;
+  let totalMeters = 0;
+  let cumulativeSec = 0;
+
+  const updated: CustomGtfsStop[] = [{ ...stops[0], offsetMinutes: 0 }];
+
+  for (let i = 1; i < stops.length; i += 1) {
+    const prev = stops[i - 1];
+    const curr = stops[i];
+
+    const straightMeters = distanceCoords(prev.lat, prev.lon, curr.lat, curr.lon);
+    let segMeters = straightMeters * detourFactor;
+
+    const pPrev = projections[i - 1];
+    const pCurr = projections[i];
+    if (
+      pPrev !== null &&
+      pPrev !== undefined &&
+      pCurr !== null &&
+      pCurr !== undefined &&
+      pCurr > pPrev + 5
+    ) {
+      segMeters = pCurr - pPrev;
+      usedRoutePath = true;
+    }
+
+    segmentMeters.push(Math.round(segMeters));
+    totalMeters += segMeters;
+
+    const prevDwellSec = Math.max(0, prev.dwellMinutes ?? 0) * 60;
+    const legSec = segMeters / speedMps + stopPenaltySec + prevDwellSec;
+    cumulativeSec += legSec;
+
+    const prevOffset = updated[i - 1].offsetMinutes;
+    let nextOffset = Math.round(cumulativeSec / 60);
+    // Dwa wyraźnie oddalone przystanki (> 180 m) nie powinny mieć dokładnie tej samej minuty,
+    // jeśli łączny czas odcinka przekroczył już 30 s od poprzedniego zaokrąglenia.
+    if (nextOffset <= prevOffset && segMeters >= 180 && cumulativeSec >= prevOffset * 60 + 30) {
+      nextOffset = prevOffset + 1;
+    }
+    if (nextOffset < prevOffset) nextOffset = prevOffset;
+
+    updated.push({
+      ...curr,
+      offsetMinutes: nextOffset,
+    });
+  }
+
+  const totalMinutes = updated[updated.length - 1]?.offsetMinutes ?? 0;
+  const effectiveCommercialSpeedKmh =
+    totalMinutes > 0 && totalMeters > 0
+      ? Number(((totalMeters / 1000) / (totalMinutes / 60)).toFixed(1))
+      : 0;
+
+  return {
+    stops: updated,
+    segmentMeters,
+    totalMeters: Math.round(totalMeters),
+    totalMinutes,
+    usedRoutePath: usedRoutePath && projectedCount >= 2,
+    effectiveCommercialSpeedKmh,
+  };
+}
+
+/* ── Walidacja własnych linii przed eksportem lub podglądem GTFS ────────── */
+
+export interface CustomGtfsValidationReport {
+  errors: string[];
+  warnings: string[];
+}
+
+export function validateCustomGtfsLines(
+  lines: readonly CustomGtfsLine[],
+  knownServiceIds: readonly string[] = [],
+): CustomGtfsValidationReport {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const knownServices = new Set(knownServiceIds);
+
+  for (const line of lines) {
+    const label = line.shortName.trim() || "(bez numeru)";
+    if (!line.shortName.trim()) {
+      errors.push(`Linia „${line.longName || line.id}” nie ma wpisanego numeru (route_short_name).`);
+    }
+    if (!line.variants.length) {
+      errors.push(`Linia ${label}: dodaj co najmniej jeden wariant kierunku.`);
+      continue;
+    }
+
+    const lineCustomServices = new Set(
+      (line.customServices ?? []).map((s) => s.serviceId),
+    );
+
+    for (const variant of line.variants) {
+      if (variant.stops.length < 2) {
+        errors.push(
+          `Linia ${label} (${variant.name}): wariant musi mieć co najmniej 2 przystanki.`,
+        );
+        continue;
+      }
+
+      if (variant.path.length < 2) {
+        warnings.push(
+          `Linia ${label} (${variant.name}): brak narysowanej trasy — eksport użyje linii prostej między przystankami.`,
+        );
+      }
+
+      for (let i = 1; i < variant.stops.length; i += 1) {
+        const prev = variant.stops[i - 1];
+        const curr = variant.stops[i];
+        if (curr.offsetMinutes < prev.offsetMinutes) {
+          errors.push(
+            `Linia ${label} (${variant.name}): czas na przystanku „${curr.name}” (${curr.offsetMinutes} min) jest wcześniejszy niż na „${prev.name}” (${prev.offsetMinutes} min).`,
+          );
+          break;
+        }
+        const deltaMin = curr.offsetMinutes - prev.offsetMinutes;
+        if (deltaMin > 0) {
+          const distKm = distanceCoords(prev.lat, prev.lon, curr.lat, curr.lon) / 1000;
+          const speedKmh = distKm / (deltaMin / 60);
+          if (speedKmh > 85) {
+            warnings.push(
+              `Linia ${label} (${variant.name}): nierealistyczna prędkość ~${Math.round(speedKmh)} km/h między „${prev.name}” a „${curr.name}” — użyj „Wylicz czasy (auto)”.`,
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    if (line.trips.length === 0) {
+      warnings.push(
+        `Linia ${label}: brak zaplanowanych odjazdów (w zakładce „3. Rozkład i czasy” dodaj kursy, inaczej linia nie pojawi się w tablicach przystankowych).`,
+      );
+    } else if (knownServices.size > 0) {
+      const missingServices = new Set<string>();
+      for (const trip of line.trips) {
+        if (
+          !knownServices.has(trip.serviceId) &&
+          !lineCustomServices.has(trip.serviceId)
+        ) {
+          missingServices.add(trip.serviceId);
+        }
+      }
+      if (missingServices.size > 0) {
+        warnings.push(
+          `Linia ${label}: kalendarz ${[...missingServices].join(", ")} nie istnieje w źródłowym GTFS (zostanie dopisany domyślnie na wszystkie dni).`,
+        );
+      }
+    }
+  }
+
+  return { errors, warnings };
+}
+
