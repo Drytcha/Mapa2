@@ -780,6 +780,170 @@ export function pickDefaultComparison(
   };
 }
 
+export interface NsNhComparisonPair {
+  periodId: string;
+  periodLabel: string;
+  nsService: ScheduleServiceOption;
+  nhService: ScheduleServiceOption;
+}
+
+/**
+ * Zwraca wszystkie pary (Niedziela niehandlowa NS vs Niedziela handlowa NH)
+ * dostępne w archiwum GTFS — posortowane od najnowszego okresu.
+ */
+export function listNsNhPairs(
+  archive: ScheduleSourceArchive,
+): NsNhComparisonPair[] {
+  const pairs: NsNhComparisonPair[] = [];
+  for (const period of archive.periods) {
+    const nsService = archive.services.find(
+      (s) => s.periodId === period.periodId && s.dayType === "NS",
+    );
+    const nhService = archive.services.find(
+      (s) => s.periodId === period.periodId && s.dayType === "NH",
+    );
+    if (nsService && nhService) {
+      pairs.push({
+        periodId: period.periodId,
+        periodLabel: period.label,
+        nsService,
+        nhService,
+      });
+    }
+  }
+
+  // Fallback: jeśli NS i NH występują tylko bez wspólnego prefiksu okresu
+  if (!pairs.length) {
+    const nsService = archive.services.find((s) => s.dayType === "NS");
+    const nhService = archive.services.find((s) => s.dayType === "NH");
+    if (nsService && nhService) {
+      pairs.push({
+        periodId: nsService.periodId || nhService.periodId,
+        periodLabel: nsService.periodId || "GTFS",
+        nsService,
+        nhService,
+      });
+    }
+  }
+
+  return pairs.sort((a, b) => {
+    const dateDiff = b.nhService.fromDate - a.nhService.fromDate;
+    if (dateDiff !== 0) return dateDiff;
+    return b.periodId.localeCompare(a.periodId, "pl", { numeric: true });
+  });
+}
+
+/**
+ * Wybiera domyślną parę NS (bazowa A) vs NH (niedziela handlowa B).
+ * Preferuje podany okres, a następnie okres obejmujący dzisiejszą datę lub najnowszy.
+ */
+export function pickNsNhComparison(
+  archive: ScheduleSourceArchive,
+  preferredPeriodId?: string,
+  todayYyyymmdd?: number,
+): DefaultComparisonSelection | null {
+  const pairs = listNsNhPairs(archive);
+  if (!pairs.length) return null;
+
+  let chosen = preferredPeriodId
+    ? pairs.find((p) => p.periodId === preferredPeriodId)
+    : undefined;
+
+  if (!chosen && todayYyyymmdd) {
+    chosen = pairs.find((p) => {
+      const period = archive.periods.find((per) => per.periodId === p.periodId);
+      const from = period
+        ? Math.min(period.fromDate, p.nsService.fromDate, p.nhService.fromDate)
+        : Math.min(p.nsService.fromDate, p.nhService.fromDate);
+      const to = period
+        ? Math.max(period.toDate, p.nsService.toDate, p.nhService.toDate)
+        : Math.max(p.nsService.toDate, p.nhService.toDate);
+      return from <= todayYyyymmdd && to >= todayYyyymmdd;
+    });
+  }
+
+  chosen ??= pairs[0];
+
+  return {
+    serviceIdA: chosen.nsService.serviceId,
+    serviceIdB: chosen.nhService.serviceId,
+    periodIdA: chosen.nsService.periodId,
+    periodIdB: chosen.nhService.periodId,
+    dayType: "NS_NH",
+    hasMultiplePeriods: archive.periods.length >= 2,
+  };
+}
+
+export interface NsNhNewRelation {
+  routeShort: string;
+  color: string;
+  textColor: string;
+  relation: string;
+  count: number;
+}
+
+export interface NsNhSummary {
+  changedLines: LineScheduleDiff[];
+  unchangedLines: LineScheduleDiff[];
+  addedOnlyInNhLines: LineScheduleDiff[];
+  removedInNhLines: LineScheduleDiff[];
+  distinctNewRelations: NsNhNewRelation[];
+}
+
+/**
+ * Tworzy zwięzłe podsumowanie różnic między Niedzielą niehandlową (NS)
+ * a Niedzielą handlową (NH): które linie jeżdżą inaczej, które tak samo,
+ * oraz jakie dodatkowe relacje/warianty pojawiają się w NH.
+ */
+export function summarizeNsNhDifferences(diff: ScheduleDiffResult): NsNhSummary {
+  const changedLines = diff.lines
+    .filter((l) => l.status !== "unchanged")
+    .sort(
+      (a, b) =>
+        Math.abs(b.tripsDelta) - Math.abs(a.tripsDelta) ||
+        Math.abs(b.metersDelta) - Math.abs(a.metersDelta) ||
+        compareLineCodes(a.routeShort, b.routeShort),
+    );
+  const unchangedLines = diff.lines.filter((l) => l.status === "unchanged");
+  const addedOnlyInNhLines = diff.lines.filter((l) => l.status === "added");
+  const removedInNhLines = diff.lines.filter((l) => l.status === "removed");
+
+  const relMap = new Map<string, NsNhNewRelation>();
+  for (const trip of diff.trips) {
+    if (trip.kind !== "added" && !(trip.kind === "changed" && trip.routeChanged)) {
+      continue;
+    }
+    const t = trip.newTrip;
+    if (!t) continue;
+    const relation = `${t.firstStopName} → ${t.lastStopName}`;
+    const key = `${t.routeShort}|${foldStopKey(relation)}`;
+    const existing = relMap.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      relMap.set(key, {
+        routeShort: t.routeShort,
+        color: t.routeColor,
+        textColor: t.routeTextColor,
+        relation,
+        count: 1,
+      });
+    }
+  }
+
+  const distinctNewRelations = [...relMap.values()].sort(
+    (a, b) => b.count - a.count || compareLineCodes(a.routeShort, b.routeShort),
+  );
+
+  return {
+    changedLines,
+    unchangedLines,
+    addedOnlyInNhLines,
+    removedInNhLines,
+    distinctNewRelations,
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Silnik porównywania kursów, linii i wozokilometrów brygad                 */
 /* -------------------------------------------------------------------------- */

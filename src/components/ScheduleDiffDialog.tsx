@@ -13,6 +13,7 @@ import {
   Plus,
   Route as RouteIcon,
   Search,
+  ShoppingBag,
   Upload,
   X,
 } from "lucide-react";
@@ -24,11 +25,15 @@ import {
   dayTypeLabel,
   exportScheduleDiffCsv,
   formatYyyymmdd,
+  listNsNhPairs,
   loadCurrentScheduleArchive,
   parseExternalGtfsZipForDiff,
   pickDefaultComparison,
+  pickNsNhComparison,
+  summarizeNsNhDifferences,
   type BrigadeScheduleDiff,
   type EntityDiffStatus,
+  type NsNhComparisonPair,
   type ScheduleSourceArchive,
   type TripDiffItem,
   type TripDiffKind,
@@ -39,6 +44,7 @@ import { Dialog } from "./Modals";
 interface ScheduleDiffDialogProps {
   open: boolean;
   onClose: () => void;
+  initialPreset?: "default" | "ns-nh";
   onToast?: (message: string) => void;
 }
 
@@ -149,6 +155,7 @@ function tripKindBadge(kind: TripDiffKind): {
 export default function ScheduleDiffDialog({
   open,
   onClose,
+  initialPreset = "default",
   onToast,
 }: ScheduleDiffDialogProps) {
   const [archives, setArchives] = useState<ScheduleSourceArchive[]>([]);
@@ -176,40 +183,64 @@ export default function ScheduleDiffDialog({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingUploadTargetRef = useRef<"A" | "B">("A");
 
-  const loadCurrent = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const current = await loadCurrentScheduleArchive();
-      setArchives((prev) => {
-        const external = prev.filter((a) => a.id !== "current");
-        return [current, ...external];
-      });
-      const defaults = pickDefaultComparison(current);
-      if (defaults) {
-        setArchiveIdA("current");
-        setArchiveIdB("current");
-        setServiceIdA((prev) =>
-          prev && current.tripsByService.has(prev) ? prev : defaults.serviceIdA,
+  const loadCurrent = useCallback(
+    async (forcePreset?: "default" | "ns-nh") => {
+      setLoading(true);
+      setError("");
+      try {
+        const current = await loadCurrentScheduleArchive();
+        setArchives((prev) => {
+          const external = prev.filter((a) => a.id !== "current");
+          return [current, ...external];
+        });
+        const now = new Date();
+        const todayKey =
+          now.getFullYear() * 10000 +
+          (now.getMonth() + 1) * 100 +
+          now.getDate();
+        const presetMode = forcePreset ?? initialPreset;
+        const defaults =
+          presetMode === "ns-nh"
+            ? pickNsNhComparison(current, undefined, todayKey) ??
+              pickDefaultComparison(current)
+            : pickDefaultComparison(current);
+        if (defaults) {
+          setArchiveIdA("current");
+          setArchiveIdB("current");
+          if (forcePreset) {
+            setServiceIdA(defaults.serviceIdA);
+            setServiceIdB(defaults.serviceIdB);
+            setLineFilter("ALL");
+            setActiveTab("lines");
+          } else {
+            setServiceIdA((prev) =>
+              prev && current.tripsByService.has(prev)
+                ? prev
+                : defaults.serviceIdA,
+            );
+            setServiceIdB((prev) =>
+              prev && current.tripsByService.has(prev)
+                ? prev
+                : defaults.serviceIdB,
+            );
+          }
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Nie udało się wczytać danych rozkładu GTFS.",
         );
-        setServiceIdB((prev) =>
-          prev && current.tripsByService.has(prev) ? prev : defaults.serviceIdB,
-        );
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Nie udało się wczytać danych rozkładu GTFS.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [initialPreset],
+  );
 
   useEffect(() => {
     if (!open) return;
-    void loadCurrent();
+    void loadCurrent(initialPreset);
     const unsubGtfs = onRuntimeEvent("gtfs:updated", () => {
       void loadCurrent();
     });
@@ -220,7 +251,7 @@ export default function ScheduleDiffDialog({
       unsubGtfs();
       unsubRoutes();
     };
-  }, [open, loadCurrent]);
+  }, [open, initialPreset, loadCurrent]);
 
   const archiveA = useMemo(
     () => archives.find((a) => a.id === archiveIdA) ?? archives[0] ?? null,
@@ -342,6 +373,48 @@ export default function ScheduleDiffDialog({
     }
   };
 
+  const currentArchive = useMemo(
+    () => archives.find((a) => a.id === "current") ?? archives[0] ?? null,
+    [archives],
+  );
+
+  const nsNhPairs = useMemo<NsNhComparisonPair[]>(
+    () => (currentArchive ? listNsNhPairs(currentArchive) : []),
+    [currentArchive],
+  );
+
+  const handleSelectNsNhPair = (pair: NsNhComparisonPair) => {
+    if (!currentArchive) return;
+    setArchiveIdA(currentArchive.id);
+    setArchiveIdB(currentArchive.id);
+    setServiceIdA(pair.nsService.serviceId);
+    setServiceIdB(pair.nhService.serviceId);
+    setLineFilter("ALL");
+    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
+    setExpandedBrigadeKey(null);
+  };
+
+  const handleSelectPeriodDefault = () => {
+    if (!currentArchive) return;
+    const def = pickDefaultComparison(currentArchive);
+    if (!def) return;
+    setArchiveIdA(currentArchive.id);
+    setArchiveIdB(currentArchive.id);
+    setServiceIdA(def.serviceIdA);
+    setServiceIdB(def.serviceIdB);
+    setLineFilter("ALL");
+    setTripPageLimit(INITIAL_TRIP_PAGE_SIZE);
+    setExpandedBrigadeKey(null);
+  };
+
+  const isNsVsNh = Boolean(
+    (serviceOptionA &&
+      serviceOptionB &&
+      ((serviceOptionA.dayType === "NS" && serviceOptionB.dayType === "NH") ||
+        (serviceOptionA.dayType === "NH" && serviceOptionB.dayType === "NS"))) ||
+      (initialPreset === "ns-nh" && !serviceOptionA && !serviceOptionB),
+  );
+
   const diff = useMemo(() => {
     if (!archiveA || !archiveB || !serviceOptionA || !serviceOptionB) {
       return null;
@@ -358,6 +431,11 @@ export default function ScheduleDiffDialog({
         : `${archiveB.label} · ${serviceOptionB.serviceId}`;
     return compareScheduleTrips(tripsA, tripsB, labelA, labelB);
   }, [archiveA, archiveB, serviceOptionA, serviceOptionB]);
+
+  const nsNhSummary = useMemo(
+    () => (diff && isNsVsNh ? summarizeNsNhDifferences(diff) : null),
+    [diff, isNsVsNh],
+  );
 
   const sameSelection =
     archiveA &&
@@ -480,21 +558,39 @@ export default function ScheduleDiffDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      label="Porównanie wersji rozkładu GTFS"
+      label={
+        isNsVsNh
+          ? "Porównywarka rozkładów NS vs NH"
+          : "Porównanie wersji rozkładu GTFS"
+      }
       className="duty-dialog-shell h-[94dvh] max-w-[1280px]"
     >
       {/* ── Nagłówek ───────────────────────────────────────────────── */}
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3.5 py-2">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-ink">
-          <GitCompareArrows className="h-4 w-4" />
+        <span
+          className={cn(
+            "grid h-7 w-7 shrink-0 place-items-center rounded-md",
+            isNsVsNh
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : "bg-brand-soft text-brand-ink",
+          )}
+        >
+          {isNsVsNh ? (
+            <ShoppingBag className="h-4 w-4" />
+          ) : (
+            <GitCompareArrows className="h-4 w-4" />
+          )}
         </span>
         <div className="min-w-0">
           <h2 className="text-[13.5px] font-extrabold tracking-[-0.02em] text-ink">
-            Porównanie dwóch wersji rozkładu (GTFS)
+            {isNsVsNh
+              ? "Porównywarka rozkładów NS vs NH"
+              : "Porównanie dwóch wersji rozkładu (GTFS)"}
           </h2>
           <p className="hidden text-[8.5px] text-mute sm:block">
-            Różnice między okresami w paczce (np. 387 vs 388) lub dwoma plikami
-            ZIP: dodane/usunięte kursy, przesunięcia odjazdów i wozokilometry brygad.
+            {isNsVsNh
+              ? "Porównanie niedzieli niehandlowej / święta (NS) z niedzielą handlową (NH): zmienione linie, dodatkowe kursy i relacje, przesunięcia oraz wozokilometry brygad."
+              : "Różnice między okresami w paczce (np. 387 vs 388), niedzielą NS vs NH lub dwoma plikami ZIP: kursy, przesunięcia odjazdów i wozokilometry brygad."}
           </p>
         </div>
 
@@ -543,12 +639,73 @@ export default function ScheduleDiffDialog({
         >
           {/* ── Pasek wyboru okresów / wersji A vs B ───────────────── */}
           <div className="shrink-0 space-y-2 border-b border-line bg-raised/50 px-3.5 py-2.5">
+            {/* Szybkie presety NS vs NH */}
+            {nsNhPairs.length > 0 && (
+              <div
+                className="flex flex-wrap items-center gap-1.5"
+                data-testid="schedule-diff-ns-nh-presets"
+              >
+                <span className="inline-flex items-center gap-1 text-[8px] font-extrabold uppercase tracking-[0.1em] text-amber-700 dark:text-amber-300">
+                  <ShoppingBag className="h-3 w-3" />
+                  Porównywarka NS vs NH:
+                </span>
+                {nsNhPairs.map((pair) => {
+                  const active =
+                    archiveA?.id === currentArchive?.id &&
+                    archiveB?.id === currentArchive?.id &&
+                    serviceOptionA?.serviceId === pair.nsService.serviceId &&
+                    serviceOptionB?.serviceId === pair.nhService.serviceId;
+                  return (
+                    <button
+                      key={pair.periodId}
+                      type="button"
+                      data-testid={`schedule-diff-preset-ns-nh-${pair.periodId}`}
+                      onClick={() => handleSelectNsNhPair(pair)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-0.5 text-[8.5px] font-extrabold transition-colors",
+                        active
+                          ? "border-amber-600 bg-amber-600 text-white dark:border-amber-400 dark:bg-amber-400 dark:text-slate-950"
+                          : "border-amber-500/40 bg-amber-500/10 text-amber-800 hover:border-amber-500 hover:bg-amber-500/20 dark:text-amber-200",
+                      )}
+                    >
+                      NS vs NH · okres {pair.periodId} (
+                      {formatYyyymmdd(
+                        Math.min(pair.nsService.fromDate, pair.nhService.fromDate),
+                      )}
+                      –
+                      {formatYyyymmdd(
+                        Math.max(pair.nsService.toDate, pair.nhService.toDate),
+                      )}
+                      )
+                    </button>
+                  );
+                })}
+                {isNsVsNh && currentArchive && currentArchive.periods.length >= 2 && (
+                  <button
+                    type="button"
+                    data-testid="schedule-diff-preset-periods"
+                    onClick={handleSelectPeriodDefault}
+                    className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-[8.5px] font-bold text-ink-soft transition-colors hover:border-brand/50 hover:text-ink"
+                  >
+                    Porównaj okresy (np.{" "}
+                    {currentArchive.periods[currentArchive.periods.length - 2].periodId}{" "}
+                    vs{" "}
+                    {currentArchive.periods[currentArchive.periods.length - 1].periodId})
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_1fr]">
-              {/* Wersja A (stara) */}
+              {/* Wersja A (stara / NS) */}
               <div className="rounded-lg border border-line bg-surface p-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[8px] font-extrabold uppercase tracking-[0.12em] text-mute">
-                    Wersja bazowa (stara · A)
+                    {isNsVsNh && serviceOptionA?.dayType === "NS"
+                      ? "Niedziela niehandlowa / święto (NS · A)"
+                      : isNsVsNh && serviceOptionA?.dayType === "NH"
+                        ? "Niedziela handlowa (NH · A)"
+                        : "Wersja bazowa (stara · A)"}
                   </span>
                   <button
                     type="button"
@@ -621,11 +778,27 @@ export default function ScheduleDiffDialog({
                 </button>
               </div>
 
-              {/* Wersja B (nowa) */}
-              <div className="rounded-lg border border-brand/30 bg-surface p-2">
+              {/* Wersja B (nowa / NH) */}
+              <div
+                className={cn(
+                  "rounded-lg border bg-surface p-2",
+                  isNsVsNh ? "border-amber-500/40" : "border-brand/30",
+                )}
+              >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[8px] font-extrabold uppercase tracking-[0.12em] text-brand-ink">
-                    Wersja docelowa (nowa · B)
+                  <span
+                    className={cn(
+                      "text-[8px] font-extrabold uppercase tracking-[0.12em]",
+                      isNsVsNh
+                        ? "text-amber-700 dark:text-amber-300"
+                        : "text-brand-ink",
+                    )}
+                  >
+                    {isNsVsNh && serviceOptionB?.dayType === "NH"
+                      ? "Niedziela handlowa (NH · B)"
+                      : isNsVsNh && serviceOptionB?.dayType === "NS"
+                        ? "Niedziela niehandlowa / święto (NS · B)"
+                        : "Wersja docelowa (nowa · B)"}
                   </span>
                   <button
                     type="button"
@@ -734,6 +907,131 @@ export default function ScheduleDiffDialog({
 
           {diff && (
             <>
+              {/* ── Dedykowane podsumowanie różnic NS → NH ─────────── */}
+              {nsNhSummary && (
+                <div
+                  className="shrink-0 space-y-1.5 border-b border-amber-500/25 bg-amber-500/8 px-3.5 py-2"
+                  data-testid="schedule-diff-ns-nh-summary"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-[0.08em] text-amber-800 dark:text-amber-200">
+                      <ShoppingBag className="h-3 w-3" />
+                      Podsumowanie różnic{" "}
+                      {serviceOptionA?.dayType === "NS" ? "NS → NH" : "NH → NS"}
+                    </span>
+                    <span className="text-[9px] font-bold text-ink">
+                      Zmienione linie:{" "}
+                      <strong>{nsNhSummary.changedLines.length}</strong>
+                    </span>
+                    <span className="text-[9px] text-mute">
+                      · Bez zmian (identyczne):{" "}
+                      <strong>{nsNhSummary.unchangedLines.length}</strong>
+                    </span>
+                    {nsNhSummary.changedLines.length === 0 && (
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[8.5px] font-bold text-emerald-700 dark:text-emerald-300">
+                        Rozkłady NS i NH są identyczne
+                      </span>
+                    )}
+                  </div>
+
+                  {nsNhSummary.changedLines.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {nsNhSummary.changedLines.map((line) => {
+                        const selected = lineFilter === line.routeShort;
+                        return (
+                          <button
+                            key={line.routeShort}
+                            type="button"
+                            data-testid={`ns-nh-changed-line-${line.routeShort}`}
+                            onClick={() => drillIntoLine(line.routeShort, "trips")}
+                            title={`Pokaż szczegółowe różnice kursów linii ${line.routeShort}`}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[9px] font-bold transition-colors",
+                              selected
+                                ? "border-brand bg-brand-soft text-brand-ink"
+                                : "border-line bg-surface text-ink hover:border-amber-500/60",
+                            )}
+                          >
+                            <span
+                              className="inline-flex h-4 min-w-[20px] items-center justify-center rounded px-1 text-[8.5px] font-black"
+                              style={{
+                                backgroundColor: line.color,
+                                color: line.textColor,
+                              }}
+                            >
+                              {line.routeShort}
+                            </span>
+                            {line.status === "added" && (
+                              <span className="rounded bg-emerald-500/15 px-1 text-[7.5px] font-extrabold text-emerald-700 dark:text-emerald-300">
+                                tylko w {serviceOptionB?.dayType ?? "NH"}
+                              </span>
+                            )}
+                            <span
+                              className={cn(
+                                "metric font-extrabold",
+                                deltaToneClass(line.tripsDelta),
+                              )}
+                            >
+                              {formatDeltaInt(line.tripsDelta)} kurs.
+                            </span>
+                            <span className="metric text-[8.5px] text-mute">
+                              ({formatDeltaKm(line.metersDelta)} km)
+                            </span>
+                            {line.changedCount > 0 && (
+                              <span className="rounded bg-amber-500/15 px-1 text-[7.5px] font-extrabold text-amber-800 dark:text-amber-200">
+                                ~{line.changedCount} zm.
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {nsNhSummary.distinctNewRelations.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[8.5px]">
+                      <span className="font-bold text-ink-soft">
+                        Dodatkowe / zmienione relacje w{" "}
+                        {serviceOptionB?.dayType ?? "B"}:
+                      </span>
+                      {nsNhSummary.distinctNewRelations.slice(0, 6).map((rel) => (
+                        <button
+                          key={`${rel.routeShort}-${rel.relation}`}
+                          type="button"
+                          onClick={() => drillIntoLine(rel.routeShort, "trips")}
+                          className="inline-flex items-center gap-1 rounded border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 font-semibold text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200"
+                        >
+                          <span
+                            className="inline-flex h-3.5 min-w-[16px] items-center justify-center rounded px-1 text-[7.5px] font-black"
+                            style={{
+                              backgroundColor: rel.color,
+                              color: rel.textColor,
+                            }}
+                          >
+                            {rel.routeShort}
+                          </span>
+                          <span>{rel.relation}</span>
+                          <span className="metric font-extrabold">
+                            ({rel.count}×)
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {nsNhSummary.unchangedLines.length > 0 && (
+                    <div className="text-[8px] text-mute">
+                      Linie identyczne w NS i NH:{" "}
+                      <span className="font-semibold text-ink-soft">
+                        {nsNhSummary.unchangedLines
+                          .map((l) => l.routeShort)
+                          .join(", ")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* ── Karty podsumowania KPI ──────────────────────────── */}
               <div
                 className="grid shrink-0 grid-cols-2 gap-1.5 border-b border-line bg-surface px-3.5 py-2 sm:grid-cols-3 lg:grid-cols-6"
