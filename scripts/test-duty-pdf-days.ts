@@ -16,10 +16,12 @@ const dates = new Map<number, Set<string>>([
 const choices = timetableDayChoices(dates, 20261107, 20261231);
 assert.deepEqual(choices.weekday.map((x) => x.dateId), ["20261109", "20261120", "20261201", "20261207", "20261208"]);
 assert.deepEqual(choices.saturday.map((x) => x.dateId), ["20261121", "20261208"]);
-assert.deepEqual(choices.sunday.map((x) => x.dateId), ["20261111", "20261122", "20261206"]);
+assert.deepEqual(choices.sunday.map((x) => x.dateId), ["20261111", "20261122"]);
+assert.deepEqual(choices.tradingSunday.map((x) => x.dateId), ["20261206"]);
 assert.deepEqual(choices.saturday[1].serviceIds, ["388_RS", "exception_SO"], "mixed services remain together on their actual date");
 assert.equal(closestTimetableDate(choices.weekday, "20261121"), "20261120");
 assert.equal(closestTimetableDate(choices.sunday, "20261121"), "20261122");
+assert.equal(closestTimetableDate(choices.tradingSunday, "20261121"), "20261206");
 assert.equal(closestTimetableDate([{ dateId: "20261120", serviceIds: [] }, { dateId: "20261122", serviceIds: [] }], "20261121"), "20261122");
 assert.equal(closestTimetableDate([], "20261121"), "");
 const duty = { blockId: "20261120_8-01", number: "8-01", unassigned: false };

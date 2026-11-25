@@ -185,7 +185,7 @@ export default function BrigadesPanel({
     void ensureGtfsSeeded().then(({ base }) => {
       if (!cancelled) setPdfDates(timetableDayChoices(base.serviceIdsByDate, base.feedStartDate, base.feedEndDate));
     }).catch(() => {
-      if (!cancelled) setPdfDates({ weekday: [], saturday: [], sunday: [] });
+      if (!cancelled) setPdfDates({ weekday: [], saturday: [], sunday: [], tradingSunday: [] });
     });
     return () => { cancelled = true; };
   }, [showTechnicalNotes, reload]);
@@ -955,6 +955,7 @@ export default function BrigadesPanel({
             <option value="weekday">Roboczy</option>
             <option value="saturday">Sobota</option>
             <option value="sunday">Niedziela / święto</option>
+            <option value="tradingSunday">Niedziela handlowa</option>
           </select>
           {pdfDayKind !== "current" && <>
             <label htmlFor="duty-pdf-date" className="text-[10px] font-extrabold text-ink">Data PDF</label>
