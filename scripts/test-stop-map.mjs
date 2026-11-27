@@ -234,6 +234,7 @@ try {
     // Refreshing the viewport with a timed-out Overpass request must preserve
     // both the visible GTFS stop and the one elsewhere in the city.
     await page.getByTestId("map-sidebar-toggle").click();
+    await page.getByTestId("sidebar-nav-visibility").click();
     await page.getByRole("button", { name: "Pobierz przystanki dla bieżącego widoku mapy" }).click();
     await page.waitForFunction(() => window.__overpassCalls > 0);
     await page.waitForFunction(() => document.querySelector('button[aria-label="Pobierz przystanki dla bieżącego widoku mapy"]')?.textContent?.includes("2"));
@@ -250,6 +251,7 @@ try {
 
     // Icons remain visible when switching basemaps.
     await page.getByTestId("map-sidebar-toggle").click();
+    await page.getByTestId("sidebar-nav-appearance").click();
     for (const name of ["Mapa jasna", "Satelita", "Mapa ciemna"]) {
       await page.getByRole("button", { name: new RegExp(name) }).click();
       assert.equal(await page.locator('[data-stop-id="tt-b"]').isVisible(), true);
@@ -308,6 +310,7 @@ try {
     const { page, context, errors } = await openPage({ role: "planner", stops: "route" });
     await waitForGtfs(page);
     await page.getByTestId("map-sidebar-toggle").click();
+    await page.getByTestId("sidebar-nav-visibility").click();
     let dialog = page.getByRole("region", { name: "Ustawienia widoczności" });
     assert.equal(await dialog.getByRole("button", { name: "Wszystkie", exact: true }).getAttribute("aria-pressed"), "true");
     await dialog.getByRole("button", { name: "Przy trasie", exact: true }).click();
@@ -317,6 +320,7 @@ try {
     await page.waitForFunction(() => document.querySelectorAll(".bus-stop").length === 0);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByTestId("map-sidebar-toggle").click();
+    await page.getByTestId("sidebar-nav-visibility").click();
     dialog = page.getByRole("region", { name: "Ustawienia widoczności" });
     assert.equal(await dialog.getByRole("button", { name: "Ukryte", exact: true }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.locator(".bus-stop").count(), 0);
@@ -479,6 +483,7 @@ try {
     assert.equal(await page.getByText("Przystanki są ukryte.").count(), 0);
     assert.equal(await page.locator(".bus-stop").count(), 0);
     await page.getByTestId("map-sidebar-toggle").click();
+    await page.getByTestId("sidebar-nav-visibility").click();
     const visibilityDialog = page.getByRole("region", { name: "Ustawienia widoczności" });
     await visibilityDialog.getByRole("button", { name: "Wszystkie", exact: true }).click();
     await page.getByTestId("map-sidebar-close").click();

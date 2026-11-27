@@ -157,6 +157,7 @@ try {
   travelerPage.on("pageerror", (err) => travelerErrors.push(err.message));
 
   await travelerPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await travelerPage.getByTestId("map-sidebar-toggle").click();
   await travelerPage.getByRole("button", { name: "Linie" }).click();
 
   // Pasażer widzi linię 7 z badge „Poprawiona”, a NIE widzi przycisków „Edytuj”

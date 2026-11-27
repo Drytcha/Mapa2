@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import TopBar from "../src/components/TopBar";
 import CoursePreviewCard from "../src/components/CoursePreviewCard";
 import BusSearch from "../src/components/BusSearch";
 import MapInfoSidebar from "../src/components/MapInfoSidebar";
@@ -13,17 +12,59 @@ import type { CoursePreview } from "../src/lib/engine/gtfsStore";
 import type { BusStop, LiveBusVehicle } from "../src/lib/types";
 
 const noop = () => {};
-const props = {
-  route: EMPTY_ROUTE, isRouting: false, routeReady: false, theme: "light" as const,
-  liveBusCount: 0, showLiveBuses: true, kursowkiOpen: false, linesOpen: false,
-  onRoleChange: noop, onToggleLiveBuses: noop, onToggleTheme: noop, onOpenSettings: noop,
-  onOpenSteps: noop, onOpenFleet: noop, onOpenReport: noop, onOpenKursowki: noop,
-  onOpenLines: noop, onOpenPlanner: noop, onOpenPdf: noop, pdfDisabled: true,
+const baseSidebarProps = {
+  open: true,
+  onClose: noop,
+  theme: "light" as const,
+  onToggleTheme: noop,
+  kursowkiOpen: false,
+  linesOpen: false,
+  onOpenKursowki: noop,
+  onOpenLines: noop,
+  onOpenPlanner: noop,
+  onOpenSteps: noop,
+  onOpenFleet: noop,
+  onOpenReport: noop,
+  onOpenSettings: noop,
+  onOpenPdf: noop,
+  pdfDisabled: true,
+  onRoleChange: noop,
+  showLiveBuses: true,
+  onToggleLiveBuses: noop,
+  operatorFilter: "all" as const,
+  onOperatorFilter: noop,
+  liveVehicles: [],
+  liveTraffic: null,
+  liveLoading: false,
+  onRefreshLive: noop,
+  mapStopCount: 0,
+  busLoading: false,
+  onRefreshBusStops: noop,
+  visibility: DEFAULT_VISIBILITY,
+  onVisibilityChange: noop,
+  signalCount: 0,
+  turnaroundCount: 0,
+  mapStyle: "dark" as const,
+  onMapStyle: noop,
+  onHome: noop,
+  onFit: noop,
+  locationStatus: "idle" as const,
+  userLocation: null,
+  followingUser: false,
+  onLocate: noop,
+  onRetryLocation: noop,
+  onOpenTripPlanner: noop,
+  route: EMPTY_ROUTE,
 };
-const user = renderToStaticMarkup(<TopBar {...props} role="traveler" />);
+const user = renderToStaticMarkup(
+  <MapInfoSidebar {...baseSidebarProps} role="traveler" isPlanner={false} />,
+);
 assert.doesNotMatch(user, /Planista|Planer|Podróżny|Logowanie/i);
 assert.match(user, /Kursówki/);
-const planner = renderToStaticMarkup(<TopBar {...props} role="planner" />);
+assert.match(user, /Linie/);
+const planner = renderToStaticMarkup(
+  <MapInfoSidebar {...baseSidebarProps} role="planner" isPlanner={true} />,
+);
 assert.match(planner, /Planista/);
 assert.match(planner, /Planer/);
 
@@ -225,110 +266,121 @@ const quickBarHtml = renderToStaticMarkup(
     busStops={sampleStops}
     onSelectBus={noop}
     onSelectStop={noop}
-    onToggleTripPlanner={noop}
   />,
 );
-assert.match(quickBarHtml, /data-testid="map-sidebar-toggle"/, "ikonka do rozwijania sidebaru z informacjami");
+assert.match(quickBarHtml, /data-testid="map-sidebar-toggle"/, "ikonka do rozwijania sidebaru");
 assert.match(quickBarHtml, /Otwórz panel boczny mapy/);
-assert.match(quickBarHtml, /Szukaj przystanku lub autobusu/, "wspólna wyszukiwarka przystanków i autobusów");
-assert.match(quickBarHtml, /data-testid="quick-trip-planner"/, "kompaktowy przycisk planera podróży");
+assert.match(quickBarHtml, /Szukaj przystanku lub autobusu/, "kompaktowa wyszukiwarka obok ikonki");
+
+const sampleUserLocation = {
+  lat: 50.77,
+  lon: 16.28,
+  accuracy: 10,
+  altitude: 582,
+  heading: null,
+  speedKmh: 0,
+  maxSpeedKmh: 0,
+  distanceM: 12,
+  timestamp: Date.now(),
+};
 
 const closedSidebarHtml = renderToStaticMarkup(
   <MapInfoSidebar
+    {...baseSidebarProps}
     open={false}
-    onClose={noop}
     isPlanner={false}
-    showLiveBuses={true}
-    onToggleLiveBuses={noop}
-    operatorFilter="all"
-    onOperatorFilter={noop}
     liveVehicles={sampleVehicles}
-    liveTraffic={null}
-    liveLoading={false}
-    onRefreshLive={noop}
     mapStopCount={sampleStops.length}
-    busLoading={false}
-    onRefreshBusStops={noop}
-    visibility={DEFAULT_VISIBILITY}
-    onVisibilityChange={noop}
-    signalCount={0}
-    turnaroundCount={0}
-    mapStyle="dark"
-    onMapStyle={noop}
-    onHome={noop}
-    onFit={noop}
     locationStatus="active"
-    userLocation={{
-      lat: 50.77,
-      lon: 16.28,
-      accuracy: 10,
-      altitude: 582,
-      heading: null,
-      speedKmh: 0,
-      maxSpeedKmh: 0,
-      distanceM: 12,
-      timestamp: Date.now(),
-    }}
-    followingUser={false}
-    onLocate={noop}
-    onRetryLocation={noop}
-    onOpenTripPlanner={noop}
+    userLocation={sampleUserLocation}
   />,
 );
-assert.match(closedSidebarHtml, /data-open="false"/, "sidebar startuje zwinięty, odsłaniając mapę");
+assert.match(closedSidebarHtml, /data-open="false"/, "sidebar startuje zwinięty, odsłaniając 100% mapy");
 assert.match(closedSidebarHtml, /inert=""/, "zwinięty sidebar jest nieaktywny dla tabulacji");
 
-const openSidebarHtml = renderToStaticMarkup(
+// Główny widok sidebara ("home") pokazuje zwięzłe skróty zamiast wszystkich przełączników naraz
+const homeSidebarHtml = renderToStaticMarkup(
   <MapInfoSidebar
+    {...baseSidebarProps}
     open={true}
-    onClose={noop}
+    initialView="home"
     isPlanner={false}
-    showLiveBuses={true}
-    onToggleLiveBuses={noop}
-    operatorFilter="all"
-    onOperatorFilter={noop}
     liveVehicles={sampleVehicles}
-    liveTraffic={null}
-    liveLoading={false}
-    onRefreshLive={noop}
     mapStopCount={sampleStops.length}
-    busLoading={false}
-    onRefreshBusStops={noop}
-    visibility={DEFAULT_VISIBILITY}
-    onVisibilityChange={noop}
-    signalCount={0}
-    turnaroundCount={0}
-    mapStyle="dark"
-    onMapStyle={noop}
-    onHome={noop}
-    onFit={noop}
     locationStatus="active"
-    userLocation={{
-      lat: 50.77,
-      lon: 16.28,
-      accuracy: 10,
-      altitude: 582,
-      heading: null,
-      speedKmh: 0,
-      maxSpeedKmh: 0,
-      distanceM: 12,
-      timestamp: Date.now(),
-    }}
-    followingUser={false}
-    onLocate={noop}
-    onRetryLocation={noop}
-    onOpenTripPlanner={noop}
+    userLocation={sampleUserLocation}
   />,
 );
-assert.match(openSidebarHtml, /data-open="true"/);
-assert.match(openSidebarHtml, /Panel mapy i informacje/);
-assert.match(openSidebarHtml, /GPS na żywo \(1\)/);
-assert.match(openSidebarHtml, /ŚKA \(1\)/);
-assert.match(openSidebarHtml, /Legenda punktualności GPS/);
-assert.match(openSidebarHtml, /Twoja lokalizacja i prędkość/);
-assert.match(openSidebarHtml, /582 m n\.p\.m\./);
-assert.match(openSidebarHtml, /Ustawienia widoczności/);
-assert.match(openSidebarHtml, /Styl mapy/);
+assert.match(homeSidebarHtml, /data-open="true"/);
+assert.match(homeSidebarHtml, /data-view="home"/);
+assert.match(homeSidebarHtml, /Autobusy GPS na żywo/);
+assert.match(homeSidebarHtml, /Włączone · 1 w ruchu/);
+assert.match(homeSidebarHtml, /Widoczność na mapie/);
+assert.match(homeSidebarHtml, /Wszystkie przystanki \(2\)/);
+assert.match(homeSidebarHtml, /Styl mapy i motyw/);
+assert.match(homeSidebarHtml, /Moja lokalizacja GPS/);
+assert.doesNotMatch(
+  homeSidebarHtml,
+  /Legenda punktualności GPS|Przywróć domyślne ustawienia/,
+  "szczegółowe kontrolki nie zaśmiecają głównego widoku sidebara",
+);
+
+// Podwidoki otwierają się w tym samym sidebarze, skupione na jednym ustawieniu + przycisk „Wróć”
+const gpsViewHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    initialView="gps"
+    isPlanner={false}
+    liveVehicles={sampleVehicles}
+  />,
+);
+assert.match(gpsViewHtml, /data-view="gps"/);
+assert.match(gpsViewHtml, /data-testid="map-sidebar-back"/);
+assert.match(gpsViewHtml, /Filtr przewoźnika/);
+assert.match(gpsViewHtml, /ŚKA/);
+assert.match(gpsViewHtml, /Legenda punktualności GPS/);
+
+const visibilityViewHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    initialView="visibility"
+    isPlanner={false}
+    mapStopCount={sampleStops.length}
+  />,
+);
+assert.match(visibilityViewHtml, /data-view="visibility"/);
+assert.match(visibilityViewHtml, /aria-label="Ustawienia widoczności"/);
+assert.match(visibilityViewHtml, /Kursówka nad pojazdem/);
+assert.match(visibilityViewHtml, /Przywróć domyślne ustawienia/);
+
+const appearanceViewHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    initialView="appearance"
+    isPlanner={false}
+  />,
+);
+assert.match(appearanceViewHtml, /data-view="appearance"/);
+assert.match(appearanceViewHtml, /Mapa jasna/);
+assert.match(appearanceViewHtml, /Mapa ciemna/);
+assert.match(appearanceViewHtml, /Satelita/);
+assert.match(appearanceViewHtml, /Motyw interfejsu/);
+
+const locationViewHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    initialView="location"
+    isPlanner={false}
+    locationStatus="active"
+    userLocation={sampleUserLocation}
+  />,
+);
+assert.match(locationViewHtml, /data-view="location"/);
+assert.match(locationViewHtml, /582 m n\.p\.m\./);
 
 // Wyszukiwanie linii „7” pokazuje jednocześnie autobus GPS i przystanek tej linii; podróżny nie widzi S1.
 const combinedTravelerSearch = renderToStaticMarkup(

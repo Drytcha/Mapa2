@@ -12,7 +12,6 @@ import {
   CornerUpLeft,
   Crosshair,
   Flag,
-  Route,
   ListOrdered,
   Loader2,
   LocateFixed,
@@ -237,7 +236,7 @@ export function MapRouteCard({
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Compact Map Quick Bar (Sidebar Trigger + Unified Search + Trip Planner)   */
+/*  Compact Map Quick Bar (Sidebar Trigger + Unified Search)                  */
 /* -------------------------------------------------------------------------- */
 
 export function MapQuickBar({
@@ -249,10 +248,6 @@ export function MapQuickBar({
   onSelectBus,
   onSelectStop,
   isPlanner = false,
-  tripOpen = false,
-  hasTripOrigin = false,
-  hasTripDest = false,
-  onToggleTripPlanner,
 }: {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
@@ -262,15 +257,11 @@ export function MapQuickBar({
   onSelectBus: (bus: LiveBusVehicle) => void;
   onSelectStop: (stop: BusStop) => void;
   isPlanner?: boolean;
-  tripOpen?: boolean;
-  hasTripOrigin?: boolean;
-  hasTripDest?: boolean;
-  onToggleTripPlanner?: () => void;
 }) {
   return (
     <div
       data-testid="map-quick-bar"
-      className="pointer-events-auto flex h-9 w-[min(288px,calc(100vw-60px))] items-center gap-1 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)] sm:w-[320px]"
+      className="pointer-events-auto flex h-9 w-[min(268px,calc(100vw-60px))] items-center gap-1 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)] sm:w-[284px]"
     >
       <button
         type="button"
@@ -280,7 +271,7 @@ export function MapQuickBar({
         aria-label={
           sidebarOpen ? "Zwiń panel boczny mapy" : "Otwórz panel boczny mapy"
         }
-        title="Panel mapy: informacje, GPS, filtry, legenda i warstwy"
+        title="Otwórz boczny panel menu i ustawień"
         onClick={onToggleSidebar}
         className={cn(
           "relative grid h-7 w-7 shrink-0 place-items-center rounded-lg transition-colors",
@@ -312,42 +303,6 @@ export function MapQuickBar({
           isPlanner={isPlanner}
         />
       </div>
-
-      {!isPlanner && onToggleTripPlanner && (
-        <>
-          <span className="h-4 w-px shrink-0 bg-line" aria-hidden="true" />
-          <button
-            type="button"
-            data-testid="quick-trip-planner"
-            onClick={onToggleTripPlanner}
-            aria-expanded={tripOpen}
-            aria-label={tripOpen ? "Zamknij planer podróży" : "Planer podróży"}
-            title="Planer podróży (A → B)"
-            className={cn(
-              "relative flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-[9px] font-extrabold transition-colors",
-              tripOpen
-                ? "bg-raised text-ink ring-1 ring-line-strong"
-                : "bg-brand text-on-brand hover:opacity-90",
-            )}
-          >
-            <Route className="h-3.5 w-3.5" strokeWidth={2.3} />
-            <span className="hidden sm:inline">Trasa</span>
-            {!tripOpen && (hasTripOrigin || hasTripDest) && (
-              <span
-                className="absolute -right-0.5 -top-0.5 flex gap-px"
-                aria-hidden="true"
-              >
-                {hasTripOrigin && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#0891b2] ring-1 ring-surface" />
-                )}
-                {hasTripDest && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#e11d48] ring-1 ring-surface" />
-                )}
-              </span>
-            )}
-          </button>
-        </>
-      )}
     </div>
   );
 }

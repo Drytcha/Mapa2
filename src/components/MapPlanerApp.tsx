@@ -20,7 +20,6 @@ import type {
 import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
 import type { CustomGtfsResumeTarget } from "./CustomGtfsBuilderDialog";
 import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
-import TopBar from "./TopBar";
 import MapInfoSidebar from "./MapInfoSidebar";
 import { useUserLocation } from "@/lib/useUserLocation";
 import {
@@ -38,6 +37,7 @@ import {
 } from "./MapOverlays";
 import {
   FleetDialog,
+  PlanistLoginDialog,
   ReportDialog,
   SettingsDialog,
   StepsDrawer,
@@ -321,6 +321,16 @@ function MapPlanerWorkspace() {
   const [selectedStop, setSelectedStop] = useState<BusStop | null>(null);
   const [contextMenu, setContextMenu] = useState<MapContextMenuState | null>(null);
   const [mapSidebarOpen, setMapSidebarOpen] = useState(false);
+  const [plannerLoginOpen, setPlannerLoginOpen] = useState(false);
+
+  // Bezpośredni link ?planista=1 otwiera logowanie planisty bez eksponowania go w UI pasażera.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("planista") !== "1") return;
+    url.searchParams.delete("planista");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    if (role !== "planner") setPlannerLoginOpen(true);
+  }, [role]);
 
   // Planer podróży dla pasażera (kolorowy doradca "do jakiego wozu wejść")
   const [tripOpen, setTripOpen] = useState(false);
@@ -2427,39 +2437,12 @@ function MapPlanerWorkspace() {
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <PerfHud />
-      <TopBar
-        route={activeRoute}
-        isRouting={isRouting}
-        routeReady={routeReady}
-        role={role}
-        onRoleChange={handleRoleChange}
-        theme={theme}
-        liveBusCount={liveVehicles.length}
-        showLiveBuses={showLiveBuses}
-        kursowkiOpen={kursowkiOpen}
-        linesOpen={linesOpen}
-        onOpenLines={() => {
-          setKursowkiOpen(false);
-          setLinesOpen(true);
-        }}
-        onToggleLiveBuses={() => toggleVisibility("liveBuses")}
-        onToggleTheme={toggleTheme}
-        onOpenPdf={openPdf}
-        pdfDisabled={!exportReady}
-        onOpenSettings={openInformation}
-        onOpenSteps={() => setStepsOpen(true)}
-        onOpenFleet={() => setFleetOpen(true)}
-        onOpenReport={() => setReportOpen(true)}
-        onOpenKursowki={() => {
-          setLinesOpen(false);
-          setKursowkaDeepLink({});
-          setKursowkaReturnDateId(null);
-          setKursowkiOpen(true);
-        }}
-        onOpenPlanner={() => {
-          setKursowkiOpen(false);
-          setLinesOpen(false);
-          if (window.innerWidth < 1024) setMobileExpanded(true);
+      <PlanistLoginDialog
+        open={plannerLoginOpen}
+        onClose={() => setPlannerLoginOpen(false)}
+        onSuccess={() => {
+          setPlannerLoginOpen(false);
+          handleRoleChange("planner");
         }}
       />
 
@@ -2809,24 +2792,18 @@ function MapPlanerWorkspace() {
               ) : (
                 <div className="pointer-events-none flex min-h-0 flex-col items-start gap-1.5">
                   <div className={selectedStop || selectedLiveBus || courseDrawerOpen ? "hidden sm:contents" : "contents"}>
-                    <MapQuickBar
-                      sidebarOpen={mapSidebarOpen}
-                      onToggleSidebar={() => setMapSidebarOpen((open) => !open)}
-                      showLiveBuses={showLiveBuses}
-                      liveVehicles={liveVehicles}
-                      busStops={busStops}
-                      onSelectBus={handleSelectBus}
-                      onSelectStop={selectStopFromFinder}
-                      isPlanner={isPlanner}
-                      tripOpen={tripOpen}
-                      hasTripOrigin={Boolean(tripOrigin)}
-                      hasTripDest={Boolean(tripDest)}
-                      onToggleTripPlanner={() => {
-                        setMapSidebarOpen(false);
-                        setTripOpen((open) => !open);
-                        if (tripOpen) setTripPick(null);
-                      }}
-                    />
+                    {!mapSidebarOpen && (
+                      <MapQuickBar
+                        sidebarOpen={mapSidebarOpen}
+                        onToggleSidebar={() => setMapSidebarOpen((open) => !open)}
+                        showLiveBuses={showLiveBuses}
+                        liveVehicles={liveVehicles}
+                        busStops={busStops}
+                        onSelectBus={handleSelectBus}
+                        onSelectStop={selectStopFromFinder}
+                        isPlanner={isPlanner}
+                      />
+                    )}
                     {!isPlanner && tripOpen && (
                       <Suspense fallback={null}>
                         <TripPlannerPanel
@@ -2990,7 +2967,38 @@ function MapPlanerWorkspace() {
           <MapInfoSidebar
             open={mapSidebarOpen}
             onClose={() => setMapSidebarOpen(false)}
+            role={role}
+            onRoleChange={handleRoleChange}
             isPlanner={isPlanner}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            kursowkiOpen={kursowkiOpen}
+            linesOpen={linesOpen}
+            onOpenKursowki={() => {
+              setLinesOpen(false);
+              setKursowkaDeepLink({});
+              setKursowkaReturnDateId(null);
+              setKursowkiOpen(true);
+            }}
+            onOpenLines={() => {
+              setKursowkiOpen(false);
+              setLinesOpen(true);
+            }}
+            onOpenPlanner={() => {
+              setKursowkiOpen(false);
+              setLinesOpen(false);
+              if (window.innerWidth < 1024) setMobileExpanded(true);
+            }}
+            onOpenSteps={() => setStepsOpen(true)}
+            onOpenFleet={() => setFleetOpen(true)}
+            onOpenReport={() => setReportOpen(true)}
+            onOpenSettings={openInformation}
+            onOpenPdf={openPdf}
+            pdfDisabled={!exportReady}
+            isRouting={isRouting}
+            busStops={busStops}
+            onSelectBus={handleSelectBus}
+            onSelectStop={selectStopFromFinder}
             showLiveBuses={showLiveBuses}
             onToggleLiveBuses={() => toggleVisibility("liveBuses")}
             operatorFilter={operatorFilter}

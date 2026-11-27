@@ -220,6 +220,7 @@ try {
   // Nieruchomy autobus, ale nowe informacje GPS: postęp musi się odświeżyć
   // również wtedy, gdy współrzędne w ogóle się nie zmieniły.
   await page.getByTestId("map-sidebar-toggle").click();
+  await page.getByTestId("sidebar-nav-gps").click();
   feed.nextSequence = 2;
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.waitForFunction(() => {

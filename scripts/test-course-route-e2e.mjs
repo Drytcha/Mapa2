@@ -118,6 +118,7 @@ try {
 
   // Początek testu: żaden panel kursu nie jest jeszcze otwarty.
   assert.equal(await page.getByTestId("course-preview-sidebar-root").count(), 0, "brak panelu przed wyborem kursu");
+  await page.getByTestId("map-sidebar-toggle").click();
   await page.getByRole("button", { name: "Kursówki" }).first().click();
   // W dialogu kursówek: brygada → kurs → podgląd przebiegu na mapie.
   await page.getByTestId("brigade-card").first().click({ timeout: 20000 });
@@ -213,6 +214,7 @@ try {
 
   // ── 5. Telefon: panel zwinięty startuje z uchwytem, cała mapa widoczna ───
   const mobile = await openApp({ viewport: { width: 390, height: 844 }, mobile: true });
+  await mobile.page.getByTestId("map-sidebar-toggle").click();
   await mobile.page.getByRole("button", { name: "Kursówki" }).first().click();
   await mobile.page.getByTestId("brigade-card").first().click({ timeout: 20000 });
   await mobile.page.getByTestId("preview-course-button").first().click({ timeout: 20000 });
