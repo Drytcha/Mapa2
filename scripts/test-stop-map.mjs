@@ -233,9 +233,11 @@ try {
 
     // Refreshing the viewport with a timed-out Overpass request must preserve
     // both the visible GTFS stop and the one elsewhere in the city.
+    await page.getByTestId("map-sidebar-toggle").click();
     await page.getByRole("button", { name: "Pobierz przystanki dla bieżącego widoku mapy" }).click();
     await page.waitForFunction(() => window.__overpassCalls > 0);
     await page.waitForFunction(() => document.querySelector('button[aria-label="Pobierz przystanki dla bieżącego widoku mapy"]')?.textContent?.includes("2"));
+    await page.getByTestId("map-sidebar-close").click();
     await waitForGtfs(page);
     await page.evaluate(() => document.querySelector('[role="application"]').__map.setView([50.82, 16.29], 16, { animate: false }));
     // Markery dochodzą po `moveend` (następna klatka), więc czekamy na sam marker.
@@ -247,11 +249,12 @@ try {
     await page.locator(".leaflet-tooltip.stop-name-label", { hasText: "Północ" }).waitFor();
 
     // Icons remain visible when switching basemaps.
+    await page.getByTestId("map-sidebar-toggle").click();
     for (const name of ["Mapa jasna", "Satelita", "Mapa ciemna"]) {
-      await page.getByRole("button", { name: "Styl mapy" }).click();
       await page.getByRole("button", { name: new RegExp(name) }).click();
       assert.equal(await page.locator('[data-stop-id="tt-b"]').isVisible(), true);
     }
+    await page.getByTestId("map-sidebar-close").click();
     assert.deepEqual(errors, []);
     await context.close();
   }
@@ -304,8 +307,8 @@ try {
     console.log("Checking saved visibility settings…");
     const { page, context, errors } = await openPage({ role: "planner", stops: "route" });
     await waitForGtfs(page);
-    await page.getByRole("button", { name: "Ustawienia widoczności", exact: true }).click();
-    let dialog = page.getByRole("dialog", { name: "Ustawienia widoczności" });
+    await page.getByTestId("map-sidebar-toggle").click();
+    let dialog = page.getByRole("region", { name: "Ustawienia widoczności" });
     assert.equal(await dialog.getByRole("button", { name: "Wszystkie", exact: true }).getAttribute("aria-pressed"), "true");
     await dialog.getByRole("button", { name: "Przy trasie", exact: true }).click();
     await page.getByText("Wyznacz trasę, aby pokazać przystanki przy niej.").waitFor();
@@ -313,11 +316,12 @@ try {
     await dialog.getByRole("button", { name: "Ukryte", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".bus-stop").length === 0);
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Ustawienia widoczności", exact: true }).click();
-    dialog = page.getByRole("dialog", { name: "Ustawienia widoczności" });
+    await page.getByTestId("map-sidebar-toggle").click();
+    dialog = page.getByRole("region", { name: "Ustawienia widoczności" });
     assert.equal(await dialog.getByRole("button", { name: "Ukryte", exact: true }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.locator(".bus-stop").count(), 0);
     await dialog.getByRole("button", { name: "Wszystkie", exact: true }).click();
+    await page.getByTestId("map-sidebar-close").click();
     await waitForGtfs(page);
     assert.deepEqual(errors, []);
     await context.close();
@@ -386,9 +390,8 @@ try {
     // Explicitly centering on the user still works even far outside the network.
     await page.getByTestId("center-on-me").click();
     await page.waitForFunction(() => Math.abs(document.querySelector('[role="application"]').__map.getCenter().lat - 51.1079) < 0.002);
-    await page.getByRole("button", { name: "Przystanki", exact: true }).click();
-    const finder = page.getByRole("dialog", { name: "Znajdź przystanek" });
-    await finder.getByRole("searchbox", { name: "Szukaj przystanku" }).fill("Piłsudskiego - Plac Tuwima");
+    await page.getByRole("searchbox", { name: "Szukaj przystanku lub autobusu" }).fill("Piłsudskiego - Plac Tuwima");
+    const finder = page.getByRole("region", { name: "Wyniki wyszukiwania" });
     await finder.getByRole("button", { name: /Piłsudskiego - Plac Tuwima/ }).click();
     await page.getByRole("heading", { name: "Piłsudskiego - Plac Tuwima" }).waitFor();
     await page.getByTestId("compact-departure").filter({ hasText: "08:00" }).waitFor();
@@ -472,9 +475,13 @@ try {
   if (!process.env.TEST_CASE || process.env.TEST_CASE === "hidden") {
     console.log("Checking recovery from a deliberately hidden stop layer…");
     const { page, context, errors } = await openPage({ stops: "off" });
-    await page.getByText("Przystanki są ukryte.").waitFor();
+    await page.getByTestId("map-controls-bar").waitFor();
+    assert.equal(await page.getByText("Przystanki są ukryte.").count(), 0);
     assert.equal(await page.locator(".bus-stop").count(), 0);
-    await page.getByRole("button", { name: "Pokaż przystanki", exact: true }).click();
+    await page.getByTestId("map-sidebar-toggle").click();
+    const visibilityDialog = page.getByRole("region", { name: "Ustawienia widoczności" });
+    await visibilityDialog.getByRole("button", { name: "Wszystkie", exact: true }).click();
+    await page.getByTestId("map-sidebar-close").click();
     await waitForGtfs(page);
     await assertBlueStopActuallyPainted(page, page.locator('[data-stop-id="tt-a"]'));
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -485,9 +492,8 @@ try {
 
     // Search itself also restores the layer and opens the requested stop.
     const search = await openPage({ stops: "off" });
-    await search.page.getByRole("button", { name: "Przystanki", exact: true }).click();
-    const finder = search.page.getByRole("dialog", { name: "Znajdź przystanek" });
-    await finder.getByRole("searchbox", { name: "Szukaj przystanku" }).fill("Piłsudskiego - Plac Tuwima");
+    await search.page.getByRole("searchbox", { name: "Szukaj przystanku lub autobusu" }).fill("Piłsudskiego - Plac Tuwima");
+    const finder = search.page.getByRole("region", { name: "Wyniki wyszukiwania" });
     await finder.getByRole("button", { name: /Piłsudskiego - Plac Tuwima/ }).first().click();
     await search.page.getByRole("heading", { name: "Piłsudskiego - Plac Tuwima" }).waitFor();
     await search.page.getByTestId("compact-departure").filter({ hasText: "08:00" }).waitFor();
@@ -500,20 +506,20 @@ try {
     console.log("Checking stop search respects traveler and planner line visibility…");
     const traveler = await openPage();
     await waitForGtfs(traveler.page);
-    await traveler.page.getByRole("button", { name: "Przystanki", exact: true }).click();
-    let finder = traveler.page.getByRole("dialog", { name: "Znajdź przystanek" });
-    await finder.getByRole("searchbox", { name: "Szukaj przystanku" }).fill("S1");
-    await finder.getByText("Brak przystanków pasujących do wyszukiwania.").waitFor();
-    await finder.getByRole("searchbox", { name: "Szukaj przystanku" }).fill("Piłsudskiego");
+    const travelerSearch = traveler.page.getByRole("searchbox", { name: "Szukaj przystanku lub autobusu" });
+    await travelerSearch.fill("S1");
+    let finder = traveler.page.getByRole("region", { name: "Wyniki wyszukiwania" });
+    await finder.getByText(/Brak przystanków pasujących do wyszukiwania/).waitFor();
+    await travelerSearch.fill("Piłsudskiego");
     assert.doesNotMatch(await finder.innerText(), /\bS1\b/);
     assert.deepEqual(traveler.errors, []);
     await traveler.context.close();
 
     const planner = await openPage({ role: "planner" });
     await waitForGtfs(planner.page);
-    await planner.page.getByRole("button", { name: "Przystanki", exact: true }).click();
-    finder = planner.page.getByRole("dialog", { name: "Znajdź przystanek" });
-    await finder.getByRole("searchbox", { name: "Szukaj przystanku" }).fill("S1");
+    const plannerSearch = planner.page.getByRole("searchbox", { name: "Szukaj przystanku lub autobusu" });
+    await plannerSearch.fill("S1");
+    finder = planner.page.getByRole("region", { name: "Wyniki wyszukiwania" });
     await finder.getByRole("button", { name: /Piłsudskiego.*S1/ }).click();
     await planner.page.getByRole("heading", { name: "Piłsudskiego - Plac Tuwima" }).waitFor();
     await planner.page.getByTestId("compact-departure").filter({ hasText: "11:30" }).waitFor();

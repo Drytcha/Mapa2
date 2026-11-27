@@ -25,33 +25,33 @@ export function Logo({
 }) {
   return (
     <div
-      className="flex min-w-0 items-center gap-2.5"
+      className="flex min-w-0 items-center gap-2"
       title={showName ? APP_NAME : APP_TAGLINE}
       data-testid="app-brand"
     >
-      <div className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[11px] bg-brand text-on-brand shadow-[0_4px_12px_rgba(13,79,59,0.22)]">
-        <RouteIcon className="h-[19px] w-[19px]" strokeWidth={2.1} />
-        <span className="absolute -right-2 -top-2 h-4 w-4 rotate-45 bg-highlight" />
+      <div className="relative grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-brand text-on-brand shadow-[0_3px_10px_rgba(13,79,59,0.2)] sm:h-8 sm:w-8">
+        <RouteIcon className="h-4 w-4" strokeWidth={2.1} />
+        <span className="absolute -right-2 -top-2 h-3.5 w-3.5 rotate-45 bg-highlight" />
       </div>
       {!compact && (
         <div className="min-w-0 leading-none">
           {showName && (
             <div className="flex min-w-0 items-baseline gap-[3px]">
               <span
-                className="max-w-[120px] truncate text-[17px] font-extrabold tracking-[-0.045em] text-ink sm:max-w-[220px]"
+                className="max-w-[120px] truncate text-[15px] font-extrabold tracking-[-0.045em] text-ink sm:max-w-[220px] sm:text-[16px]"
                 data-testid="brand-name"
               >
                 {APP_NAME}
               </span>
-              <span className="mb-[7px] ml-0.5 h-[5px] w-[5px] rounded-full bg-highlight ring-1 ring-brand/20 dark:ring-highlight/20" />
+              <span className="mb-[5px] ml-0.5 h-[4px] w-[4px] rounded-full bg-highlight ring-1 ring-brand/20 dark:ring-highlight/20" />
             </div>
           )}
           <div
             className={cn(
-              "font-bold uppercase text-mute",
+              "truncate font-bold uppercase text-mute",
               showName
-                ? "mt-1 text-[8px] tracking-[0.23em]"
-                : "text-[9.5px] leading-[1.35] tracking-[0.18em] text-ink-soft"
+                ? "mt-0.5 text-[7.5px] tracking-[0.2em]"
+                : "text-[8.5px] leading-[1.3] tracking-[0.14em] text-ink-soft sm:text-[9px] sm:tracking-[0.17em]"
             )}
             data-testid="brand-tagline"
           >

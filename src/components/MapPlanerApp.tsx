@@ -10,7 +10,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Route as RouteIcon } from "lucide-react";
 import type {
   CourseRouteTarget,
   KursowkaShapeOverlay,
@@ -22,17 +21,15 @@ import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
 import type { CustomGtfsResumeTarget } from "./CustomGtfsBuilderDialog";
 import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
 import TopBar from "./TopBar";
-import UserLocationHud from "./UserLocationHud";
-import StopFinder from "./StopFinder";
+import MapInfoSidebar from "./MapInfoSidebar";
 import { useUserLocation } from "@/lib/useUserLocation";
 import {
   BusStopCard,
   LiveBusCard,
-  LiveFleetControl,
   MapContextMenu,
   MapControls,
   MapDrawingBanner,
-  MapRouteCard,
+  MapQuickBar,
   MobilePlannerSheet,
   NavigationHud,
   PickBanner,
@@ -323,6 +320,7 @@ function MapPlanerWorkspace() {
   const showTurnarounds = visibility.turnarounds;
   const [selectedStop, setSelectedStop] = useState<BusStop | null>(null);
   const [contextMenu, setContextMenu] = useState<MapContextMenuState | null>(null);
+  const [mapSidebarOpen, setMapSidebarOpen] = useState(false);
 
   // Planer podróży dla pasażera (kolorowy doradca "do jakiego wozu wejść")
   const [tripOpen, setTripOpen] = useState(false);
@@ -1151,6 +1149,7 @@ function MapPlanerWorkspace() {
     // A late first GPS fix must not move the map away from the selected stop.
     userPannedRef.current = true;
     setFollowUser(false);
+    setMapSidebarOpen(false);
     setSelectedLiveBus(null);
     setSelectedStop((current) => (current?.id === stop.id ? null : stop));
     if (center) mapRef.current?.centerOn(stop.lat, stop.lon, 16);
@@ -1159,6 +1158,8 @@ function MapPlanerWorkspace() {
   const selectStopFromFinder = useCallback((stop: BusStop) => {
     userPannedRef.current = true;
     setFollowUser(false);
+    setMapSidebarOpen(false);
+    busOverlayRequestRef.current = null;
     setSelectedLiveBus(null);
     setSelectedStop(stop);
     setBusQuery("");
@@ -2152,6 +2153,7 @@ function MapPlanerWorkspace() {
   const handleSelectBus = useCallback((bus: LiveBusVehicle) => {
     setOperatorFilter("all");
     updateVisibility({ liveBuses: true });
+    setMapSidebarOpen(false);
     setSelectedStop(null);
     setSelectedLiveBus(bus);
     // Nigdy nie zostawiaj poprzedniej trasy pod nowo wybranym pojazdem.
@@ -2422,23 +2424,6 @@ function MapPlanerWorkspace() {
     onOpenCustomGtfsBuilder: () => setCustomGtfsBuilderOpen(true),
   };
 
-  // Na telefonie ukrywamy dolne guziki („Przystanki” / „Planer podróży”), gdy otwarta
-  // jest karta przystanku, autobusu, planer podróży, rozsuwany panel kursu lub rysowanie
-  // na mapie — dzięki temu nic nigdy na siebie nie nachodzi.
-  const hideMobileBottomActions = Boolean(
-    selectedStop ||
-      selectedLiveBus ||
-      tripOpen ||
-      courseDrawerOpen ||
-      customGtfsMapSession ||
-      addMode ||
-      pickTarget ||
-      (isPlanner && (mobileExpanded || lineEditorOpen)),
-  );
-  const lowerBottomActionsZ = Boolean(
-    hideMobileBottomActions || (kursowkaOverlay?.course && !busOverlay),
-  );
-
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <PerfHud />
@@ -2694,7 +2679,7 @@ function MapPlanerWorkspace() {
           </Suspense>
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
-            <div className="pointer-events-none absolute left-3 top-5 flex max-h-[calc(100%-100px)] max-w-[calc(100%-72px)] flex-col items-start gap-2 lg:top-3">
+            <div className="pointer-events-none absolute left-2.5 top-2.5 flex max-h-[calc(100%-20px)] max-w-[calc(100%-56px)] flex-col items-start gap-1.5">
               {gtfsPreviewStatus.active && (
                 <div
                   role="status"
@@ -2822,25 +2807,25 @@ function MapPlanerWorkspace() {
                   onCancel={() => setPickTarget(null)}
                 />
               ) : (
-                <div className="pointer-events-none flex min-h-0 flex-col items-start gap-2">
-                  <div className={selectedStop || selectedLiveBus ? "hidden sm:contents" : "contents"}>
-                    <LiveFleetControl
-                      isPlanner={isPlanner}
+                <div className="pointer-events-none flex min-h-0 flex-col items-start gap-1.5">
+                  <div className={selectedStop || selectedLiveBus || courseDrawerOpen ? "hidden sm:contents" : "contents"}>
+                    <MapQuickBar
+                      sidebarOpen={mapSidebarOpen}
+                      onToggleSidebar={() => setMapSidebarOpen((open) => !open)}
                       showLiveBuses={showLiveBuses}
-                      onToggleLiveBuses={() => toggleVisibility("liveBuses")}
-                      operatorFilter={operatorFilter}
-                      onOperatorFilter={setOperatorFilter}
                       liveVehicles={liveVehicles}
-                      liveTraffic={liveTraffic}
-                      liveLoading={liveLoading}
-                      onRefreshLive={() => void fetchLiveBuses(true)}
-                      signalCount={trafficSignals.length}
-                      showTrafficSignals={showTrafficSignals}
-                      onToggleTrafficSignals={() => toggleVisibility("trafficSignals")}
-                      turnaroundCount={turnaroundSpots.length}
-                      showTurnarounds={showTurnarounds}
-                      onToggleTurnarounds={() => toggleVisibility("turnarounds")}
+                      busStops={busStops}
                       onSelectBus={handleSelectBus}
+                      onSelectStop={selectStopFromFinder}
+                      isPlanner={isPlanner}
+                      tripOpen={tripOpen}
+                      hasTripOrigin={Boolean(tripOrigin)}
+                      hasTripDest={Boolean(tripDest)}
+                      onToggleTripPlanner={() => {
+                        setMapSidebarOpen(false);
+                        setTripOpen((open) => !open);
+                        if (tripOpen) setTripPick(null);
+                      }}
                     />
                     {!isPlanner && tripOpen && (
                       <Suspense fallback={null}>
@@ -2869,18 +2854,6 @@ function MapPlanerWorkspace() {
                           refreshNonce={tripNonce}
                         />
                       </Suspense>
-                    )}
-                    {isPlanner && (
-                      <MapRouteCard
-                        route={activeRoute}
-                        waypoints={waypoints}
-                        metrics={metrics}
-                        vehicle={vehicle}
-                        brigade={brigade}
-                        mapStyle={mapStyle}
-                        routeReady={routeReady}
-                        turnaroundCount={turnaroundSpots.length}
-                      />
                     )}
                   </div>
                   {selectedStop && (
@@ -2929,25 +2902,6 @@ function MapPlanerWorkspace() {
                   }}
                 />
               )}
-              {stopDisplay === "off" && (
-                <div
-                  role="status"
-                  className="pointer-events-auto max-w-[300px] rounded-xl border border-line bg-surface/95 px-3 py-2 text-[11px] font-semibold text-ink shadow-lg"
-                >
-                  Przystanki są ukryte. {" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      updateVisibility({ stops: "all" });
-                      setBusQuery("");
-                      centerWalbrzych();
-                    }}
-                    className="font-extrabold text-brand-ink underline underline-offset-2"
-                  >
-                    Pokaż przystanki
-                  </button>
-                </div>
-              )}
               {stopDisplay !== "off" && (showingSnapshotStops || busError) && (
                 <div
                   role="status"
@@ -2971,28 +2925,8 @@ function MapPlanerWorkspace() {
               )}
             </div>
 
-            <div
-              className={`pointer-events-none absolute right-3 sm:bottom-3 lg:bottom-auto lg:right-[52px] lg:top-3 ${
-                hideMobileBottomActions
-                  ? "bottom-3"
-                  : isPlanner
-                    ? "bottom-[114px]"
-                    : "bottom-[56px]"
-              }`}
-            >
-              <UserLocationHud
-                status={locationStatus}
-                location={userLocation}
-                following={followUser}
-                onCenter={centerOnMe}
-                onRetry={startLocation}
-              />
-            </div>
-
-            <div className="pointer-events-none absolute right-3 top-3">
+            <div className="pointer-events-none absolute right-2.5 top-2.5">
               <MapControls
-                mapStyle={mapStyle}
-                onMapStyle={setMapStyle}
                 onZoomIn={() => mapRef.current?.zoomIn()}
                 onZoomOut={() => mapRef.current?.zoomOut()}
                 onFit={() =>
@@ -3002,6 +2936,9 @@ function MapPlanerWorkspace() {
                       ? mapRef.current?.fitOverlay()
                       : mapRef.current?.fitRoute()
                 }
+                showFit={Boolean(
+                  routeReady || kursowkaOverlay || (lineEditorOpen && lineEditorMapState),
+                )}
                 onLocate={centerOnMe}
                 locateState={
                   locationStatus === "denied" || locationStatus === "unavailable"
@@ -3014,24 +2951,11 @@ function MapPlanerWorkspace() {
                         ? "requesting"
                         : "idle"
                 }
-                busCount={mapStops.length}
-                isPlanner={isPlanner}
-                visibility={{ ...visibility, stops: stopDisplay }}
-                onVisibilityChange={(patch) => {
-                  if (patch.stops === "route" && activeRoute.coords.length < 2) {
-                    showToast("Wyznacz trasę, aby pokazać przystanki przy niej.");
-                    return;
-                  }
-                  updateVisibility(patch);
-                }}
-                busLoading={busLoading}
-                onRefreshBusStops={refreshBusStops}
-                onHome={centerWalbrzych}
               />
             </div>
 
             {routeReady && (
-              <div className="pointer-events-none absolute bottom-10 left-3 hidden lg:block">
+              <div className="pointer-events-none absolute bottom-3 left-2.5 hidden lg:block">
                 <NavigationHud
                   active={navActive}
                   playing={navPlaying}
@@ -3052,7 +2976,7 @@ function MapPlanerWorkspace() {
             )}
 
             {routeReady && (
-              <div className="pointer-events-none absolute bottom-8 right-3 hidden xl:block">
+              <div className="pointer-events-none absolute bottom-5 right-2.5 hidden xl:block">
                 <QuickComparison
                   metrics={comparisons}
                   activeVehicle={vehicle}
@@ -3061,108 +2985,62 @@ function MapPlanerWorkspace() {
                 />
               </div>
             )}
-
-            <div className="pointer-events-none absolute bottom-2.5 left-3 hidden select-none items-center gap-2 rounded-full border border-line/70 bg-surface/92 px-2 py-1 sm:flex">
-              {isPlanner ? (
-                <>
-                  <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                    <span className="h-1.5 w-1.5 rounded-full bg-brand" /> A start
-                  </span>
-                  <span className="h-2 w-px bg-line" />
-                  <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                    <span className="h-1.5 w-1.5 rounded-full bg-ink ring-1 ring-highlight" /> B
-                    meta
-                  </span>
-                  <span className="h-2 w-px bg-line" />
-                </>
-              ) : (tripOrigin || tripDest) ? (
-                <>
-                  {tripOrigin && (
-                    <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#0891b2]" /> start
-                    </span>
-                  )}
-                  {tripOrigin && tripDest && <span className="h-2 w-px bg-line" />}
-                  {tripDest && (
-                    <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#e11d48]" /> cel
-                    </span>
-                  )}
-                  <span className="h-2 w-px bg-line" />
-                </>
-              ) : null}
-              {stopDisplay !== "off" && (
-                <>
-                  <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#1a73e8]" /> przystanek (
-                    {mapStops.length})
-                  </span>
-                  <span className="h-2 w-px bg-line" />
-                </>
-              )}
-              <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                GPS autobusów ({visibleLiveBuses.length})
-              </span>
-              {trafficSignals.length > 0 && (
-                <>
-                  <span className="h-2 w-px bg-line" />
-                  <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> światła (
-                    {trafficSignals.length})
-                  </span>
-                </>
-              )}
-              {turnaroundSpots.length > 0 && (
-                <>
-                  <span className="h-2 w-px bg-line" />
-                  <span className="flex items-center gap-1 text-[7.5px] font-bold text-mute">
-                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500" /> zawrotki (
-                    {turnaroundSpots.length})
-                  </span>
-                </>
-              )}
-            </div>
           </div>
 
-          <div
-            data-testid="map-bottom-actions"
-            className={`pointer-events-none absolute left-3 items-end gap-1.5 pb-[env(safe-area-inset-bottom)] sm:bottom-10 sm:flex sm:pb-0 ${
-              hideMobileBottomActions ? "hidden" : "flex"
-            } ${isPlanner ? "bottom-[68px]" : "bottom-3"} ${
-              lowerBottomActionsZ ? "z-[490]" : "z-[540]"
-            }`}
-          >
-            <StopFinder stops={busStops} isPlanner={isPlanner} onSelect={selectStopFromFinder} />
-            {!isPlanner && (
-              <button
-                type="button"
-                onClick={() => {
-                  setTripOpen((open) => !open);
-                  if (tripOpen) setTripPick(null);
-                }}
-                aria-expanded={tripOpen}
-                title="Planer podróży — możesz też kliknąć prawym przyciskiem na mapie, aby ustawić start lub cel"
-                className={`pointer-events-auto flex min-h-8 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[9.5px] font-extrabold shadow-[0_10px_28px_rgba(13,42,28,0.35)] transition-all hover:opacity-90 active:scale-[0.98] sm:min-h-9 sm:px-3 sm:py-2 sm:text-[9px] ${
-                  tripOpen
-                    ? "border-line-strong bg-surface text-ink"
-                    : "border-brand-deep/20 bg-brand text-on-brand"
-                }`}
-              >
-                <RouteIcon className="h-3.5 w-3.5" strokeWidth={2.4} />
-                {tripOpen ? "Zamknij planer" : "Planer podróży"}
-                {!tripOpen && (tripOrigin || tripDest) && (
-                  <span className="ml-0.5 inline-flex items-center gap-0.5" aria-hidden="true">
-                    {tripOrigin && (
-                      <span className="h-2 w-2 rounded-full border border-white bg-[#0891b2]" />
-                    )}
-                    {tripDest && (
-                      <span className="h-2 w-2 rounded-full border border-white bg-[#e11d48]" />
-                    )}
-                  </span>
-                )}
-              </button>
-            )}
-          </div>
+          <MapInfoSidebar
+            open={mapSidebarOpen}
+            onClose={() => setMapSidebarOpen(false)}
+            isPlanner={isPlanner}
+            showLiveBuses={showLiveBuses}
+            onToggleLiveBuses={() => toggleVisibility("liveBuses")}
+            operatorFilter={operatorFilter}
+            onOperatorFilter={setOperatorFilter}
+            liveVehicles={liveVehicles}
+            liveTraffic={liveTraffic}
+            liveLoading={liveLoading}
+            onRefreshLive={() => void fetchLiveBuses(true)}
+            mapStopCount={mapStops.length}
+            busLoading={busLoading}
+            onRefreshBusStops={refreshBusStops}
+            visibility={{ ...visibility, stops: stopDisplay }}
+            onVisibilityChange={(patch) => {
+              if (patch.stops === "route" && activeRoute.coords.length < 2) {
+                showToast("Wyznacz trasę, aby pokazać przystanki przy niej.");
+                return;
+              }
+              updateVisibility(patch);
+            }}
+            signalCount={trafficSignals.length}
+            turnaroundCount={turnaroundSpots.length}
+            mapStyle={mapStyle}
+            onMapStyle={setMapStyle}
+            onHome={centerWalbrzych}
+            onFit={() =>
+              lineEditorOpen && lineEditorMapState
+                ? mapRef.current?.fitLineEditor()
+                : kursowkaOverlay
+                  ? mapRef.current?.fitOverlay()
+                  : mapRef.current?.fitRoute()
+            }
+            locationStatus={locationStatus}
+            userLocation={userLocation}
+            followingUser={followUser}
+            onLocate={centerOnMe}
+            onRetryLocation={startLocation}
+            tripOpen={tripOpen}
+            hasTripOrigin={Boolean(tripOrigin)}
+            hasTripDest={Boolean(tripDest)}
+            onOpenTripPlanner={() => {
+              setTripOpen(true);
+              setTripPick(null);
+            }}
+            route={isPlanner ? activeRoute : undefined}
+            waypoints={isPlanner ? waypoints : undefined}
+            metrics={isPlanner ? metrics : undefined}
+            vehicle={isPlanner ? vehicle : undefined}
+            brigade={isPlanner ? brigade : undefined}
+            routeReady={routeReady}
+          />
 
           {!isPlanner && kursowkaOverlay?.course && !busOverlay && (
             <Suspense fallback={null}>
@@ -3188,6 +3066,7 @@ function MapPlanerWorkspace() {
                 onDrawerOpenChange={(open) => {
                   setCourseDrawerOpen(open);
                   setCourseSidebarOpen(open);
+                  if (open) setMapSidebarOpen(false);
                 }}
               />
             </Suspense>

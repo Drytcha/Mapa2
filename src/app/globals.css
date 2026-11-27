@@ -181,35 +181,25 @@ button {
 }
 
 .leaflet-control-attribution {
-  border-radius: 7px 0 0 0 !important;
+  border-radius: 6px 0 0 0 !important;
   border: 1px solid var(--color-line) !important;
   border-right: none !important;
   border-bottom: none !important;
-  background: color-mix(in srgb, var(--color-surface) 88%, transparent) !important;
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent) !important;
   color: var(--color-mute) !important;
-  font-size: 9.5px !important;
-  padding: 2px 7px !important;
+  font-size: 7.5px !important;
+  line-height: 1.25 !important;
+  padding: 1px 5px !important;
+  max-width: calc(100vw - 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   -webkit-user-select: none;
   user-select: none;
 }
 .leaflet-control-attribution a {
   color: var(--color-ink-soft) !important;
   text-decoration: none;
-}
-
-@media (max-width: 1023px) {
-  .leaflet-bottom.leaflet-right {
-    top: 0;
-    bottom: auto;
-    right: auto;
-    left: 0;
-    max-width: calc(100% - 54px);
-  }
-  .leaflet-control-attribution {
-    margin: 0 !important;
-    border-radius: 0 0 7px 0 !important;
-    font-size: 8px !important;
-  }
 }
 
 .leaflet-tooltip.waypoint-tooltip {
