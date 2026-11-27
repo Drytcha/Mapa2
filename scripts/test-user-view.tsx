@@ -7,7 +7,13 @@ import CourseNavigationHud from "../src/components/CourseNavigationHud";
 import BusSearch from "../src/components/BusSearch";
 import KursowkiDialog from "../src/components/KursowkiDialog";
 import MapInfoSidebar from "../src/components/MapInfoSidebar";
-import { BusStopCard, LiveBusCard, MapControls, MapQuickBar } from "../src/components/MapOverlays";
+import {
+  BusStopCard,
+  LiveBusCard,
+  LiveFleetControl,
+  MapControls,
+  MapQuickBar,
+} from "../src/components/MapOverlays";
 import { buildBusMarker } from "../src/lib/busMarker";
 import {
   buildCourseNavRoute,
@@ -320,33 +326,88 @@ const homeSidebarHtml = renderToStaticMarkup(
 );
 assert.match(homeSidebarHtml, /data-open="true"/);
 assert.match(homeSidebarHtml, /data-view="home"/);
-assert.match(homeSidebarHtml, /Autobusy GPS na żywo/);
-assert.match(homeSidebarHtml, /Włączone · 1 w ruchu/);
 assert.match(homeSidebarHtml, /Widoczność na mapie/);
 assert.match(homeSidebarHtml, /Wszystkie przystanki \(2\)/);
-assert.match(homeSidebarHtml, /Styl mapy i motyw/);
 assert.match(homeSidebarHtml, /Moja lokalizacja GPS/);
 assert.doesNotMatch(
   homeSidebarHtml,
-  /Legenda punktualności GPS|Przywróć domyślne ustawienia/,
-  "szczegółowe kontrolki nie zaśmiecają głównego widoku sidebara",
+  /Autobusy GPS na żywo|Styl mapy i motyw|Legenda punktualności GPS|Przywróć domyślne ustawienia/,
+  "GPS i styl mapy są bezpośrednio na mapie, nie w podwidokach sidebara",
 );
 
-// Podwidoki otwierają się w tym samym sidebarze, skupione na jednym ustawieniu + przycisk „Wróć”
-const gpsViewHtml = renderToStaticMarkup(
-  <MapInfoSidebar
-    {...baseSidebarProps}
-    open={true}
-    initialView="gps"
-    isPlanner={false}
+// Pasek Autobusy GPS na mapie (LiveFleetControl) jest widoczny cały czas, ma wyłącznik i nie zawiera kategorii „Inni”
+const liveFleetHtml = renderToStaticMarkup(
+  <LiveFleetControl
+    hideSearch
+    showLiveBuses={true}
+    onToggleLiveBuses={noop}
+    operatorFilter="all"
+    onOperatorFilter={noop}
     liveVehicles={sampleVehicles}
+    busStops={sampleStops}
+    liveTraffic={null}
+    liveLoading={false}
+    onRefreshLive={noop}
+    signalCount={0}
+    showTrafficSignals={false}
+    onToggleTrafficSignals={noop}
+    turnaroundCount={0}
+    showTurnarounds={false}
+    onToggleTurnarounds={noop}
+    onSelectBus={noop}
+    onSelectStop={noop}
   />,
 );
-assert.match(gpsViewHtml, /data-view="gps"/);
-assert.match(gpsViewHtml, /data-testid="map-sidebar-back"/);
-assert.match(gpsViewHtml, /Filtr przewoźnika/);
-assert.match(gpsViewHtml, /ŚKA/);
-assert.match(gpsViewHtml, /Legenda punktualności GPS/);
+assert.match(liveFleetHtml, /data-testid="live-fleet-bar"/);
+assert.match(liveFleetHtml, /data-testid="live-gps-toggle"/);
+assert.match(liveFleetHtml, /GPS \(1\)/);
+assert.match(liveFleetHtml, /Wszystkie \(1\)/);
+assert.match(liveFleetHtml, /MZUK/);
+assert.match(liveFleetHtml, /ŚKA/);
+assert.match(liveFleetHtml, /Odśwież pozycje GPS autobusów/);
+assert.doesNotMatch(liveFleetHtml, /Inni|Inny|Pozostali operatorzy/, "brak kategorii 'inne' w filtrach przewoźnika");
+assert.doesNotMatch(liveFleetHtml, /type="search"/, "hideSearch zapobiega duplikacji pola wyszukiwania pod MapQuickBar");
+
+const liveFleetOffHtml = renderToStaticMarkup(
+  <LiveFleetControl
+    hideSearch
+    showLiveBuses={false}
+    onToggleLiveBuses={noop}
+    operatorFilter="all"
+    onOperatorFilter={noop}
+    liveVehicles={sampleVehicles}
+    busStops={sampleStops}
+    liveTraffic={null}
+    liveLoading={false}
+    onRefreshLive={noop}
+    signalCount={0}
+    showTrafficSignals={false}
+    onToggleTrafficSignals={noop}
+    turnaroundCount={0}
+    showTurnarounds={false}
+    onToggleTurnarounds={noop}
+    onSelectBus={noop}
+    onSelectStop={noop}
+  />,
+);
+assert.match(liveFleetOffHtml, /aria-pressed="false"/);
+assert.doesNotMatch(liveFleetOffHtml, /Wszystkie \(1\)/, "po wyłączeniu GPS filtry chowają się, a sam przycisk GPS pozostaje na mapie");
+
+// Styl mapy znajduje się w prawym pionowym pasku MapControls
+const mapControlsWithStyleHtml = renderToStaticMarkup(
+  <MapControls
+    mapStyle="light"
+    onMapStyle={noop}
+    onZoomIn={noop}
+    onZoomOut={noop}
+    onFit={noop}
+    onLocate={noop}
+    locateState="idle"
+  />,
+);
+assert.match(mapControlsWithStyleHtml, /data-testid="map-controls-bar"/);
+assert.match(mapControlsWithStyleHtml, /data-testid="map-style-toggle"/);
+assert.match(mapControlsWithStyleHtml, /aria-label="Styl mapy"/);
 
 const visibilityViewHtml = renderToStaticMarkup(
   <MapInfoSidebar
@@ -361,20 +422,6 @@ assert.match(visibilityViewHtml, /data-view="visibility"/);
 assert.match(visibilityViewHtml, /aria-label="Ustawienia widoczności"/);
 assert.match(visibilityViewHtml, /Kursówka nad pojazdem/);
 assert.match(visibilityViewHtml, /Przywróć domyślne ustawienia/);
-
-const appearanceViewHtml = renderToStaticMarkup(
-  <MapInfoSidebar
-    {...baseSidebarProps}
-    open={true}
-    initialView="appearance"
-    isPlanner={false}
-  />,
-);
-assert.match(appearanceViewHtml, /data-view="appearance"/);
-assert.match(appearanceViewHtml, /Mapa jasna/);
-assert.match(appearanceViewHtml, /Mapa ciemna/);
-assert.match(appearanceViewHtml, /Satelita/);
-assert.match(appearanceViewHtml, /Motyw interfejsu/);
 
 const locationViewHtml = renderToStaticMarkup(
   <MapInfoSidebar
@@ -468,14 +515,13 @@ for (const railId of [
   "rail-trip",
   "rail-lines",
   "rail-kursowki",
-  "rail-gps",
   "rail-visibility",
-  "rail-appearance",
   "rail-theme",
   "rail-home",
 ]) {
   assert.match(desktopClosedWithRailHtml, new RegExp(`data-testid="${railId}"`), `ikona na pasku bocznym: ${railId}`);
 }
+assert.doesNotMatch(desktopClosedWithRailHtml, /rail-gps|rail-appearance/);
 assert.equal(
   (desktopClosedWithRailHtml.match(/data-testid="map-sidebar-toggle"/g) ?? []).length,
   1,

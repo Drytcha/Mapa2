@@ -251,14 +251,12 @@ try {
     await page.getByRole("heading", { name: "Północ" }).waitFor();
     await page.locator(".leaflet-tooltip.stop-name-label", { hasText: "Północ" }).waitFor();
 
-    // Icons remain visible when switching basemaps.
-    await page.getByTestId("map-sidebar-toggle").click();
-    await page.getByTestId("sidebar-nav-appearance").click();
+    // Icons remain visible when switching basemaps from right-side MapControls.
     for (const name of ["Mapa jasna", "Satelita", "Mapa ciemna"]) {
+      await page.getByRole("button", { name: "Styl mapy" }).click();
       await page.getByRole("button", { name: new RegExp(name) }).click();
       assert.equal(await page.locator('[data-stop-id="tt-b"]').isVisible(), true);
     }
-    await page.getByTestId("map-sidebar-close").click();
     assert.deepEqual(errors, []);
     await context.close();
   }

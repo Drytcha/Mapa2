@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   ArrowUpDown,
@@ -12,6 +12,7 @@ import {
   CornerUpLeft,
   Crosshair,
   Flag,
+  Layers,
   ListOrdered,
   Loader2,
   LocateFixed,
@@ -19,6 +20,7 @@ import {
   MapPinned,
   Maximize2,
   Minus,
+  Moon,
   MousePointer2,
   PanelLeftOpen,
   Pause,
@@ -26,8 +28,10 @@ import {
   Plus,
   Radio,
   RefreshCw,
+  Satellite,
   Scale,
   Square,
+  Sun,
   Timer,
   TrafficCone,
   Trash2,
@@ -337,9 +341,12 @@ export function LiveFleetControl({
   onSelectBus,
   onSelectStop,
   isPlanner = false,
+  hideSearch = false,
 }: {
   /** Planista widzi szczegóły dopasowania brygad; podróżny tylko wynik. */
   isPlanner?: boolean;
+  /** Ukryj duplikat wyszukiwarki, gdy MapQuickBar jest już widoczny powyżej. */
+  hideSearch?: boolean;
   showLiveBuses: boolean;
   onToggleLiveBuses: () => void;
   operatorFilter: "all" | WalbrzychOperatorKey;
@@ -363,24 +370,30 @@ export function LiveFleetControl({
   const counts = liveTraffic?.operatorBreakdown ?? {
     mzuk: liveVehicles.filter((v) => v.operatorKey === "mzuk").length,
     ska: liveVehicles.filter((v) => v.operatorKey === "ska").length,
-    other: liveVehicles.filter((v) => v.operatorKey === "other").length,
+    other: 0,
   };
+  const activeOp = operatorFilter === "other" ? "all" : operatorFilter;
 
   return (
-    <div className="pointer-events-none flex flex-wrap items-center gap-1.5 select-none">
-      <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-1 rounded-xl border border-line/80 bg-surface/94 px-2 py-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
+    <div
+      data-testid="live-fleet-bar"
+      className="pointer-events-none flex flex-wrap items-center gap-1.5 select-none"
+    >
+      <div className="pointer-events-auto flex w-fit flex-wrap items-center gap-1 rounded-2xl border border-line/60 bg-surface/96 px-2 py-1 shadow-[0_4px_20px_rgba(15,23,42,0.10)]">
         <button
           type="button"
+          data-testid="live-gps-toggle"
+          aria-pressed={showLiveBuses}
           onClick={onToggleLiveBuses}
           className={cn(
-            "flex h-6 items-center gap-1 rounded-lg px-2 text-[8.5px] font-extrabold transition-colors",
+            "flex h-6.5 items-center gap-1 rounded-xl px-2.5 text-[10px] font-extrabold transition-colors",
             showLiveBuses
               ? "bg-brand text-on-brand"
               : "bg-soft text-mute hover:text-ink",
           )}
         >
           <Radio
-            className={cn("h-2.5 w-2.5", showLiveBuses && "animate-pulse")}
+            className={cn("h-3 w-3", showLiveBuses && "animate-pulse")}
           />
           GPS ({liveVehicles.length})
         </button>
@@ -392,18 +405,18 @@ export function LiveFleetControl({
                 { id: "all", label: `Wszystkie (${liveVehicles.length})` },
                 { id: "mzuk", label: `MZUK (${counts.mzuk})` },
                 { id: "ska", label: `ŚKA (${counts.ska})` },
-                { id: "other", label: `Inni (${counts.other})` },
               ] as const
             ).map((item) => (
               <button
                 key={item.id}
                 type="button"
+                aria-pressed={activeOp === item.id}
                 onClick={() => onOperatorFilter(item.id)}
                 className={cn(
-                  "h-6 rounded-md px-1.5 text-[8px] font-bold transition-colors",
-                  operatorFilter === item.id
-                    ? "border border-line bg-raised text-ink"
-                    : "text-mute hover:bg-raised hover:text-ink",
+                  "h-6.5 rounded-xl px-2 text-[9.5px] font-bold transition-colors",
+                  activeOp === item.id
+                    ? "bg-brand-soft text-brand-ink"
+                    : "text-mute hover:bg-soft hover:text-ink",
                 )}
               >
                 <span className="flex items-center gap-1">
@@ -420,23 +433,25 @@ export function LiveFleetControl({
           disabled={liveLoading}
           title="Odśwież pozycje GPS autobusów"
           aria-label="Odśwież pozycje GPS autobusów"
-          className="grid h-6 w-6 place-items-center rounded-md text-mute transition-colors hover:bg-raised hover:text-brand-ink disabled:opacity-40"
+          className="grid h-6.5 w-6.5 place-items-center rounded-xl text-mute transition-colors hover:bg-soft hover:text-brand-ink disabled:opacity-40"
         >
-          <RefreshCw className={cn("h-3 w-3", liveLoading && "animate-spin")} />
+          <RefreshCw className={cn("h-3.5 w-3.5", liveLoading && "animate-spin")} />
         </button>
       </div>
 
-      <div className="pointer-events-auto w-[272px] max-w-full sm:w-[300px]">
-        <BusSearch
-          vehicles={liveVehicles}
-          stops={busStops}
-          onSelectVehicle={onSelectBus}
-          onSelectStop={onSelectStop}
-          compact
-          showDutyStatus={isPlanner}
-          isPlanner={isPlanner}
-        />
-      </div>
+      {!hideSearch && (
+        <div className="pointer-events-auto w-[272px] max-w-full sm:w-[300px]">
+          <BusSearch
+            vehicles={liveVehicles}
+            stops={busStops}
+            onSelectVehicle={onSelectBus}
+            onSelectStop={onSelectStop}
+            compact
+            showDutyStatus={isPlanner}
+            isPlanner={isPlanner}
+          />
+        </div>
+      )}
 
       {isPlanner && showLiveBuses && dutyStats.eligible > 0 && (
         <div
@@ -461,7 +476,7 @@ export function LiveFleetControl({
           onClick={() => setLegendExpanded((v) => !v)}
           title="Pokaż / ukryj legendę punktualności GPS"
           aria-expanded={legendExpanded}
-          className="pointer-events-auto flex w-fit flex-wrap items-center gap-1.5 rounded-xl border border-line/80 bg-surface/94 px-2 py-1.5 text-[7.5px] font-bold text-mute shadow-[0_8px_24px_rgba(13,42,28,0.14)] transition-colors hover:text-ink"
+          className="pointer-events-auto flex min-h-8.5 w-fit flex-wrap items-center gap-1.5 rounded-2xl border border-line/60 bg-surface/96 px-2.5 py-1 text-[9.5px] font-bold text-mute shadow-[0_4px_20px_rgba(15,23,42,0.10)] transition-colors hover:text-ink"
         >
           {(
             [
@@ -606,7 +621,6 @@ export function LiveBusCard({
   const operators: Array<{ key: WalbrzychOperatorKey; label: string }> = [
     { key: "mzuk", label: "MZUK" },
     { key: "ska", label: "ŚKA" },
-    { key: "other", label: "Inny" },
   ];
 
   const [tripStops, setTripStops] = useState<Awaited<
@@ -1079,6 +1093,36 @@ export function LiveBusCard({
 
 /* -------------------------------------------------------------------------- */
 
+const MAP_CONTROL_STYLES: Array<{
+  id: MapStyle;
+  label: string;
+  hint: string;
+  icon: typeof Sun;
+  swatch: string;
+}> = [
+  {
+    id: "light",
+    label: "Mapa jasna",
+    hint: "Czytelne ulice, chodniki i przystanki",
+    icon: Sun,
+    swatch: "linear-gradient(135deg, #f6f1e2 0%, #e6ecd9 55%, #cfe0e6 100%)",
+  },
+  {
+    id: "dark",
+    label: "Mapa ciemna",
+    hint: "Stonowany podkład nocny",
+    icon: Moon,
+    swatch: "linear-gradient(135deg, #0b1612 0%, #152b22 60%, #1f3c30 100%)",
+  },
+  {
+    id: "satellite",
+    label: "Satelita",
+    hint: "Zdjęcia lotnicze Esri World Imagery",
+    icon: Satellite,
+    swatch: "linear-gradient(135deg, #1b3a2b 0%, #3a5a40 50%, #6c7a52 100%)",
+  },
+];
+
 export function MapControls({
   onZoomIn,
   onZoomOut,
@@ -1086,6 +1130,8 @@ export function MapControls({
   onLocate,
   locateState,
   showFit = false,
+  mapStyle = "light",
+  onMapStyle,
 }: {
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -1095,9 +1141,36 @@ export function MapControls({
   locateState: "idle" | "requesting" | "active" | "following" | "denied";
   /** Przycisk dopasowania pokazujemy tylko, gdy na mapie jest aktywna trasa / kurs. */
   showFit?: boolean;
+  /** Aktualny podkład mapy i zmiana stylu (jasna / ciemna / satelita). */
+  mapStyle?: MapStyle;
+  onMapStyle?: (style: MapStyle) => void;
 }) {
+  const [styleOpen, setStyleOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!styleOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setStyleOpen(false);
+      }
+    };
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setStyleOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside, true);
+    window.addEventListener("keydown", closeEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      window.removeEventListener("keydown", closeEscape);
+    };
+  }, [styleOpen]);
+
   return (
-    <div className="pointer-events-none relative flex select-none flex-col items-end">
+    <div
+      ref={rootRef}
+      className="pointer-events-none relative flex select-none flex-col items-end"
+    >
       <div
         data-testid="map-controls-bar"
         className="pointer-events-auto flex flex-col gap-0.5 rounded-2xl border border-line/60 bg-surface p-1 shadow-[0_4px_20px_rgba(15,23,42,0.10)]"
@@ -1130,6 +1203,24 @@ export function MapControls({
             <LocateFixed className="h-4 w-4" strokeWidth={2} />
           )}
         </button>
+
+        <button
+          type="button"
+          data-testid="map-style-toggle"
+          onClick={() => setStyleOpen((current) => !current)}
+          title="Styl mapy"
+          aria-label="Styl mapy"
+          aria-expanded={styleOpen}
+          className={cn(
+            "grid h-8 w-8 place-items-center rounded-xl transition-colors",
+            styleOpen
+              ? "bg-brand-soft text-brand-ink"
+              : "text-ink-soft hover:bg-soft hover:text-ink",
+          )}
+        >
+          <Layers className="h-4 w-4" strokeWidth={2} />
+        </button>
+
         <span className="mx-2 my-0.5 h-px bg-line/50" />
         <button
           type="button"
@@ -1164,6 +1255,61 @@ export function MapControls({
           </>
         )}
       </div>
+
+      {styleOpen && (
+        <div
+          role="dialog"
+          aria-label="Styl mapy"
+          data-testid="map-style-popover"
+          className="pointer-events-auto absolute right-11 top-0 z-20 w-[202px] rounded-2xl border border-line/65 bg-surface p-1.5 shadow-[0_14px_38px_rgba(15,23,42,0.20)]"
+        >
+          <div className="px-2.5 py-1 text-[10px] font-bold text-mute">
+            Styl mapy
+          </div>
+          {MAP_CONTROL_STYLES.map((style) => {
+            const Icon = style.icon;
+            const active = mapStyle === style.id;
+            return (
+              <button
+                key={style.id}
+                type="button"
+                aria-label={style.label}
+                aria-pressed={active}
+                onClick={() => {
+                  onMapStyle?.(style.id);
+                  setStyleOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors",
+                  active ? "bg-brand-soft" : "hover:bg-soft/80",
+                )}
+              >
+                <span
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-line/60"
+                  style={{ background: style.swatch }}
+                >
+                  <Icon
+                    className={cn(
+                      "h-3.5 w-3.5",
+                      style.id === "dark" || style.id === "satellite"
+                        ? "text-white"
+                        : "text-ink",
+                    )}
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[11.5px] font-bold text-ink">
+                    {style.label}
+                  </span>
+                  <span className="block truncate text-[9.5px] text-mute">
+                    {style.hint}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

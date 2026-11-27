@@ -218,9 +218,9 @@ try {
   assert.equal(await page.locator(".live-bus").evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(134, 239, 172)");
 
   // Nieruchomy autobus, ale nowe informacje GPS: postęp musi się odświeżyć
-  // również wtedy, gdy współrzędne w ogóle się nie zmieniły.
-  await page.getByTestId("map-sidebar-toggle").click();
-  await page.getByTestId("sidebar-nav-gps").click();
+  // również wtedy, gdy współrzędne w ogóle się nie zmieniły. Pasek GPS jest cały czas na mapie!
+  assert.equal(await page.getByTestId("live-fleet-bar").isVisible(), true, "pasek Autobusy GPS jest stale widoczny na mapie");
+  assert.equal(await page.getByTestId("live-fleet-bar").getByText(/Inni/).count(), 0, "brak kategorii 'Inni' na pasku GPS");
   feed.nextSequence = 2;
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.waitForFunction(() => {
@@ -255,7 +255,6 @@ try {
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.getByTestId("route-progress-status").getByText(/Brak danych/).waitFor();
   assert.deepEqual(await page.locator(".leaflet-routeDone-pane path").evaluateAll((paths) => paths.map((path) => path.getAttribute("stroke"))), ["#94a3b8"]);
-  await page.getByTestId("map-sidebar-close").click();
 
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // Drugi klik w ten sam autobus zamyka kartę i chowa trasę.
