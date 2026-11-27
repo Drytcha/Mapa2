@@ -8,6 +8,7 @@ import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
+import { COURSE_SIDEBAR_WIDTH } from "@/lib/courseRoute";
 import { FUTURE_ROUTE_COLOR, liveStopProgress, pastRouteColor, splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange } from "@/lib/routeProgress";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
 import {
@@ -27,7 +28,7 @@ import type {
 } from "@/lib/types";
 import type { TurnaroundSpot } from "@/lib/engine/turnarounds";
 import { getVehicleDestinations } from "@/lib/engine/gtfsStore";
-import type { CoursePreview } from "@/lib/engine/gtfsStore";
+import type { CoursePreview, CoursePreviewStop } from "@/lib/engine/gtfsStore";
 import { formatWarsawClock } from "@/lib/core/time";
 
 /**
@@ -38,6 +39,8 @@ import { formatWarsawClock } from "@/lib/core/time";
 const STOP_SHOW_PAD = 0.12;
 const STOP_KEEP_PAD = 0.5;
 const STOP_ADD_PER_FRAME = 90;
+/** Odstęp panelu kursu od prawej krawędzi mapy (px). */
+const COURSE_PANEL_RIGHT = 54;
 
 export interface MapUserLocation {
   lat: number;
@@ -76,6 +79,22 @@ export interface LineRouteEditorMapState {
   selectedVertexIndices: number[];
 }
 
+/**
+ * „Trasa do przystanku”: przebieg kursu przycięty do wybranego przystanku.
+ * Podróżny chce sprawdzić dojazd do swojego przystanku, a nie do pętli.
+ */
+export interface CourseRouteTarget {
+  stopIndex: number;
+  stopName: string;
+  /** Geometria od startu kursu do wybranego przystanku. */
+  path: [number, number][];
+  meters: number;
+  /** Czas jazdy według rozkładu (ms). */
+  rideMs: number;
+  departMs: number;
+  arriveMs: number;
+}
+
 export interface KursowkaShapeOverlay {
   title: string;
   color: string;
@@ -84,6 +103,11 @@ export interface KursowkaShapeOverlay {
   stops: Array<{ name: string; lat: number; lon: number; sequence?: number }>;
   /** Present only when previewing one scheduled course, not a whole brigade. */
   course?: CoursePreview;
+  /**
+   * Gdy ustawione, mapa pokazuje tylko dojazd do tego przystanku, a reszta
+   * kursu jest wygaszona (widoczna, ale nie wyróżniona).
+   */
+  courseTarget?: CourseRouteTarget | null;
   /**
    * Autobus, którego kurs właśnie oglądamy. Gdy jest podany, część trasy za
    * pojazdem rysujemy na szaro (już przejechana), a część przed nim na zielono.
@@ -152,6 +176,16 @@ interface MapViewProps {
   turnaroundSpots?: TurnaroundSpot[];
   showTurnarounds?: boolean;
   kursowkaOverlay?: KursowkaShapeOverlay | null;
+  /**
+   * Klik w przystanek oglądanego kursu na mapie: podróżny chce dojechać do
+   * tego przystanku (a nie do końca kursu).
+   */
+  onCourseStopClick?: (stop: CoursePreviewStop) => void;
+  /**
+   * Panel kursu otwarty (na telefonie startuje zwinięty). Gdy jest zwinięty,
+   * trasa dostaje całą szerokość ekranu, zamiast marginesu na niewidoczny panel.
+   */
+  courseSidebarOpen?: boolean | null;
   onRouteProgressStatusChange?: (status: LiveRouteProgressStatus | null) => void;
   /** Na telefonie karta autobusu zajmuje dół ekranu — dopasowanie trasy musi to uwzględnić. */
   bottomSheetOpen?: boolean;
@@ -257,6 +291,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     turnaroundSpots = [],
     showTurnarounds = true,
     kursowkaOverlay = null,
+    onCourseStopClick,
+    courseSidebarOpen = null,
     onRouteProgressStatusChange,
     bottomSheetOpen = false,
     tripPlan = null,
@@ -344,6 +380,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const liveBusClickRef = useRef(onLiveBusClick);
   const routeRef = useRef(route);
   const overlayRef = useRef(kursowkaOverlay);
+  const courseStopClickRef = useRef(onCourseStopClick);
   const lineEditorRef = useRef(lineRouteEditor);
   const lineEditorMoveRef = useRef(onLineEditorVertexMove);
   const lineEditorInsertRef = useRef(onLineEditorVertexInsert);
@@ -352,6 +389,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const lineEditorSegmentPickRef = useRef(onLineEditorSegmentPickVertex);
   const lineEditorBoxSelectRef = useRef(onLineEditorBoxSelect);
   const lineEditorToggleSelectRef = useRef(onLineEditorToggleSelectVertex);
+  /** Trasa do wybranego przystanku: osobna warstwa NAD linią całego kursu. */
+  const courseTargetGroupRef = useRef<L.LayerGroup | null>(null);
   const [selectionBox, setSelectionBox] = useState<{
     left: number;
     top: number;
@@ -370,6 +409,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     contextMenuRef.current = onMapContextMenu;
     routeRef.current = route;
     overlayRef.current = kursowkaOverlay;
+    courseStopClickRef.current = onCourseStopClick;
     lineEditorRef.current = lineRouteEditor;
     lineEditorMoveRef.current = onLineEditorVertexMove;
     lineEditorInsertRef.current = onLineEditorVertexInsert;
@@ -432,25 +472,57 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       fitBounds();
       return;
     }
-    const allCoords: [number, number][] = [...overlay.polylines.flat(), ...overlay.stops.map((stop): [number, number] => [stop.lat, stop.lon])];
+    const targetPath = overlay.courseTarget?.path ?? null;
+    // Trasa do przystanku: dopasowujemy sam wycinek, a nie cały kurs.
+    // Cały kurs: jak dotąd, ale bez przystanków za wybranym celem.
+    const targetStopIndex = overlay.courseTarget?.stopIndex ?? null;
+    const courseStops = overlay.course?.stops ?? null;
+    const visibleStops =
+      targetStopIndex != null && courseStops
+        ? courseStops.slice(0, targetStopIndex + 1).map((stop): [number, number] => [stop.lat, stop.lon])
+        : overlay.stops.map((stop): [number, number] => [stop.lat, stop.lon]);
+    const allCoords: [number, number][] = targetPath && targetPath.length >= 2
+      ? targetPath
+      : [...overlay.polylines.flat(), ...visibleStops];
     if (allCoords.length < 2) return;
     const size = map.getSize();
     // Na telefonie trasa musi zmieścić się NAD dolną kartą autobusu, inaczej
     // po kliknięciu w pojazd widać tylko panel, a nie jego trasę.
     const narrow = size.x < 640;
     const sheetInset = narrow && bottomSheetOpen ? Math.round(size.y * 0.5) : 0;
+    // Panel kursu jest widoczny tylko gdy otwarty (na telefonie startuje
+    // zwinięty). Dopóki karta nie zgłosiła stanu, zostawiamy miejsce na panel —
+    // przy pierwszym kadrze domyślnie jest on otwarty.
+    const sidebarVisible = overlay.course ? courseSidebarOpen !== false : true;
+
+    // Panel kursu zajmuje prawą krawędź. Leaflet centruje zawartość w polu
+    // `viewport - padding`, więc margines rezerwujący miejsce na panel musi być
+    // po prawej (bottom-right) — wtedy trasa ląduje na środku WOLNEJ części
+    // mapy, a nie pod panelem.
+    let paddingTopLeft: [number, number];
+    let paddingBottomRight: [number, number];
+    let maxZoom: number;
+    if (!narrow && overlay.course && sidebarVisible) {
+      const panel = Math.min(
+        COURSE_SIDEBAR_WIDTH + COURSE_PANEL_RIGHT + 24,
+        Math.max(0, size.x - 260),
+      );
+      paddingTopLeft = [24, 84];
+      paddingBottomRight = [panel, overlay.courseTarget ? 64 : 96];
+      maxZoom = targetPath ? 16 : 15;
+    } else if (narrow) {
+      paddingTopLeft = [16, 72];
+      paddingBottomRight = [16, 24 + sheetInset];
+      maxZoom = 15;
+    } else {
+      paddingTopLeft = [56, 56];
+      paddingBottomRight = [56, 56];
+      maxZoom = 15;
+    }
     map.fitBounds(L.latLngBounds(allCoords), {
-      paddingTopLeft: narrow
-        ? [16, 72]
-        : overlay.course
-          ? [size.x >= 760 ? Math.min(340, Math.round(size.x * 0.34)) : 36, 90]
-          : [56, 56],
-      paddingBottomRight: narrow
-        ? [16, 24 + sheetInset]
-        : overlay.course
-          ? [56, 100]
-          : [56, 56],
-      maxZoom: 15,
+      paddingTopLeft,
+      paddingBottomRight,
+      maxZoom,
       animate: true,
       duration: 0.8,
     });
@@ -564,6 +636,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     userPane.style.zIndex = "690";
     userPane.style.pointerEvents = "none";
 
+    // Segment „trasa do przystanku” — nad linią całego kursu, ale pod kropkami
+    // przystanków (625), żeby te pozostały klikalne.
+    const courseTargetPane = map.createPane("courseTarget");
+    courseTargetPane.style.zIndex = "520";
+    courseTargetPane.style.pointerEvents = "none";
+
     const lineEditorPane = map.createPane("lineEditor");
     lineEditorPane.style.zIndex = "640";
 
@@ -573,6 +651,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     routeGroupRef.current = L.layerGroup().addTo(map);
     kursowkaGroupRef.current = L.layerGroup().addTo(map);
     routeDoneGroupRef.current = L.layerGroup().addTo(map);
+    courseTargetGroupRef.current = L.layerGroup().addTo(map);
     lineEditorGroupRef.current = L.layerGroup().addTo(map);
     lineEditorHandlesGroupRef.current = L.layerGroup().addTo(map);
     tripGroupRef.current = L.layerGroup().addTo(map);
@@ -624,6 +703,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       routeGroupRef.current = null;
       kursowkaGroupRef.current = null;
       routeDoneGroupRef.current = null;
+      courseTargetGroupRef.current = null;
       lineEditorGroupRef.current = null;
       lineEditorHandlesGroupRef.current = null;
       tripGroupRef.current = null;
@@ -844,7 +924,15 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const lineColor = kursowkaOverlay.liveVehicleId ? FUTURE_ROUTE_COLOR : kursowkaOverlay.color || "#0d4f3b";
     const casingWeight = kursowkaOverlay.course ? 9 : 8;
     const lineWeight = kursowkaOverlay.course ? 5 : 4.5;
-    const lineOpacity = kursowkaOverlay.course?.approximate ? 0.72 : 0.96;
+    // Trasa do przystanku: cały kurs zostaje na mapie jako tło (wygaszony), a
+    // odcinek do wybranego przystanku rysuje osobna warstwa `courseTarget`.
+    // Kadrowanie robi wyłącznie ta warstwa — pełny kurs nie nadpisuje kadru.
+    const targetDimmed = Boolean(kursowkaOverlay.courseTarget);
+    const lineOpacity = targetDimmed
+      ? 0.28
+      : kursowkaOverlay.course?.approximate
+        ? 0.72
+        : 0.96;
     const drawable = kursowkaOverlay.polylines.filter((line) => line.length >= 2);
 
     // Pass 1: every white casing. Pass 2: every coloured line on top of them.
@@ -857,7 +945,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       L.polyline(path, {
         color: "#ffffff",
         weight: casingWeight,
-        opacity: 0.85,
+        opacity: targetDimmed ? 0.35 : 0.85,
         lineCap: "round",
         lineJoin: "round",
         pane: "kursowka",
@@ -878,28 +966,53 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     if (kursowkaOverlay.course) {
       const course = kursowkaOverlay.course;
+      const target = kursowkaOverlay.courseTarget ?? null;
       course.stops.forEach((stop, index) => {
         const isFirst = index === 0;
         const isLast = index === course.stops.length - 1;
+        const isTarget = target ? index === target.stopIndex : false;
+        // Gdy wybrano przystanek docelowy, przystanki za nim blakną — trasa
+        // prowadzi tylko do wybranego miejsca.
+        const faded = Boolean(target && index > target.stopIndex);
         const kind = isFirst ? "Start" : isLast ? "Koniec" : `Przystanek ${index + 1}`;
         const time = formatWarsawClock(isLast ? stop.arrivalMs : stop.departureMs);
-        const tooltip = `<b>${kind} · ${escapeHtml(time)}${stop.afterMidnight ? " (+1 dzień)" : ""}</b><br>${escapeHtml(stop.name)}`;
-        L.circleMarker([stop.lat, stop.lon], {
+        const tooltip = `<b>${kind} · ${escapeHtml(time)}${stop.afterMidnight ? " (+1 dzień)" : ""}</b><br>${escapeHtml(stop.name)}${
+          isTarget ? "<br><i>Jedziesz tutaj — trasa kończy się na tym przystanku</i>" : ""
+        }`;
+        const marker = L.circleMarker([stop.lat, stop.lon], {
           pane: "courseStops",
-          radius: isFirst || isLast ? 8 : 4.5,
-          weight: 2.5,
-          color: "#ffffff",
-          fillColor: isFirst ? "#0891b2" : isLast ? "#e11d48" : course.color,
-          fillOpacity: 1,
+          radius: isTarget ? 9 : isFirst || isLast ? 8 : 4.5,
+          weight: isTarget ? 3.5 : 2.5,
+          color: isTarget ? "#7c3aed" : "#ffffff",
+          fillColor: isTarget
+            ? "#7c3aed"
+            : faded
+              ? "#94a3b8"
+              : isFirst
+                ? "#0891b2"
+                : isLast
+                  ? "#e11d48"
+                  : course.color,
+          fillOpacity: faded ? 0.45 : 1,
           bubblingMouseEvents: false,
+          // Klik w kropkę na mapie = „chcę dojechać tutaj”. Ten sam przystanek
+          // drugi raz wraca do całej trasy kursu.
+          className: courseStopClickRef.current ? "course-stop--tappable" : undefined,
         })
           .bindTooltip(tooltip, {
             direction: isLast ? "bottom" : "top",
             offset: isLast ? [0, 10] : [0, -10],
-            permanent: isFirst || isLast,
-            className: "waypoint-tooltip",
+            permanent: isTarget || isFirst || isLast,
+            className: isTarget ? "waypoint-tooltip waypoint-tooltip--target" : "waypoint-tooltip",
           })
           .addTo(group);
+        if (courseStopClickRef.current) {
+          const routeStop = stop;
+          marker.on("click", (event) => {
+            if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+            courseStopClickRef.current?.(routeStop);
+          });
+        }
       });
     }
     // Podgląd całej linii / brygady: kropki przystanków z nazwą po najechaniu.
@@ -922,13 +1035,76 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           .addTo(group);
       }
     }
-    fitOverlayMap();
+    if (!kursowkaOverlay.courseTarget) fitOverlayMap();
   }, [kursowkaOverlay]);
+
+  /* Trasa do wybranego przystanku: kolorowy odcinek od startu kursu do
+     przystanku docelowego, z ta sama obwodka co caly kurs. Reszta kursu jest
+     wygaszona w warstwie `kursowka`, wiec nic sie nie naklada. */
+  const targetFitKey = kursowkaOverlay?.courseTarget
+    ? `${kursowkaOverlay.course?.tripId ?? ""}|${kursowkaOverlay.courseTarget.stopIndex}`
+    : "";
+  const lastTargetFitKeyRef = useRef("");
+  useEffect(() => {
+    const map = mapRef.current;
+    const group = courseTargetGroupRef.current;
+    if (!map || !group) return;
+    group.clearLayers();
+    const target = kursowkaOverlay?.courseTarget;
+    if (!target || target.path.length < 2) {
+      lastTargetFitKeyRef.current = "";
+      return;
+    }
+
+    L.polyline(target.path, {
+      color: "#ffffff",
+      weight: 11,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+      pane: "courseTarget",
+      interactive: false,
+    }).addTo(group);
+    L.polyline(target.path, {
+      color: "#7c3aed",
+      weight: 6,
+      opacity: 1,
+      lineCap: "round",
+      lineJoin: "round",
+      pane: "courseTarget",
+      interactive: false,
+    }).addTo(group);
+
+    // Kadr tylko przy zmianie celu — ruch GPS i odświeżenia nie mogą szarpać mapą.
+    if (lastTargetFitKeyRef.current !== targetFitKey) {
+      lastTargetFitKeyRef.current = targetFitKey;
+      fitOverlayMap();
+    }
+  }, [kursowkaOverlay, targetFitKey]);
 
   // Indeksy dotyczą konkretnej geometrii, nie tylko numeru pojazdu.
   useEffect(() => {
     routeDoneIndexRef.current.clear();
   }, [kursowkaOverlay]);
+
+  /* Panel kursu otwarty/zamknięty zmienia miejsce, które trasa ma zająć na
+     mapie (na telefonie panel startuje zwinięty). Kadrujemy tylko wtedy, gdy
+     zmienia się widoczność panelu — nie przy każdym odczycie GPS. */
+  const sidebarVisibleForFit = kursowkaOverlay?.course ? courseSidebarOpen !== false : true;
+  const lastSidebarFitRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!kursowkaOverlay?.course) {
+      lastSidebarFitRef.current = null;
+      return;
+    }
+    if (lastSidebarFitRef.current === sidebarVisibleForFit) return;
+    lastSidebarFitRef.current = sidebarVisibleForFit;
+    if (!kursowkaOverlay.courseTarget) {
+      // Bez wybranego przystanku dopasowanie robi główny efekt kursu; tu tylko
+      // reagujemy na zmianę stanu panelu.
+      fitOverlayMap();
+    }
+  }, [sidebarVisibleForFit, kursowkaOverlay]);
 
   /* Osobne odcinki na jednym pane: zielony rysowany po szarym, dzięki czemu
      przejechany fragment nie zakrywa przyszłej trasy na wspólnej ulicy. */

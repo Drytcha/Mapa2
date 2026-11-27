@@ -774,3 +774,58 @@ kreskowana.
   poprzedniego wyboru nie może jej przywrócić.
 - Testy obejmują dwukolorową linię, różne systemy numeracji, przesunięty GPS,
   brak danych, pętlę i ciągłość na krańcach oraz zmianę położenia na żywo.
+
+## Widok Użytkownika: węższy panel kursu i „trasa do przystanku”
+
+Zgłoszenie: „Panel boczny przy wybraniu danego kursu powinien być delikatnie
+zmniejszony, aby było widać więcej mapy. Dodaj również możliwość zobaczenia
+trasy do danego przystanku — niekoniecznie do końcowego. Widok Użytkownika.”
+
+**Węższy panel (więcej mapy)**
+
+- Prawy panel przebiegu kursu: **336 px → 300 px** (na telefonie
+  `min(300 px, 84 vw)`). Zmniejszone są też wewnętrzne odstępy (`px-3` →
+  `px-2.5`), więc wszystkie informacje — godziny, kierunek, brygada, lista
+  przystanków — nadal się mieszczą.
+- Dopasowanie trasy do ekranu (`fitBounds`) rezerwuje teraz miejsce po prawej
+  stronie panelu, a nie po lewej (`paddingBottomRight`). Wcześniej margines był
+  po stronie przeciwnej, przez co linia potrafiła schować się **pod panelem** —
+  teraz trasa ląduje na środku widocznej części mapy.
+- Gdy panel jest zwinięty (na telefonie startuje zwinięty), trasa dostaje całą
+  szerokość ekranu; kadr zmienia się tylko przy otwarciu/zwinięciu panelu, a nie
+  przy każdym odczycie GPS.
+- Na telefonie przyciemniamy już tylko wąski pas mapy obok panelu (wcześniej
+  cały ekran), więc trasa pozostaje widoczna i przesuwalna.
+
+**Trasa do wybranego przystanku (nie tylko do końca)**
+
+- Klik w dowolny przystanek na liście kursu pokazuje na mapie **dojazd tylko do
+  tego przystanku**: fioletowa, ciągła linia od startu kursu do wybranego
+  przystanku (rzut na geometrię — linia kończy się dokładnie pod przystankiem),
+  a pozostała część kursu zostaje wygaszona jako tło.
+- Ten sam przystanek kliknięty drugi raz (albo przycisk **„Cała trasa”**)
+  przywraca pełny przebieg kursu. Wybór kasuje się przy zmianie kursu.
+- Panel pokazuje podsumowanie dojazdu: nazwę przystanku, godziny
+  odjazd → przyjazd, czas jazdy i długość odcinka, a wybrany wiersz jest
+  oznaczony jako **„Tu wysiadasz”**; przystanki za celem blakną.
+- Klik w kropkę przystanku **na mapie** działa tak samo jak klik na liście
+  (kropki kursu mają kursor „pointer”); panel sam podjeżdża do właściwego
+  wiersza.
+- Klik w ikonę pinezki obok przystanku nadal tylko centruje mapę na przystanku
+  (bez zmiany trasy).
+- Nowa geometria liczy się z tej samej (naprawionej) polilinii, którą rysuje
+  mapa — wspólne `src/lib/courseRoute.ts` + `courseUpToStop()` w
+  `routeProgress.ts`. Na pętli (ta sama ulica dwa razy) brany jest pierwszy
+  przejazd, a dla przystanku końcowego ostatni — trasa nie robi objazdu.
+
+**Testy**
+
+- `npm run test:course` (nowy) — `test-user-view.tsx` sprawdza węższy panel,
+  podsumowanie „trasy do przystanku”, wyróżnienie wybranego przystanku,
+  powrót do całej trasy, przyciemnianie tylko obok panelu oraz geometrię
+  wycinka (koniec pod przystankiem, pętla, odrzucanie błędnych danych);
+  `test-route-progress.ts` ma nowe przypadki `courseUpToStop()`.
+- `npm run test:course:e2e` (nowy, Chromium) — cała droga podróżnego:
+  Kursówki → brygada → „Przebieg” → panel 300 px → klik przystanku →
+  fioletowy odcinek krótszy niż cały kurs i wygaszone tło → klik w kropkę
+  na mapie → powrót do całej trasy → telefon (panel startuje zwinięty).

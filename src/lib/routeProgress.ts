@@ -241,3 +241,91 @@ export function stopSegmentRange(
   if (next < 0) return null;
   return { minIndex: next > 0 ? anchors[next - 1] : 0, maxIndex: anchors[next] };
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Trasa „do przystanku"                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface StopDwell {
+  arrivalMs: number;
+  departureMs: number;
+}
+
+/** Przystanek kursu: punkt na mapie i godziny rozkładowe. */
+export type TimedStop = { lat: number; lon: number } & StopDwell;
+
+export interface CourseUpToStop {
+  /** Geometria od startu kursu do wybranego przystanku (włącznie z tym przystankiem). */
+  path: RoutePoint[];
+  /** Indeks przystanku, na którym kończy się trasa (0 = start kursu). */
+  stopIndex: number;
+  meters: number;
+  /** Czas jazdy według rozkładu do tego przystanku (ms). */
+  rideMs: number;
+  departMs: number;
+  arriveMs: number;
+}
+
+/**
+ * Wycinek przebiegu kursu **do wybranego przystanku** — nie tylko do końca.
+ *
+ * Pasażer chce wiedzieć, jak dojedzie do swojego przystanku, a nie do pętli.
+ * Stąd dwie zasady:
+ *  - geometrię tniemy dokładnie pod wybranym przystankiem (rzut na odcinek
+ *    trasy, a nie na najbliższy wierzchołek), więc linia nie urywa się
+ *    kilkaset metrów przed przystankiem;
+ *  - gdy tego samego dnia kurs jedzie tą ulicą dwa razy (pętla, „tam i z
+ *    powrotem”), bierzemy **pierwsze** dojechanie do przystanku — to jest
+ *    trasa do przystanku, a nie objazd całej pętli.
+ *
+ * Zwraca `null`, gdy przystanek nie leży na geometrii (rozwichrzone dane) —
+ * lepiej nie rysować niczego niż oznaczyć pasażerowi niewłaściwy autobus.
+ */
+export function courseUpToStop(
+  path: readonly RoutePoint[],
+  stops: readonly TimedStop[],
+  stopIndex: number,
+): CourseUpToStop | null {
+  if (path.length < 2 || !stops.length) return null;
+  if (!Number.isInteger(stopIndex) || stopIndex < 0 || stopIndex >= stops.length) return null;
+  const target = stops[stopIndex];
+
+  // Rzut przystanku na geometrię — punkt, w którym kończymy trasę. Dla
+  // przystanku końcowego bierzemy ostatnie trafienie (pętla na końcu trasy),
+  // dla pozostałych pierwsze (przystanek obsługiwany w drodze „tam").
+  const lastHit = stopIndex === stops.length - 1;
+  let best: { index: number; meters: number; lat: number; lon: number } | null = null;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const projected = projectOnSegment(target, path[i], path[i + 1]);
+    if (projected.meters > DEFAULT_MAX_OFF_ROUTE_M) continue;
+    if (!best || projected.meters < best.meters - 0.01 || lastHit) {
+      best = { index: i, meters: projected.meters, lat: projected.lat, lon: projected.lon };
+    }
+  }
+  if (!best) return null;
+
+  const cut: RoutePoint = [best.lat, best.lon];
+  const result: RoutePoint[] = [];
+  for (let i = 0; i <= best.index; i += 1) {
+    const point = path[i];
+    if (!result.length || !samePoint(result[result.length - 1], point)) result.push(point);
+  }
+  if (!samePoint(result[result.length - 1], cut)) result.push(cut);
+
+  let meters = 0;
+  for (let i = 0; i < result.length - 1; i += 1) {
+    meters += distanceMeters(result[i][0], result[i][1], result[i + 1][0], result[i + 1][1]);
+  }
+
+  const departMs = stops[0].departureMs;
+  // Na przystanku końcowym rozkład podaje przyjazd; wcześniej odjazd.
+  const arriveMs = stopIndex === stops.length - 1 ? target.arrivalMs : target.departureMs;
+  return {
+    path: result,
+    stopIndex,
+    meters,
+    rideMs: Math.max(0, arriveMs - departMs),
+    departMs,
+    arriveMs,
+  };
+}
