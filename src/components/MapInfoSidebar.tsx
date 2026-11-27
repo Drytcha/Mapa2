@@ -1,33 +1,49 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  ArrowLeft,
   Bus,
+  BusFront,
   Check,
+  ChevronRight,
   Crosshair,
+  Eye,
   EyeOff,
+  FileDown,
+  FileSpreadsheet,
+  ListOrdered,
   Loader2,
   LocateFixed,
   LocateOff,
+  LogOut,
   Maximize2,
   Moon,
   Navigation,
+  Palette,
   PanelLeftClose,
   Radio,
   RefreshCw,
-  Route,
+  Route as RouteIcon,
+  Ruler,
   Satellite,
+  Settings2,
   Sun,
+  Truck,
+  Waypoints,
 } from "lucide-react";
 import { useSharedClock } from "@/lib/core/runtimeHub";
 import { DELAY_STYLES, type DelayTone } from "@/lib/delay";
 import { dutyAssignmentStats } from "@/lib/engine/brigadeVerification";
-import { formatDistanceCompact } from "@/lib/geo";
+import { formatDistance, formatDistanceCompact, formatDurationShort, readableEngine } from "@/lib/geo";
 import type {
+  AppRole,
   BrigadeInfo,
+  BusStop,
   LiveBusVehicle,
   LiveTrafficSummary,
   MapStyle,
   ProfileMetrics,
   RouteData,
+  ThemeMode,
   VehicleId,
   WalbrzychOperatorKey,
   Waypoint,
@@ -43,7 +59,17 @@ import {
   type VisibilitySettings,
 } from "@/lib/visibility";
 import { cn } from "@/utils/cn";
+import BusSearch from "./BusSearch";
 import { MapRouteCard } from "./MapOverlays";
+import { Logo } from "./UI";
+
+export type SidebarView =
+  | "home"
+  | "gps"
+  | "visibility"
+  | "appearance"
+  | "location"
+  | "route";
 
 const STALE_AFTER_S = 15;
 const WEAK_ACCURACY_M = 100;
@@ -54,38 +80,38 @@ const formatUserSpeed = (kmh: number) =>
 const MAP_STYLES: Array<{
   id: MapStyle;
   label: string;
-  short: string;
+  hint: string;
   icon: typeof Sun;
   swatch: string;
 }> = [
   {
     id: "light",
     label: "Mapa jasna",
-    short: "Jasna",
+    hint: "Czytelne ulice, chodniki i przystanki",
     icon: Sun,
     swatch: "linear-gradient(135deg, #f6f1e2 0%, #e6ecd9 55%, #cfe0e6 100%)",
   },
   {
     id: "dark",
     label: "Mapa ciemna",
-    short: "Ciemna",
+    hint: "Stonowany podkład OSM nocą",
     icon: Moon,
     swatch: "linear-gradient(135deg, #3a434f 0%, #2a313b 55%, #1e242c 100%)",
   },
   {
     id: "satellite",
     label: "Satelita",
-    short: "Satelita",
+    hint: "Zdjęcia lotnicze Esri World Imagery",
     icon: Satellite,
     swatch: "linear-gradient(135deg, #62705a 0%, #394f3e 50%, #263e44 100%)",
   },
 ];
 
 const LEGEND_ITEMS: Array<[DelayTone, string]> = [
-  ["late-high", "Opóźnienie > 3 min"],
+  ["late-high", "Opóźnienie powyżej 3 min"],
   ["late", "Opóźnienie do 3 min"],
-  ["early-small", "Planowo / do +1 min"],
-  ["early-big", "Przyspieszenie > 1 min"],
+  ["early-small", "Planowo (od −1 min do +1 min)"],
+  ["early-big", "Przyspieszenie powyżej 1 min"],
 ];
 
 function SidebarSwitch({
@@ -105,24 +131,26 @@ function SidebarSwitch({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-raised"
+      className="flex w-full items-center justify-between gap-3 rounded-xl border border-line/75 bg-surface px-3 py-2.5 text-left transition-colors hover:bg-raised"
     >
       <span className="min-w-0">
-        <span className="block text-[10px] font-bold text-ink">{label}</span>
+        <span className="block text-[11px] font-bold text-ink">{label}</span>
         {hint && (
-          <span className="block text-[8px] leading-snug text-mute">{hint}</span>
+          <span className="mt-0.5 block text-[9px] leading-snug text-mute">
+            {hint}
+          </span>
         )}
       </span>
       <span
         className={cn(
-          "relative h-4 w-7 shrink-0 rounded-full transition-colors",
+          "relative h-5 w-9 shrink-0 rounded-full transition-colors",
           checked ? "bg-brand" : "bg-line-strong",
         )}
       >
         <span
           className={cn(
-            "absolute left-0 top-0.5 h-3 w-3 rounded-full bg-surface shadow-sm transition-transform",
-            checked ? "translate-x-[14px]" : "translate-x-0.5",
+            "absolute left-0 top-0.5 h-4 w-4 rounded-full bg-surface shadow-sm transition-transform",
+            checked ? "translate-x-[18px]" : "translate-x-0.5",
           )}
         />
       </span>
@@ -130,15 +158,84 @@ function SidebarSwitch({
   );
 }
 
+function SidebarSummaryRow({
+  icon,
+  title,
+  summary,
+  badge,
+  onClick,
+  testId,
+  ariaLabel,
+}: {
+  icon: ReactNode;
+  title: string;
+  summary: ReactNode;
+  badge?: ReactNode;
+  onClick: () => void;
+  testId?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className="group flex w-full items-center gap-2.5 rounded-xl border border-line/75 bg-surface px-2.5 py-2 text-left transition-all hover:border-brand/35 hover:bg-raised/70"
+    >
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink transition-colors group-hover:bg-brand group-hover:text-on-brand">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[11px] font-extrabold text-ink">
+            {title}
+          </span>
+          {badge}
+        </span>
+        <span className="mt-0.5 block truncate text-[9px] font-semibold text-mute">
+          {summary}
+        </span>
+      </span>
+      <ChevronRight
+        className="h-4 w-4 shrink-0 text-mute transition-transform group-hover:translate-x-0.5 group-hover:text-ink"
+        strokeWidth={2}
+      />
+    </button>
+  );
+}
+
 export interface MapInfoSidebarProps {
   open: boolean;
   onClose: () => void;
+  initialView?: SidebarView;
+  role?: AppRole;
+  onRoleChange?: (role: AppRole) => void;
   isPlanner: boolean;
-  // Live GPS & operators
+  theme?: ThemeMode;
+  onToggleTheme?: () => void;
+  // Navigation actions (replacing TopBar)
+  kursowkiOpen?: boolean;
+  linesOpen?: boolean;
+  onOpenKursowki?: () => void;
+  onOpenLines?: () => void;
+  onOpenPlanner?: () => void;
+  onOpenSteps?: () => void;
+  onOpenFleet?: () => void;
+  onOpenReport?: () => void;
+  onOpenSettings?: () => void;
+  onOpenPdf?: () => void;
+  pdfDisabled?: boolean;
+  isRouting?: boolean;
+  // Search inside open sidebar
+  busStops?: BusStop[];
+  onSelectBus?: (bus: LiveBusVehicle) => void;
+  onSelectStop?: (stop: BusStop) => void;
+  // Live fleet & operator filters
   showLiveBuses: boolean;
   onToggleLiveBuses: () => void;
   operatorFilter: "all" | WalbrzychOperatorKey;
-  onOperatorFilter: (op: "all" | WalbrzychOperatorKey) => void;
+  onOperatorFilter: (value: "all" | WalbrzychOperatorKey) => void;
   liveVehicles: LiveBusVehicle[];
   liveTraffic: LiveTrafficSummary | null;
   liveLoading: boolean;
@@ -151,18 +248,18 @@ export interface MapInfoSidebarProps {
   onVisibilityChange: (patch: Partial<VisibilitySettings>) => void;
   signalCount: number;
   turnaroundCount: number;
-  // Map navigation & style
+  // Map style & viewport
   mapStyle: MapStyle;
   onMapStyle: (style: MapStyle) => void;
   onHome: () => void;
   onFit: () => void;
-  // User GPS telemetry
+  // User GPS HUD
   locationStatus: LocationStatus;
   userLocation: UserLocation | null;
   followingUser: boolean;
   onLocate: () => void;
   onRetryLocation: () => void;
-  // Traveler trip planner shortcut
+  // Trip planner shortcut (traveler)
   tripOpen?: boolean;
   hasTripOrigin?: boolean;
   hasTripDest?: boolean;
@@ -176,10 +273,37 @@ export interface MapInfoSidebarProps {
   routeReady?: boolean;
 }
 
+const SUBVIEW_TITLES: Record<Exclude<SidebarView, "home">, string> = {
+  gps: "Autobusy GPS na żywo",
+  visibility: "Widoczność na mapie",
+  appearance: "Styl mapy i motyw",
+  location: "Moja lokalizacja GPS",
+  route: "Parametry trasy",
+};
+
 export default function MapInfoSidebar({
   open,
   onClose,
+  initialView = "home",
+  onRoleChange,
   isPlanner,
+  theme = "light",
+  onToggleTheme,
+  kursowkiOpen = false,
+  linesOpen = false,
+  onOpenKursowki,
+  onOpenLines,
+  onOpenPlanner,
+  onOpenSteps,
+  onOpenFleet,
+  onOpenReport,
+  onOpenSettings,
+  onOpenPdf,
+  pdfDisabled = true,
+  isRouting = false,
+  busStops = [],
+  onSelectBus,
+  onSelectStop,
   showLiveBuses,
   onToggleLiveBuses,
   operatorFilter,
@@ -215,35 +339,50 @@ export default function MapInfoSidebar({
   brigade,
   routeReady = false,
 }: MapInfoSidebarProps) {
+  const [view, setView] = useState<SidebarView>(initialView);
   const asideRef = useRef<HTMLElement | null>(null);
-  const now = useSharedClock(1_000, open && locationStatus === "active");
+  const now = useSharedClock(1_000, Boolean(userLocation && open));
+
+  useEffect(() => {
+    if (!open) setView(initialView);
+  }, [open, initialView]);
 
   useEffect(() => {
     if (!open) return;
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (view !== "home") {
+        setView("home");
+      } else {
+        onClose();
+      }
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
-      if (!target) return;
+      if (!target || !target.isConnected) return;
       if (asideRef.current?.contains(target)) return;
       if (target.closest('[data-testid="map-sidebar-toggle"]')) return;
       onClose();
     };
-    window.addEventListener("keydown", onEscape);
-    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onEscape);
-      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [open, onClose]);
+  }, [open, view, onClose]);
 
-  const dutyStats = dutyAssignmentStats(liveVehicles);
-  const counts = liveTraffic?.operatorBreakdown ?? {
-    mzuk: liveVehicles.filter((v) => v.operatorKey === "mzuk").length,
-    ska: liveVehicles.filter((v) => v.operatorKey === "ska").length,
-    other: liveVehicles.filter((v) => v.operatorKey === "other").length,
-  };
+  const counts = liveVehicles.reduce(
+    (acc, item) => {
+      acc[item.operatorKey] += 1;
+      return acc;
+    },
+    { mzuk: 0, ska: 0, other: 0 } as Record<WalbrzychOperatorKey, number>,
+  );
+
+  const dutyStats = isPlanner
+    ? dutyAssignmentStats(liveVehicles)
+    : { assigned: 0, eligible: 0 };
 
   const stopOptions: Array<{
     id: StopDisplayMode;
@@ -254,7 +393,7 @@ export default function MapInfoSidebar({
     { id: "all", icon: Bus, label: "Wszystkie" },
   ];
   if (isPlanner) {
-    stopOptions.push({ id: "route", icon: Route, label: "Przy trasie" });
+    stopOptions.push({ id: "route", icon: RouteIcon, label: "Przy trasie" });
   }
   const stopsValue: StopDisplayMode =
     !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
@@ -268,426 +407,640 @@ export default function MapInfoSidebar({
     userLocation && userLocation.speedKmh !== null && userLocation.speedKmh >= 1,
   );
 
+  // Concise 1-line summaries for the home screen
+  const operatorSummary =
+    operatorFilter === "mzuk"
+      ? "tylko MZUK"
+      : operatorFilter === "ska"
+        ? "tylko ŚKA"
+        : operatorFilter === "other"
+          ? "tylko inni"
+          : "wszyscy przewoźnicy";
+
+  const gpsSummary = showLiveBuses
+    ? `Włączone · ${liveVehicles.length} w ruchu · ${operatorSummary}`
+    : "Wyłączone na mapie";
+
+  const stopsSummary =
+    stopsValue === "off"
+      ? "Przystanki ukryte"
+      : stopsValue === "route"
+        ? `Przy trasie (${mapStopCount})`
+        : `Wszystkie przystanki (${mapStopCount})`;
+
+  const activeStyleMeta =
+    MAP_STYLES.find((s) => s.id === mapStyle) ?? MAP_STYLES[0];
+  const appearanceSummary = `${activeStyleMeta.label} · motyw ${theme === "dark" ? "ciemny" : "jasny"}`;
+
+  const locationSummary: ReactNode = userLocation ? (
+    <>
+      <span data-testid={view === "home" ? "user-speed" : undefined}>
+        {userLocation.speedKmh === null
+          ? "0,0"
+          : formatUserSpeed(userLocation.speedKmh)}
+      </span>{" "}
+      km/h · ±{Math.round(userLocation.accuracy)} m
+      {followingUser ? " · śledzenie" : ""}
+    </>
+  ) : locationStatus === "requesting" ? (
+    "Szukam sygnału GPS…"
+  ) : locationStatus === "denied" ? (
+    "Dostęp zablokowany w przeglądarce"
+  ) : locationStatus === "unavailable" ? (
+    "Brak obsługi GPS"
+  ) : (
+    "Prędkość, kompas i dokładność"
+  );
+
+  const routeSummary =
+    routeReady && route
+      ? `${formatDistance(route.distance)} · ${formatDurationShort(route.duration)}`
+      : isRouting
+        ? "Przeliczanie trasy…"
+        : "Brak wyznaczonej trasy";
+
   return (
     <div
       data-testid="map-info-sidebar-root"
-      className="pointer-events-none absolute inset-0 z-[580] overflow-hidden"
+      className="pointer-events-none absolute inset-0 z-[650] overflow-hidden"
     >
       {open && (
         <button
           type="button"
           aria-label="Zwiń panel boczny i pokaż mapę"
           onClick={onClose}
-          className="pointer-events-auto absolute inset-y-0 right-0 w-[calc(100%-min(306px,86vw))] bg-black/15 transition-opacity md:hidden"
+          className="pointer-events-auto absolute inset-y-0 right-0 w-[calc(100%-min(320px,88vw))] bg-black/20 transition-opacity md:hidden"
         />
       )}
 
       <aside
         ref={asideRef}
         id="map-info-sidebar"
-        aria-label="Panel boczny mapy: informacje, GPS i ustawienia"
+        aria-label="Panel boczny mapy"
         data-testid="map-info-sidebar"
         data-open={open ? "true" : "false"}
+        data-view={view}
         inert={!open}
         className={cn(
-          "pointer-events-auto absolute inset-y-0 left-0 flex w-[min(306px,86vw)] flex-col overflow-hidden border-r border-line bg-surface/98 shadow-[12px_0_36px_rgba(13,42,28,0.24)] transition-transform duration-200 ease-out md:bottom-2.5 md:left-2.5 md:top-12 md:w-[300px] md:rounded-2xl md:border md:shadow-[0_18px_46px_rgba(13,42,28,0.24)] dark:bg-surface/96",
+          "pointer-events-auto absolute inset-y-0 left-0 flex h-full w-[min(320px,88vw)] flex-col overflow-hidden border-r border-line bg-surface shadow-[14px_0_40px_rgba(13,42,28,0.22)] transition-transform duration-200 ease-out sm:w-[324px]",
           open
             ? "translate-x-0"
             : "pointer-events-none -translate-x-[calc(100%+24px)]",
         )}
       >
-        {/* Header */}
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/75 bg-brand-soft/75 px-3 py-2">
-          <div className="min-w-0">
-            <h2 className="truncate text-[11.5px] font-extrabold tracking-[-0.015em] text-ink">
-              Panel mapy i informacje
-            </h2>
-            <p className="truncate text-[8px] font-bold uppercase tracking-[0.12em] text-brand-ink/80">
-              GPS ({liveVehicles.length}) · Przystanki ({mapStopCount})
-            </p>
+        {/* Top bar of the sidebar: either Brand header ("home") or Back header (sub-view) */}
+        {view === "home" ? (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2.5">
+            <Logo showName={isPlanner} />
+            <button
+              type="button"
+              data-testid="map-sidebar-close"
+              onClick={onClose}
+              aria-label="Zwiń panel boczny mapy"
+              title="Zwiń panel boczny"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-raised/70 text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <PanelLeftClose className="h-4 w-4" strokeWidth={2.1} />
+            </button>
           </div>
-          <button
-            type="button"
-            data-testid="map-sidebar-close"
-            onClick={onClose}
-            aria-label="Zwiń panel boczny mapy"
-            title="Zwiń panel i odsłoń mapę"
-            className="flex h-7 shrink-0 items-center gap-1 rounded-lg border border-line bg-surface px-2 text-[9px] font-extrabold text-brand-ink transition-colors hover:bg-raised"
-          >
-            <PanelLeftClose className="h-3.5 w-3.5" strokeWidth={2.2} />
-            Mapa
-          </button>
-        </div>
+        ) : (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-2.5 py-2">
+            <button
+              type="button"
+              data-testid="map-sidebar-back"
+              onClick={() => setView("home")}
+              aria-label="Wróć do głównego panelu"
+              className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-[10.5px] font-extrabold text-brand-ink transition-colors hover:bg-brand-soft"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2.3} />
+              Wróć
+            </button>
+            <h2 className="min-w-0 flex-1 truncate text-center text-[11.5px] font-extrabold text-ink">
+              {SUBVIEW_TITLES[view]}
+            </h2>
+            <button
+              type="button"
+              data-testid="map-sidebar-close"
+              onClick={onClose}
+              aria-label="Zwiń panel boczny mapy"
+              title="Zamknij panel boczny"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <PanelLeftClose className="h-4 w-4" strokeWidth={2.1} />
+            </button>
+          </div>
+        )}
 
-        {/* Scrollable body */}
-        <div className="scroll-area flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-2.5">
-          {/* Quick actions */}
-          <div className="flex flex-col gap-1.5">
-            {!isPlanner && onOpenTripPlanner && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenTripPlanner();
-                }}
-                className={cn(
-                  "flex h-8 w-full items-center justify-center gap-1.5 rounded-xl border px-3 text-[10px] font-extrabold transition-opacity hover:opacity-90",
-                  tripOpen
-                    ? "border-line-strong bg-raised text-ink"
-                    : "border-brand-deep/20 bg-brand text-on-brand",
-                )}
-              >
-                <Route className="h-3.5 w-3.5" strokeWidth={2.3} />
-                {tripOpen ? "Planer podróży (otwarty)" : "Planer podróży (A → B)"}
-                {(hasTripOrigin || hasTripDest) && (
-                  <span className="ml-0.5 inline-flex items-center gap-0.5" aria-hidden="true">
-                    {hasTripOrigin && (
-                      <span className="h-2 w-2 rounded-full border border-white bg-[#0891b2]" />
-                    )}
-                    {hasTripDest && (
-                      <span className="h-2 w-2 rounded-full border border-white bg-[#e11d48]" />
-                    )}
-                  </span>
-                )}
-              </button>
+        {/* ================================================================ */}
+        {/*  VIEW 0: HOME — concise overview + navigation to focused views   */}
+        {/* ================================================================ */}
+        {view === "home" && (
+          <>
+            {open && onSelectBus && onSelectStop && (
+              <div className="shrink-0 border-b border-line/70 bg-raised/30 px-3 py-2">
+                <BusSearch
+                  vehicles={liveVehicles}
+                  stops={busStops}
+                  onSelectVehicle={onSelectBus}
+                  onSelectStop={onSelectStop}
+                  compact
+                  showDutyStatus={isPlanner}
+                  isPlanner={isPlanner}
+                />
+              </div>
             )}
-            <div className="grid grid-cols-2 gap-1.5">
+
+            <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
+              {/* Rozkłady / Nawigacja */}
+              {!isPlanner ? (
+                <section className="flex flex-col gap-1.5">
+                  <span className="px-0.5 text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
+                    Podróż i rozkłady
+                  </span>
+
+                  {onOpenTripPlanner && (
+                    <SidebarSummaryRow
+                      testId="sidebar-open-trip-planner"
+                      icon={<RouteIcon className="h-4 w-4" strokeWidth={2.2} />}
+                      title="Wyznacz dojazd (A → B)"
+                      summary={
+                        tripOpen
+                          ? "Otwarty na mapie"
+                          : hasTripOrigin || hasTripDest
+                            ? "Wybrano punkty trasy — kontynuuj"
+                            : "Wyszukaj połączenie i dojście piesze"
+                      }
+                      badge={
+                        (hasTripOrigin || hasTripDest) && (
+                          <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+                            {hasTripOrigin && (
+                              <span className="h-2 w-2 rounded-full bg-[#0891b2]" />
+                            )}
+                            {hasTripDest && (
+                              <span className="h-2 w-2 rounded-full bg-[#e11d48]" />
+                            )}
+                          </span>
+                        )
+                      }
+                      onClick={() => {
+                        onClose();
+                        onOpenTripPlanner();
+                      }}
+                    />
+                  )}
+
+                  {onOpenKursowki && (
+                    <SidebarSummaryRow
+                      ariaLabel="Kursówki"
+                      icon={<BusFront className="h-4 w-4" strokeWidth={2.1} />}
+                      title="Kursówki"
+                      summary="Brygady i pełne kursy dzienne GTFS"
+                      onClick={() => {
+                        onClose();
+                        onOpenKursowki();
+                      }}
+                    />
+                  )}
+
+                  {onOpenLines && (
+                    <SidebarSummaryRow
+                      ariaLabel="Linie"
+                      icon={<Waypoints className="h-4 w-4" strokeWidth={2.1} />}
+                      title="Linie"
+                      summary="Lista linii autobusowych i wariantów tras"
+                      onClick={() => {
+                        onClose();
+                        onOpenLines();
+                      }}
+                    />
+                  )}
+                </section>
+              ) : (
+                <section className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
+                      Narzędzia planisty
+                    </span>
+                    {route && (
+                      <span className="text-[8px] font-bold text-mute">
+                        {readableEngine(route.engine)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      {
+                        id: "planner",
+                        label: "Planer",
+                        icon: RouteIcon,
+                        active: !kursowkiOpen && !linesOpen,
+                        onClick: onOpenPlanner,
+                      },
+                      {
+                        id: "kursowki",
+                        label: "Kursówki",
+                        icon: BusFront,
+                        active: kursowkiOpen,
+                        onClick: onOpenKursowki,
+                      },
+                      {
+                        id: "lines",
+                        label: "Linie",
+                        icon: Waypoints,
+                        active: linesOpen,
+                        onClick: onOpenLines,
+                      },
+                      {
+                        id: "nav",
+                        label: "Nawigacja",
+                        icon: ListOrdered,
+                        active: false,
+                        onClick: onOpenSteps,
+                      },
+                      {
+                        id: "fleet",
+                        label: "Flota",
+                        icon: Truck,
+                        active: false,
+                        onClick: onOpenFleet,
+                      },
+                      {
+                        id: "report",
+                        label: "Raporty",
+                        icon: FileSpreadsheet,
+                        active: false,
+                        onClick: onOpenReport,
+                      },
+                    ].map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          aria-label={item.label}
+                          onClick={() => {
+                            onClose();
+                            item.onClick?.();
+                          }}
+                          className={cn(
+                            "flex h-9 items-center gap-2 rounded-xl border px-2.5 text-[10px] font-extrabold transition-colors",
+                            item.active
+                              ? "border-brand/40 bg-brand-soft text-brand-ink"
+                              : "border-line/75 bg-surface text-ink-soft hover:bg-raised hover:text-ink",
+                          )}
+                        >
+                          <Icon className="h-3.5 w-3.5 shrink-0 text-brand-ink" strokeWidth={2.1} />
+                          <span className="truncate">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {onOpenPdf && (
+                      <button
+                        type="button"
+                        disabled={pdfDisabled}
+                        aria-label="Eksport trasy do PDF"
+                        onClick={() => {
+                          onClose();
+                          onOpenPdf();
+                        }}
+                        className="flex h-8 items-center justify-center gap-1.5 rounded-xl bg-brand px-2.5 text-[9.5px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <FileDown className="h-3.5 w-3.5" />
+                        Eksport PDF
+                      </button>
+                    )}
+                    {onOpenSettings && (
+                      <button
+                        type="button"
+                        aria-label="Darmowe źródła i informacje"
+                        onClick={() => {
+                          onClose();
+                          onOpenSettings();
+                        }}
+                        className="flex h-8 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                      >
+                        <Settings2 className="h-3.5 w-3.5 text-brand-ink" />
+                        Źródła danych
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {/* Ustawienia mapy — skrótowe wiersze otwierające osobny widok */}
+              <section className="flex flex-col gap-1.5">
+                <span className="px-0.5 text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
+                  Ustawienia i informacje
+                </span>
+
+                <SidebarSummaryRow
+                  testId="sidebar-nav-gps"
+                  icon={
+                    <Radio
+                      className={cn(
+                        "h-4 w-4",
+                        showLiveBuses && liveVehicles.length > 0 && "animate-pulse",
+                      )}
+                      strokeWidth={2.2}
+                    />
+                  }
+                  title="Autobusy GPS na żywo"
+                  summary={gpsSummary}
+                  badge={
+                    showLiveBuses && liveVehicles.length > 0 ? (
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    ) : undefined
+                  }
+                  onClick={() => setView("gps")}
+                />
+
+                <SidebarSummaryRow
+                  testId="sidebar-nav-visibility"
+                  icon={<Eye className="h-4 w-4" strokeWidth={2.1} />}
+                  title="Widoczność na mapie"
+                  summary={stopsSummary}
+                  onClick={() => setView("visibility")}
+                />
+
+                <SidebarSummaryRow
+                  testId="sidebar-nav-appearance"
+                  icon={<Palette className="h-4 w-4" strokeWidth={2.1} />}
+                  title="Styl mapy i motyw"
+                  summary={appearanceSummary}
+                  onClick={() => setView("appearance")}
+                />
+
+                <SidebarSummaryRow
+                  testId="sidebar-nav-location"
+                  icon={<LocateFixed className="h-4 w-4" strokeWidth={2.1} />}
+                  title="Moja lokalizacja GPS"
+                  summary={locationSummary}
+                  onClick={() => setView("location")}
+                />
+
+                {isPlanner && (
+                  <SidebarSummaryRow
+                    testId="sidebar-nav-route"
+                    icon={<Ruler className="h-4 w-4" strokeWidth={2.1} />}
+                    title="Parametry trasy"
+                    summary={routeSummary}
+                    onClick={() => setView("route")}
+                  />
+                )}
+              </section>
+            </div>
+
+            {/* Footer */}
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line bg-raised/30 px-3 py-2">
               <button
                 type="button"
                 onClick={onHome}
                 aria-label="Wróć do widoku Wałbrzycha"
-                className="flex h-7 items-center justify-center gap-1 rounded-lg border border-line bg-raised/70 px-2 text-[9px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
               >
-                <Crosshair className="h-3 w-3 shrink-0 text-brand-ink" />
-                Wałbrzych
+                <Crosshair className="h-3.5 w-3.5 shrink-0 text-brand-ink" />
+                Widok Wałbrzycha
               </button>
-              <button
-                type="button"
-                onClick={onFit}
-                aria-label="Dopasuj trasę do widoku"
-                className="flex h-7 items-center justify-center gap-1 rounded-lg border border-line bg-raised/70 px-2 text-[9px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-              >
-                <Maximize2 className="h-3 w-3 shrink-0 text-brand-ink" />
-                Dopasuj widok
-              </button>
-            </div>
-          </div>
 
-          {/* Section 1: Autobusy GPS i przewoźnicy */}
-          <section className="rounded-xl border border-line/80 bg-raised/35 p-2">
-            <div className="flex items-center justify-between gap-1.5">
-              <button
-                type="button"
-                onClick={onToggleLiveBuses}
-                className={cn(
-                  "flex h-6 items-center gap-1.5 rounded-lg px-2 text-[9px] font-extrabold transition-colors",
-                  showLiveBuses
-                    ? "bg-brand text-on-brand"
-                    : "bg-soft text-mute hover:text-ink",
-                )}
-              >
-                <Radio
-                  className={cn(
-                    "h-2.5 w-2.5",
-                    showLiveBuses && liveVehicles.length > 0 && "animate-pulse",
-                  )}
-                />
-                GPS na żywo ({liveVehicles.length})
-              </button>
-              <button
-                type="button"
-                onClick={onRefreshLive}
-                disabled={liveLoading}
-                title="Odśwież pozycje GPS autobusów"
-                aria-label="Odśwież pozycje GPS autobusów"
-                className="flex h-6 items-center gap-1 rounded-md border border-line bg-surface px-2 text-[8.5px] font-bold text-ink-soft transition-colors hover:text-brand-ink disabled:opacity-40"
-              >
-                <RefreshCw
-                  className={cn("h-3 w-3", liveLoading && "animate-spin")}
-                />
-                Odśwież
-              </button>
+              {isPlanner && onRoleChange && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onRoleChange("traveler");
+                  }}
+                  title="Profil Planista — przełącz na widok użytkownika"
+                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                >
+                  <LogOut className="h-3.5 w-3.5 text-brand-ink" />
+                  Planista · Wyloguj
+                </button>
+              )}
             </div>
+          </>
+        )}
 
-            {showLiveBuses && (
-              <>
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  {(
-                    [
-                      { id: "all", label: `Wszystkie (${liveVehicles.length})` },
-                      { id: "mzuk", label: `MZUK (${counts.mzuk})` },
-                      { id: "ska", label: `ŚKA (${counts.ska})` },
-                      { id: "other", label: `Inni (${counts.other})` },
-                    ] as const
-                  ).map((item) => (
+        {/* ================================================================ */}
+        {/*  VIEW 1: AUTOBUSY GPS NA ŻYWO                                    */}
+        {/* ================================================================ */}
+        {view === "gps" && (
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+            <SidebarSwitch
+              label={`Autobusy GPS na mapie (${liveVehicles.length})`}
+              hint="Pozycje pojazdów MZUK i ŚKA odświeżane na żywo"
+              checked={showLiveBuses}
+              onChange={() => onToggleLiveBuses()}
+            />
+
+            <button
+              type="button"
+              onClick={onRefreshLive}
+              disabled={liveLoading}
+              aria-label="Odśwież pozycje GPS autobusów"
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface text-[10.5px] font-extrabold text-ink-soft transition-colors hover:bg-raised hover:text-brand-ink disabled:opacity-45"
+            >
+              <RefreshCw
+                className={cn("h-3.5 w-3.5", liveLoading && "animate-spin")}
+              />
+              Odśwież pozycje GPS teraz
+            </button>
+
+            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                Filtr przewoźnika
+              </span>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {(
+                  [
+                    {
+                      id: "all",
+                      label: "Wszyscy przewoźnicy",
+                      count: liveVehicles.length,
+                    },
+                    { id: "mzuk", label: "MZUK", count: counts.mzuk },
+                    { id: "ska", label: "ŚKA", count: counts.ska },
+                    {
+                      id: "other",
+                      label: "Pozostali operatorzy",
+                      count: counts.other,
+                    },
+                  ] as const
+                ).map((item) => {
+                  const active = operatorFilter === item.id;
+                  return (
                     <button
                       key={item.id}
                       type="button"
+                      aria-pressed={active}
                       onClick={() => onOperatorFilter(item.id)}
                       className={cn(
-                        "h-6 rounded-md px-2 text-[8.5px] font-bold transition-colors",
-                        operatorFilter === item.id
-                          ? "border border-brand/40 bg-brand-soft text-brand-ink"
-                          : "border border-line/70 bg-surface text-mute hover:text-ink",
+                        "flex h-9 items-center justify-between rounded-lg border px-3 text-[10.5px] font-bold transition-colors",
+                        active
+                          ? "border-brand bg-brand-soft text-brand-ink"
+                          : "border-line/75 bg-surface text-ink-soft hover:bg-raised hover:text-ink",
                       )}
                     >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-2 border-t border-line/60 pt-2">
-                  <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                    Legenda punktualności GPS
-                  </span>
-                  <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-1">
-                    {LEGEND_ITEMS.map(([tone, text]) => (
-                      <span
-                        key={tone}
-                        className="flex items-center gap-1.5 text-[8px] font-semibold text-ink-soft"
-                      >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full ring-1 ring-black/10"
-                          style={{ backgroundColor: DELAY_STYLES[tone].bg }}
-                        />
-                        <span className="truncate">{text}</span>
+                      <span>{item.label}</span>
+                      <span className="metric rounded-full bg-surface px-2 py-0.5 text-[9.5px] font-extrabold text-ink ring-1 ring-line">
+                        {item.count}
                       </span>
-                    ))}
-                  </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {liveTraffic && liveTraffic.totalVehicles > 0 && (
+              <div className="grid grid-cols-3 gap-1.5 text-center">
+                <div className="rounded-xl border border-line/75 bg-surface p-2">
+                  <span className="metric block text-[14px] font-extrabold text-emerald-600 dark:text-emerald-400">
+                    {liveTraffic.onTimeCount}
+                  </span>
+                  <span className="text-[8.5px] font-bold text-mute">
+                    Planowo
+                  </span>
                 </div>
-              </>
+                <div className="rounded-xl border border-line/75 bg-surface p-2">
+                  <span className="metric block text-[14px] font-extrabold text-rose-600 dark:text-rose-400">
+                    {liveTraffic.delayedCount}
+                  </span>
+                  <span className="text-[8.5px] font-bold text-mute">
+                    Opóźnione
+                  </span>
+                </div>
+                <div className="rounded-xl border border-line/75 bg-surface p-2">
+                  <span className="metric block text-[14px] font-extrabold text-ink">
+                    {liveTraffic.trackedOnTripCount}
+                  </span>
+                  <span className="text-[8.5px] font-bold text-mute">
+                    Na kursie
+                  </span>
+                </div>
+              </div>
             )}
 
-            {isPlanner && showLiveBuses && dutyStats.eligible > 0 && (
+            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                Legenda punktualności GPS
+              </span>
+              <div className="mt-2 flex flex-col gap-2">
+                {LEGEND_ITEMS.map(([tone, text]) => (
+                  <div
+                    key={tone}
+                    className="flex items-center gap-2.5 text-[10px] font-semibold text-ink-soft"
+                  >
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10"
+                      style={{ backgroundColor: DELAY_STYLES[tone].bg }}
+                    />
+                    <span>{text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {isPlanner && dutyStats.eligible > 0 && (
               <div
-                className="mt-2 flex items-start gap-1.5 rounded-lg border border-brand/25 bg-surface px-2 py-1.5 text-[8px] leading-snug text-ink-soft"
+                className="flex items-start gap-2 rounded-xl border border-brand/25 bg-brand-soft/45 p-3 text-[9.5px] leading-snug text-ink-soft"
                 data-testid="duty-stats"
               >
-                <Check className="mt-px h-2.5 w-2.5 shrink-0 text-brand-ink" />
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-ink" />
                 <span>
                   <strong className="font-extrabold text-ink">
                     Brygady: {dutyStats.assigned}/{dutyStats.eligible} wozów
                   </strong>{" "}
-                  dopasowanych po kursie do rozkładu brygad.
+                  dopasowanych po aktywnym kursie do rozkładu brygad.
                 </span>
               </div>
             )}
-          </section>
+          </div>
+        )}
 
-          {/* Planner route summary card (moved off the map into sidebar) */}
-          {isPlanner && route && waypoints && metrics && vehicle && (
-            <MapRouteCard
-              route={route}
-              waypoints={waypoints}
-              metrics={metrics}
-              vehicle={vehicle}
-              brigade={brigade}
-              mapStyle={mapStyle}
-              routeReady={routeReady}
-              turnaroundCount={turnaroundCount}
-            />
-          )}
-
-          {/* Section 2: Twoja lokalizacja i prędkość GPS */}
-          <section
-            aria-label="Twoja lokalizacja i prędkość"
-            data-testid="user-location-hud"
-            className="rounded-xl border border-line/80 bg-raised/35 p-2"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[7.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                Twoja lokalizacja i prędkość
-              </span>
-              <button
-                type="button"
-                onClick={onLocate}
-                aria-label="Wycentruj na mojej lokalizacji w panelu"
-                className={cn(
-                  "flex h-6 items-center gap-1 rounded-md px-2 text-[8px] font-bold transition-colors",
-                  followingUser
-                    ? "bg-brand text-on-brand"
-                    : "border border-line bg-surface text-ink-soft hover:text-ink",
-                )}
-              >
-                <LocateFixed className="h-3 w-3" strokeWidth={2.2} />
-                {followingUser ? "Śledzę" : "Lokalizuj"}
-              </button>
-            </div>
-
-            {locationStatus === "requesting" && !userLocation ? (
-              <p className="mt-1.5 flex items-center gap-1.5 text-[9px] font-semibold text-ink-soft">
-                <Loader2 className="h-3 w-3 animate-spin text-brand-ink" />
-                Szukam sygnału GPS…
-              </p>
-            ) : locationStatus === "denied" ||
-              locationStatus === "unavailable" ? (
-              <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-warning-soft/80 p-1.5 text-[8.5px] leading-snug text-warning">
-                <LocateOff className="mt-0.5 h-3 w-3 shrink-0" />
-                <div>
-                  {locationStatus === "denied"
-                    ? "Lokalizacja zablokowana w przeglądarce."
-                    : "Brak obsługi GPS w tej przeglądarce."}
-                  {locationStatus === "denied" && (
-                    <button
-                      type="button"
-                      onClick={onRetryLocation}
-                      className="ml-1 font-extrabold underline"
-                    >
-                      Spróbuj ponownie
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : userLocation ? (
-              <div className="mt-1.5">
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="flex items-baseline gap-1 leading-none">
-                    <span
-                      className="metric text-[19px] font-extrabold text-ink"
-                      data-testid="user-speed"
-                    >
-                      {userLocation.speedKmh === null
-                        ? "—"
-                        : formatUserSpeed(userLocation.speedKmh)}
-                    </span>
-                    <span className="text-[9px] font-bold text-mute">km/h</span>
-                  </p>
-                  <div className="flex items-center gap-2 text-[8.5px]">
-                    <span
-                      className="metric flex items-center gap-1 font-bold text-ink"
-                      data-testid="user-heading"
-                    >
-                      {userLocation.heading !== null ? (
-                        <>
-                          <Navigation
-                            className="h-2.5 w-2.5 shrink-0 text-brand-ink"
-                            style={{
-                              transform: `rotate(${userLocation.heading - 45}deg)`,
-                            }}
-                          />
-                          {compassLabel(userLocation.heading)}{" "}
-                          {Math.round(userLocation.heading)}°
-                        </>
-                      ) : (
-                        <span className="font-semibold text-mute">
-                          {moving ? "—" : "stoisz"}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-line-strong">·</span>
-                    <span
-                      className={cn(
-                        "metric font-bold",
-                        weak ? "text-warning" : "text-ink-soft",
-                      )}
-                      data-testid="user-accuracy"
-                    >
-                      ±{Math.round(userLocation.accuracy)} m
-                    </span>
-                  </div>
-                </div>
-                <p className="metric mt-1 flex flex-wrap gap-x-1.5 border-t border-line/60 pt-1 text-[7.5px] font-semibold text-mute">
-                  <span>maks. {formatUserSpeed(userLocation.maxSpeedKmh)} km/h</span>
-                  <span>· trasa {formatDistanceCompact(userLocation.distanceM)}</span>
-                  {userLocation.altitude !== null && (
-                    <span>· {Math.round(userLocation.altitude)} m n.p.m.</span>
-                  )}
-                </p>
-                {(stale || weak) && (
-                  <p className="mt-0.5 text-[7.5px] font-semibold text-warning">
-                    {stale
-                      ? `Ostatni odczyt GPS ${ageS} s temu.`
-                      : "Słaby sygnał GPS — pozycja przybliżona."}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="mt-1.5 text-[8.5px] text-mute">
-                Kliknij „Lokalizuj”, aby zobaczyć swoją pozycję i prędkość GPS.
-              </p>
-            )}
-          </section>
-
-          {/* Section 3: Ustawienia widoczności */}
-          <section
+        {/* ================================================================ */}
+        {/*  VIEW 2: WIDOCZNOŚĆ NA MAPIE                                     */}
+        {/* ================================================================ */}
+        {view === "visibility" && (
+          <div
             role="region"
             aria-label="Ustawienia widoczności"
-            className="rounded-xl border border-line/80 bg-raised/35 p-2"
+            className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
           >
-            <div className="flex items-center justify-between gap-2 pb-1">
-              <span className="text-[7.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                Ustawienia widoczności
+            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                Przystanki autobusowe
               </span>
+              <div className="mt-2 flex gap-1 rounded-xl bg-soft p-1">
+                {stopOptions.map((option) => {
+                  const Icon = option.icon;
+                  const active = stopsValue === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onVisibilityChange({ stops: option.id })}
+                      className={cn(
+                        "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-[10px] font-extrabold transition-colors",
+                        active
+                          ? "bg-surface text-brand-ink shadow-xs"
+                          : "text-mute hover:text-ink",
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button
                 type="button"
                 onClick={onRefreshBusStops}
                 disabled={busLoading}
-                title="Pobierz przystanki dla bieżącego widoku"
                 aria-label="Pobierz przystanki dla bieżącego widoku mapy"
-                className="flex h-6 items-center gap-1 rounded-md border border-line bg-surface px-2 text-[8px] font-bold text-ink-soft transition-colors hover:text-brand-ink disabled:opacity-45"
+                className="mt-2.5 flex h-8.5 w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[10px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-brand-ink disabled:opacity-45"
               >
                 {busLoading ? (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Bus className="h-2.5 w-2.5 text-brand-ink" />
+                  <Bus className="h-3.5 w-3.5 text-brand-ink" />
                 )}
-                <span>Odśwież ({mapStopCount})</span>
+                <span>Odśwież przystanki w kadrze ({mapStopCount})</span>
               </button>
             </div>
 
-            <div className="pt-0.5 text-[9px] font-extrabold text-ink">
-              Przystanki na mapie
+            <div className="flex flex-col gap-2">
+              <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                Oznaczenia autobusów GPS
+              </span>
+              <SidebarSwitch
+                label="Pokaż autobusy na mapie"
+                checked={visibility.liveBuses}
+                onChange={(next) => onVisibilityChange({ liveBuses: next })}
+              />
+              <SidebarSwitch
+                label="Kursówka nad pojazdem"
+                hint="np. 15/01, 2/08"
+                checked={visibility.busKursowka}
+                onChange={(next) => onVisibilityChange({ busKursowka: next })}
+              />
+              <SidebarSwitch
+                label="Numer taborowy wozu"
+                hint="np. #340, #3"
+                checked={visibility.busVehicleNumber}
+                onChange={(next) =>
+                  onVisibilityChange({ busVehicleNumber: next })
+                }
+              />
             </div>
-            <div className="mt-1 flex gap-0.5 rounded-lg bg-soft p-0.5">
-              {stopOptions.map((option) => {
-                const Icon = option.icon;
-                const active = stopsValue === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => onVisibilityChange({ stops: option.id })}
-                    className={cn(
-                      "flex h-6.5 flex-1 items-center justify-center gap-1 rounded-md text-[8.5px] font-bold transition-colors",
-                      active
-                        ? "bg-surface text-brand-ink shadow-[0_1px_3px_rgba(13,42,28,0.12)]"
-                        : "text-mute hover:text-ink",
-                    )}
-                  >
-                    <Icon className="h-3 w-3" strokeWidth={2} />
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-2 border-t border-line/60 pt-1.5 text-[9px] font-extrabold text-ink">
-              Etykiety autobusów GPS
-            </div>
-            <SidebarSwitch
-              label="Pokaż autobusy na mapie"
-              checked={visibility.liveBuses}
-              onChange={(next) => onVisibilityChange({ liveBuses: next })}
-            />
-            <SidebarSwitch
-              label="Kursówka"
-              hint="np. 15/01, 2/08"
-              checked={visibility.busKursowka}
-              onChange={(next) => onVisibilityChange({ busKursowka: next })}
-            />
-            <SidebarSwitch
-              label="Numer taborowy"
-              hint="np. #340, #3"
-              checked={visibility.busVehicleNumber}
-              onChange={(next) => onVisibilityChange({ busVehicleNumber: next })}
-            />
 
             {isPlanner && (
-              <>
-                <div className="mt-1.5 border-t border-line/60 pt-1.5 text-[9px] font-extrabold text-ink">
-                  Wyznaczona trasa
-                </div>
+              <div className="flex flex-col gap-2">
+                <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                  Warstwy planisty
+                </span>
                 <SidebarSwitch
                   label={`Sygnalizacja świetlna${signalCount > 0 ? ` (${signalCount})` : ""}`}
                   checked={visibility.trafficSignals}
@@ -701,24 +1054,28 @@ export default function MapInfoSidebar({
                   checked={visibility.turnarounds}
                   onChange={(next) => onVisibilityChange({ turnarounds: next })}
                 />
-              </>
+              </div>
             )}
 
             <button
               type="button"
               onClick={() => onVisibilityChange({ ...DEFAULT_VISIBILITY })}
-              className="mt-1.5 w-full rounded-lg border border-line bg-surface py-1 text-[8.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="mt-auto rounded-xl border border-line bg-surface py-2 text-[10px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
             >
-              Przywróć domyślne
+              Przywróć domyślne ustawienia
             </button>
-          </section>
+          </div>
+        )}
 
-          {/* Section 4: Styl mapy */}
-          <section className="rounded-xl border border-line/80 bg-raised/35 p-2">
-            <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-              Styl mapy
-            </span>
-            <div className="mt-1.5 grid grid-cols-3 gap-1">
+        {/* ================================================================ */}
+        {/*  VIEW 3: STYL MAPY I MOTYW                                       */}
+        {/* ================================================================ */}
+        {view === "appearance" && (
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3">
+            <div className="flex flex-col gap-2">
+              <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                Podkład mapy
+              </span>
               {MAP_STYLES.map((style) => {
                 const Icon = style.icon;
                 const active = mapStyle === style.id;
@@ -730,32 +1087,269 @@ export default function MapInfoSidebar({
                     aria-pressed={active}
                     onClick={() => onMapStyle(style.id)}
                     className={cn(
-                      "flex flex-col items-center gap-1 rounded-lg border p-1.5 text-center transition-colors",
+                      "flex items-center gap-3 rounded-xl border p-2.5 text-left transition-colors",
                       active
-                        ? "border-brand bg-brand-soft text-brand-ink"
-                        : "border-line/70 bg-surface text-ink-soft hover:bg-raised",
+                        ? "border-brand bg-brand-soft"
+                        : "border-line/75 bg-surface hover:bg-raised",
                     )}
                   >
                     <span
-                      className="grid h-6 w-full place-items-center rounded-md border border-line/60"
+                      className="grid h-10 w-12 shrink-0 place-items-center rounded-lg border border-line/70 shadow-xs"
                       style={{ background: style.swatch }}
                     >
                       <Icon
                         className={cn(
-                          "h-3 w-3",
+                          "h-4 w-4",
                           style.id === "dark" || style.id === "satellite"
                             ? "text-white"
                             : "text-ink",
                         )}
                       />
                     </span>
-                    <span className="text-[8.5px] font-bold">{style.short}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-extrabold text-ink">
+                        {style.label}
+                      </span>
+                      <span className="mt-0.5 block text-[9px] text-mute">
+                        {style.hint}
+                      </span>
+                    </span>
+                    {active && (
+                      <Check
+                        className="h-4 w-4 shrink-0 text-brand-ink"
+                        strokeWidth={2.5}
+                      />
+                    )}
                   </button>
                 );
               })}
             </div>
-          </section>
-        </div>
+
+            {onToggleTheme && (
+              <div className="flex flex-col gap-2">
+                <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                  Motyw interfejsu
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={theme === "light"}
+                    onClick={() => {
+                      if (theme !== "light") onToggleTheme();
+                    }}
+                    className={cn(
+                      "flex h-10 items-center justify-center gap-2 rounded-xl border text-[10.5px] font-extrabold transition-colors",
+                      theme === "light"
+                        ? "border-brand bg-brand-soft text-brand-ink"
+                        : "border-line/75 bg-surface text-ink-soft hover:bg-raised",
+                    )}
+                  >
+                    <Sun className="h-4 w-4" strokeWidth={2.1} />
+                    Jasny
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={theme === "dark"}
+                    onClick={() => {
+                      if (theme !== "dark") onToggleTheme();
+                    }}
+                    className={cn(
+                      "flex h-10 items-center justify-center gap-2 rounded-xl border text-[10.5px] font-extrabold transition-colors",
+                      theme === "dark"
+                        ? "border-brand bg-brand-soft text-brand-ink"
+                        : "border-line/75 bg-surface text-ink-soft hover:bg-raised",
+                    )}
+                  >
+                    <Moon className="h-4 w-4" strokeWidth={2.1} />
+                    Ciemny
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================ */}
+        {/*  VIEW 4: MOJA LOKALIZACJA GPS                                    */}
+        {/* ================================================================ */}
+        {view === "location" && (
+          <div
+            aria-label="Twoja lokalizacja i prędkość"
+            data-testid="user-location-hud"
+            className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+          >
+            <button
+              type="button"
+              onClick={onLocate}
+              aria-label="Wycentruj na mojej lokalizacji w panelu"
+              className={cn(
+                "flex h-10 w-full items-center justify-center gap-2 rounded-xl text-[10.5px] font-extrabold transition-colors",
+                followingUser
+                  ? "bg-brand text-on-brand"
+                  : "border border-line bg-surface text-ink hover:bg-raised",
+              )}
+            >
+              <LocateFixed className="h-4 w-4" strokeWidth={2.2} />
+              {followingUser
+                ? "Śledzenie Twojej pozycji włączone"
+                : "Wycentruj i śledź moją pozycję"}
+            </button>
+
+            {locationStatus === "requesting" && !userLocation ? (
+              <div className="flex items-center gap-2.5 rounded-xl border border-line/75 bg-raised/35 p-3.5 text-[10.5px] font-semibold text-ink-soft">
+                <Loader2 className="h-4 w-4 animate-spin text-brand-ink" />
+                Szukam sygnału GPS Twojego urządzenia…
+              </div>
+            ) : locationStatus === "denied" ||
+              locationStatus === "unavailable" ? (
+              <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning-soft/80 p-3.5 text-[10px] leading-relaxed text-warning">
+                <LocateOff className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  {locationStatus === "denied"
+                    ? "Dostęp do lokalizacji został zablokowany w przeglądarce."
+                    : "Ta przeglądarka nie udostępnia odbiornika GPS."}
+                  {locationStatus === "denied" && (
+                    <button
+                      type="button"
+                      onClick={onRetryLocation}
+                      className="mt-1.5 block font-extrabold underline"
+                    >
+                      Spróbuj ponownie włączyć GPS
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : userLocation ? (
+              <div className="flex flex-col gap-2.5">
+                <div className="rounded-xl border border-line/75 bg-raised/35 p-3.5">
+                  <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                    Aktualna prędkość
+                  </span>
+                  <p className="mt-1 flex items-baseline gap-1.5 leading-none">
+                    <span
+                      className="metric text-[30px] font-extrabold text-ink"
+                      data-testid="user-speed"
+                    >
+                      {userLocation.speedKmh === null
+                        ? "—"
+                        : formatUserSpeed(userLocation.speedKmh)}
+                    </span>
+                    <span className="text-[11px] font-bold text-mute">
+                      km/h
+                    </span>
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-line/75 bg-surface p-3">
+                    <span className="block text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                      Kierunek ruchu
+                    </span>
+                    <span
+                      className="metric mt-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink"
+                      data-testid="user-heading"
+                    >
+                      {userLocation.heading !== null ? (
+                        <>
+                          <Navigation
+                            className="h-3.5 w-3.5 shrink-0 text-brand-ink"
+                            style={{
+                              transform: `rotate(${userLocation.heading - 45}deg)`,
+                            }}
+                          />
+                          {compassLabel(userLocation.heading)}{" "}
+                          {Math.round(userLocation.heading)}°
+                        </>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-mute">
+                          {moving ? "—" : "stoisz"}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl border border-line/75 bg-surface p-3">
+                    <span className="block text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                      Dokładność GPS
+                    </span>
+                    <span
+                      className={cn(
+                        "metric mt-1 block text-[13px] font-extrabold",
+                        weak ? "text-warning" : "text-ink",
+                      )}
+                      data-testid="user-accuracy"
+                    >
+                      ±{Math.round(userLocation.accuracy)} m
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-line/75 bg-surface p-3">
+                  <dl className="grid grid-cols-2 gap-y-2 text-[10px]">
+                    <dt className="font-semibold text-mute">Prędkość maks.</dt>
+                    <dd className="metric text-right font-extrabold text-ink">
+                      {formatUserSpeed(userLocation.maxSpeedKmh)} km/h
+                    </dd>
+                    <dt className="font-semibold text-mute">Przebyty dystans</dt>
+                    <dd className="metric text-right font-extrabold text-ink">
+                      {formatDistanceCompact(userLocation.distanceM)}
+                    </dd>
+                    {userLocation.altitude !== null && (
+                      <>
+                        <dt className="font-semibold text-mute">Wysokość</dt>
+                        <dd className="metric text-right font-extrabold text-ink">
+                          {Math.round(userLocation.altitude)} m n.p.m.
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                </div>
+
+                {(stale || weak) && (
+                  <p className="rounded-xl border border-warning/30 bg-warning-soft/70 px-3 py-2 text-[9.5px] font-semibold text-warning">
+                    {stale
+                      ? `Ostatni odczyt GPS ${ageS} s temu.`
+                      : "Słaby sygnał GPS — pozycja przybliżona."}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-line/75 bg-raised/35 p-3.5 text-[10px] leading-relaxed text-mute">
+                Kliknij przycisk powyżej, aby włączyć odczyt pozycji, prędkości
+                i kierunku GPS z urządzenia.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================ */}
+        {/*  VIEW 5: PARAMETRY TRASY (PLANISTA)                              */}
+        {/* ================================================================ */}
+        {view === "route" && isPlanner && (
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+            {route && waypoints && metrics && vehicle && (
+              <MapRouteCard
+                route={route}
+                waypoints={waypoints}
+                metrics={metrics}
+                vehicle={vehicle}
+                brigade={brigade}
+                mapStyle={mapStyle}
+                routeReady={routeReady}
+                turnaroundCount={turnaroundCount}
+              />
+            )}
+            <button
+              type="button"
+              onClick={onFit}
+              aria-label="Dopasuj trasę do widoku"
+              className="flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[10px] font-extrabold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <Maximize2 className="h-3.5 w-3.5 text-brand-ink" />
+              Dopasuj trasę do widoku mapy
+            </button>
+          </div>
+        )}
       </aside>
     </div>
   );
