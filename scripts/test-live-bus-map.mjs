@@ -165,7 +165,9 @@ try {
       overlayTitle: Array.from(document.querySelectorAll("div,span"))
         .map((el) => el.textContent || "")
         .find((text) => text.startsWith("Trasa linii 7")) ?? "",
-      paths: document.querySelectorAll(".leaflet-kursowka-pane path").length,
+      // Kropki przystanków kursu (klikalne) też żyją w pane trasy — liczymy
+      // wyłącznie ścieżki samej linii (obwódka + kolor).
+      paths: document.querySelectorAll(".leaflet-kursowka-pane path:not(.course-stop--tappable)").length,
       selected: document.querySelectorAll(".live-bus--selected").length,
     };
   });

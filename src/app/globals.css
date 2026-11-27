@@ -311,6 +311,29 @@ button {
   border-top-color: var(--color-ink);
 }
 
+/* Przystanek docelowy „trasy do przystanku" (podróżny wybrał, gdzie wysiada). */
+.leaflet-tooltip.waypoint-tooltip--target {
+  border-color: #7c3aed;
+  box-shadow: 0 8px 22px rgb(124 58 237 / 28%);
+  font-weight: 800;
+}
+.leaflet-tooltip-top.waypoint-tooltip--target::before {
+  border-top-color: #7c3aed;
+}
+.leaflet-tooltip-bottom.waypoint-tooltip--target::before {
+  border-bottom-color: #7c3aed;
+}
+
+/* Kropka przystanku kursu, w którą można kliknąć, żeby dojechać właśnie tam.
+   Osobny pane (kilka tras podmienia się dynamicznie), więc selektor jest globalny. */
+path.course-stop--tappable {
+  cursor: pointer;
+}
+path.course-stop--tappable:hover {
+  stroke: #7c3aed;
+  stroke-width: 3.5;
+}
+
 .pin-wrap {
   background: transparent;
   border: none;

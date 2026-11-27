@@ -12,6 +12,7 @@ import {
 } from "react";
 import { Route as RouteIcon } from "lucide-react";
 import type {
+  CourseRouteTarget,
   KursowkaShapeOverlay,
   LineRouteEditorMapState,
   LiveRouteProgressStatus,
@@ -121,6 +122,7 @@ import PerfHud from "@/components/PerfHud";
 import { isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
+import { courseStopTarget } from "@/lib/courseRoute";
 import { liveBusTap } from "@/lib/liveBusProgress";
 import "@/lib/engine/gtfsRt";
 import {
@@ -129,6 +131,7 @@ import {
   getGtfsPreviewStatus,
   getVehicleRouteOverlay,
   restoreOriginalGtfsArchive,
+  type CoursePreviewStop,
   type GtfsPreviewStatus,
 } from "@/lib/engine/gtfsStore";
 import { getOverridesSummary, initLineRouteOverrides } from "@/lib/engine/lineRouteOverrides";
@@ -487,6 +490,21 @@ function MapPlanerWorkspace() {
   const [kursowkaReturnDateId, setKursowkaReturnDateId] = useState<string | null>(null);
   const [kursowkaOverlay, setKursowkaOverlay] = useState<KursowkaShapeOverlay | null>(null);
   const [courseDrawerOpen, setCourseDrawerOpen] = useState(false);
+  /**
+   * Podróżny wybrał przystanek, do którego chce dojechać. `null` = cała trasa
+   * kursu. Numer przystanku jest liczony w obrębie bieżącego kursu, więc każdy
+   * nowy podgląd startuje z pełną trasą.
+   */
+  const [courseTargetStop, setCourseTargetStop] = useState<number | null>(null);
+  const [courseFocusNonce, setCourseFocusNonce] = useState(0);
+  /**
+   * Panel kursu zwinięty na telefonie — dopasowanie trasy musi oddać całą mapę.
+   * `null` = karta jeszcze nie zgłosiła stanu; wtedy nie rezerwujemy miejsca,
+   * dopóki strona nie zmierzy panelu (`CoursePreviewCard` zgłasza otwarcie).
+   */
+  const [courseSidebarOpen, setCourseSidebarOpen] = useState<boolean | null>(null);
+  /** Bieżący overlay bez wycinka — do odczytu w callbackach mapy. */
+  const kursowkaOverlayRef = useRef<KursowkaShapeOverlay | null>(null);
   /** Czy widoczna trasa pochodzi z kliknięcia autobusu (wtedy znika z kartą). */
   const [busOverlay, setBusOverlay] = useState(false);
   const [routeProgressStatus, setRouteProgressStatus] = useState<LiveRouteProgressStatus | null>(null);
@@ -2032,6 +2050,19 @@ function MapPlanerWorkspace() {
     }
   }, [showToast]);
 
+  kursowkaOverlayRef.current = kursowkaOverlay;
+
+  // Nowy kurs = znowu cała trasa (wybór przystanku dotyczy jednego kursu).
+  const courseTripKey = kursowkaOverlay?.course
+    ? `${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`
+    : null;
+  useEffect(() => {
+    setCourseTargetStop(null);
+    // Nowy podgląd kursu startuje z otwartym panelem (na telefonie karta sama
+    // startuje zwinięta i zgłosi to przez `onDrawerOpenChange`).
+    setCourseSidebarOpen(null);
+  }, [courseTripKey]);
+
   // Karta pojazdu zamknięta (dowolną drogą) → jej trasa też znika z mapy,
   // żeby nie zostawała „sierota” po wybraniu innego obiektu.
   useEffect(() => {
@@ -2041,6 +2072,77 @@ function MapPlanerWorkspace() {
     setBusOverlay(false);
     setKursowkaOverlay(null);
   }, [selectedLiveBus, busOverlay]);
+
+  /**
+   * Trasa do wybranego przystanku. Liczymy ją z tej samej geometrii, którą
+   * rysuje mapa (ciągła linia kursu), i wkładamy do overlayu, więc mapa,
+   * przycisk „dopasuj” i panel korzystają z jednego źródła prawdy.
+   */
+  const courseRouteTarget = useMemo<CourseRouteTarget | null>(() => {
+    const course = kursowkaOverlay?.course;
+    if (isPlanner || !course || courseTargetStop == null) return null;
+    if (courseTargetStop < 0 || courseTargetStop >= course.stops.length) return null;
+    const slice = courseStopTarget(course, courseTargetStop);
+    if (!slice) return null;
+    return {
+      stopIndex: slice.stopIndex,
+      stopName: course.stops[slice.stopIndex].name,
+      path: slice.path,
+      meters: slice.meters,
+      rideMs: slice.rideMs,
+      departMs: slice.departMs,
+      arriveMs: slice.arriveMs,
+    };
+  }, [isPlanner, kursowkaOverlay, courseTargetStop]);
+
+  const overlayWithTarget = useMemo<KursowkaShapeOverlay | null>(
+    () => (kursowkaOverlay ? { ...kursowkaOverlay, courseTarget: courseRouteTarget } : null),
+    [kursowkaOverlay, courseRouteTarget],
+  );
+
+  /**
+   * Klik w przystanek kursu na mapie: pokaż trasę do niego i podświetl jego
+   * wiersz w panelu (albo całą trasę, gdy kliknięto ten sam przystanek).
+   */
+  const toggleCourseTarget = useCallback(
+    (index: number | null) => {
+      const course = kursowkaOverlayRef.current?.course;
+      if (index != null && course && index >= 0) {
+        setCourseTargetStop((previous) => (previous === index ? null : index));
+        setCourseFocusNonce((value) => value + 1);
+        showToast(
+          `Trasa kursu ${course.routeShort} do przystanku: ${
+            course.stops[index]?.name ?? ""
+          } — ${formatWarsawClock(course.stops[index]?.departureMs ?? course.startMs)} → ${
+            formatWarsawClock(course.stops[index]?.arrivalMs ?? course.endMs)
+          }.`,
+        );
+        return;
+      }
+      setCourseTargetStop(null);
+      showToast("Cała trasa kursu na mapie.");
+    },
+    [showToast],
+  );
+
+  // Klik w kropkę przystanku na mapie działa tak samo jak klik w liście panelu.
+  const handleCourseStopClick = useCallback(
+    (routeStop: CoursePreviewStop) => {
+      const course = kursowkaOverlayRef.current?.course;
+      if (!course) return;
+      const index = course.stops.findIndex(
+        (stop) => stop.sequence === routeStop.sequence && stop.name === routeStop.name,
+      );
+      if (index < 0) return;
+      if (index === 0) {
+        toggleCourseTarget(null);
+        showToast("To pierwszy przystanek kursu — pokazuję całą trasę.");
+        return;
+      }
+      toggleCourseTarget(index);
+    },
+    [toggleCourseTarget],
+  );
 
   const closeLiveBus = useCallback(() => {
     busOverlayRequestRef.current = null;
@@ -2481,7 +2583,9 @@ function MapPlanerWorkspace() {
               showTrafficSignals={showTrafficSignals}
               turnaroundSpots={turnaroundSpots}
               showTurnarounds={showTurnarounds}
-              kursowkaOverlay={kursowkaOverlay}
+              kursowkaOverlay={overlayWithTarget}
+              onCourseStopClick={!isPlanner ? handleCourseStopClick : undefined}
+              courseSidebarOpen={courseSidebarOpen}
               onRouteProgressStatusChange={setRouteProgressStatus}
               bottomSheetOpen={Boolean(selectedLiveBus) && busOverlay}
               tripPlan={kursowkaOverlay ? null : tripMapPlan}
@@ -3067,6 +3171,7 @@ function MapPlanerWorkspace() {
                 course={kursowkaOverlay.course}
                 onClose={() => {
                   setCourseDrawerOpen(false);
+                  setCourseSidebarOpen(false);
                   setKursowkaOverlay(null);
                 }}
                 onFit={() => mapRef.current?.fitOverlay()}
@@ -3075,8 +3180,15 @@ function MapPlanerWorkspace() {
                   setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
                   setKursowkiOpen(true);
                 }}
+                targetStopIndex={courseTargetStop}
+                focusStopIndex={courseTargetStop}
+                focusNonce={courseFocusNonce}
+                onSelectRouteTarget={toggleCourseTarget}
                 onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
-                onDrawerOpenChange={setCourseDrawerOpen}
+                onDrawerOpenChange={(open) => {
+                  setCourseDrawerOpen(open);
+                  setCourseSidebarOpen(open);
+                }}
               />
             </Suspense>
           )}

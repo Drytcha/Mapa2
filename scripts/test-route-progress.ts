@@ -5,7 +5,7 @@
 // inny kolor niż ta, która ma być wykonana w przyszłości”.
 import assert from "node:assert/strict";
 
-const { splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange, pastRouteColor, PAST_ROUTE_COLOR, FUTURE_ROUTE_COLOR, liveStopProgress } = await import(
+const { splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange, pastRouteColor, PAST_ROUTE_COLOR, FUTURE_ROUTE_COLOR, liveStopProgress, courseUpToStop } = await import(
   "../src/lib/routeProgress"
 );
 
@@ -138,5 +138,61 @@ assert.deepEqual([1, 2, 3].map((sequence) => liveStopProgress(sequence, 2)), ["p
 assert.deepEqual([1, 2, 3].map((sequence) => liveStopProgress(sequence, 3)), ["passed", "passed", "upcoming"]);
 assert.equal(liveStopProgress(1, undefined), "unknown");
 assert.equal(liveStopProgress(undefined, 2), "unknown");
+
+// ── Trasa do wybranego przystanku (nie tylko do końca kursu) ────────────────
+{
+  const path = line(0, 1000, 100); // wierzchołki co 100 m
+  const timed = [0, 350, 700, 1000].map((meters, index) => ({
+    ...bus(meters),
+    // Odjazd co 5 minut, na końcu przyjazd 20 minut po starcie.
+    arrivalMs: 300_000 * (index + 1),
+    departureMs: 300_000 * (index + 1),
+  }));
+
+  const middle = courseUpToStop(path, timed, 1);
+  assert.ok(middle, "środkowy przystanek daje wycinek trasy");
+  assert.equal(middle!.stopIndex, 1);
+  assert.ok(
+    Math.abs(lengthMeters(middle!.path) - 350) < 2,
+    `trasa do przystanku ma 350 m (jest ${lengthMeters(middle!.path).toFixed(0)})`,
+  );
+  const end = middle!.path[middle!.path.length - 1];
+  assert.ok(
+    Math.abs((end[1] - LON0) * M_PER_DEG_LON - 350) < 2,
+    "linia kończy się dokładnie pod wybranym przystankiem, a nie na wierzchołku kształtu",
+  );
+  assert.equal(middle!.rideMs, 600_000 - 300_000, "czas jazdy liczony od odjazdu ze startu, nie od północy");
+  assert.ok(middle!.path.length < path.length, "wycinek nie zawiera dalszej części kursu");
+
+  const atStart = courseUpToStop(path, timed, 0);
+  assert.ok(atStart, "pierwszy przystanek też daje trasę (krótki odcinek)");
+  assert.ok(lengthMeters(atStart!.path) < 1, "na pierwszym przystanku nie ma jeszcze jazdy");
+  assert.equal(atStart!.rideMs, 0);
+
+  const last = courseUpToStop(path, timed, 3);
+  assert.ok(last);
+  assert.ok(Math.abs(lengthMeters(last!.path) - 1000) < 2, "ostatni przystanek = cała trasa");
+  assert.equal(last!.rideMs, 1_200_000 - 300_000, "do końca kursu jedzie się 15 minut od odjazdu ze startu");
+
+  // Pętla: ta sama ulica w obu kierunkach — bierzemy pierwszy przejazd.
+  const loop = [...line(0, 800, 100), ...line(800, 0, 100).slice(1)];
+  const loopStops = [0, 400, 800, 400].map((meters, index) => ({
+    ...bus(meters),
+    arrivalMs: 60_000 * index,
+    departureMs: 60_000 * index,
+  }));
+  const outward = courseUpToStop(loop, loopStops, 1);
+  assert.ok(outward);
+  assert.ok(
+    Math.abs(lengthMeters(outward!.path) - 400) < 2,
+    `przystanek na pętli obsługiwany jest w drodze „tam” (${lengthMeters(outward!.path).toFixed(0)} m)`,
+  );
+
+  assert.equal(courseUpToStop(path, timed, -1), null, "ujemny indeks odrzucony");
+  assert.equal(courseUpToStop(path, timed, 99), null, "indeks poza listą odrzucony");
+  assert.equal(courseUpToStop(path.slice(0, 1), timed, 1), null, "trasa z jednego punktu nie daje wycinka");
+  const farAway = [{ ...bus(0), lat: 51.5, arrivalMs: 0, departureMs: 0 }];
+  assert.equal(courseUpToStop(path, farAway, 0), null, "przystanek poza geometrią nie tworzy trasy");
+}
 
 console.log("OK: trasa za autobusem ma osobny kolor, a podział jest ciągły i bez dziur");
