@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Bus,
   BusFront,
-  Check,
   ChevronLeft,
   ChevronRight,
   Crosshair,
@@ -20,12 +19,8 @@ import {
   Menu,
   Moon,
   Navigation,
-  Palette,
-  Radio,
-  RefreshCw,
   Route as RouteIcon,
   Ruler,
-  Satellite,
   Settings2,
   SlidersHorizontal,
   Sun,
@@ -33,8 +28,6 @@ import {
   Waypoints,
 } from "lucide-react";
 import { useSharedClock } from "@/lib/core/runtimeHub";
-import { DELAY_STYLES, type DelayTone } from "@/lib/delay";
-import { dutyAssignmentStats } from "@/lib/engine/brigadeVerification";
 import {
   formatDistance,
   formatDistanceCompact,
@@ -78,9 +71,7 @@ export type SidebarView =
   | "stop"
   | "bus"
   | "course"
-  | "gps"
   | "visibility"
-  | "appearance"
   | "location"
   | "route";
 
@@ -90,43 +81,6 @@ const WEAK_ACCURACY_M = 100;
 const formatUserSpeed = (kmh: number) =>
   (kmh < 10 ? kmh.toFixed(1) : String(Math.round(kmh))).replace(".", ",");
 
-const MAP_STYLES: Array<{
-  id: MapStyle;
-  label: string;
-  hint: string;
-  icon: typeof Sun;
-  swatch: string;
-}> = [
-  {
-    id: "light",
-    label: "Mapa jasna",
-    hint: "Czytelne ulice, chodniki i przystanki",
-    icon: Sun,
-    swatch: "linear-gradient(135deg, #f6f1e2 0%, #e6ecd9 55%, #cfe0e6 100%)",
-  },
-  {
-    id: "dark",
-    label: "Mapa ciemna",
-    hint: "Stonowany podkład nocny",
-    icon: Moon,
-    swatch: "linear-gradient(135deg, #3a434f 0%, #2a313b 55%, #1e242c 100%)",
-  },
-  {
-    id: "satellite",
-    label: "Satelita",
-    hint: "Zdjęcia lotnicze Esri World Imagery",
-    icon: Satellite,
-    swatch: "linear-gradient(135deg, #62705a 0%, #394f3e 50%, #263e44 100%)",
-  },
-];
-
-const LEGEND_ITEMS: Array<[DelayTone, string]> = [
-  ["late-high", "Opóźnienie powyżej 3 min"],
-  ["late", "Opóźnienie do 3 min"],
-  ["early-small", "Planowo (od −1 min do +1 min)"],
-  ["early-big", "Przyspieszenie powyżej 1 min"],
-];
-
 const VIEW_TITLES: Record<Exclude<SidebarView, "home">, string> = {
   trip: "Wyznacz dojazd",
   lines: "Linie autobusowe",
@@ -134,9 +88,7 @@ const VIEW_TITLES: Record<Exclude<SidebarView, "home">, string> = {
   stop: "Przystanek",
   bus: "Autobus na żywo",
   course: "Przebieg kursu",
-  gps: "Autobusy GPS na żywo",
   visibility: "Widoczność na mapie",
-  appearance: "Styl mapy i motyw",
   location: "Moja lokalizacja GPS",
   route: "Parametry trasy",
 };
@@ -315,15 +267,15 @@ export interface MapInfoSidebarProps {
   busStops?: BusStop[];
   onSelectBus?: (bus: LiveBusVehicle) => void;
   onSelectStop?: (stop: BusStop) => void;
-  // Live fleet & operator filters
-  showLiveBuses: boolean;
-  onToggleLiveBuses: () => void;
-  operatorFilter: "all" | WalbrzychOperatorKey;
-  onOperatorFilter: (value: "all" | WalbrzychOperatorKey) => void;
+  // Live fleet & operator filters (optional — GPS bar lives on the map)
+  showLiveBuses?: boolean;
+  onToggleLiveBuses?: () => void;
+  operatorFilter?: "all" | WalbrzychOperatorKey;
+  onOperatorFilter?: (value: "all" | WalbrzychOperatorKey) => void;
   liveVehicles: LiveBusVehicle[];
-  liveTraffic: LiveTrafficSummary | null;
-  liveLoading: boolean;
-  onRefreshLive: () => void;
+  liveTraffic?: LiveTrafficSummary | null;
+  liveLoading?: boolean;
+  onRefreshLive?: () => void;
   // Stops & visibility
   mapStopCount: number;
   busLoading: boolean;
@@ -332,9 +284,9 @@ export interface MapInfoSidebarProps {
   onVisibilityChange: (patch: Partial<VisibilitySettings>) => void;
   signalCount: number;
   turnaroundCount: number;
-  // Map style & viewport
-  mapStyle: MapStyle;
-  onMapStyle: (style: MapStyle) => void;
+  // Map style & viewport (mapStyle switcher lives in MapControls)
+  mapStyle?: MapStyle;
+  onMapStyle?: (style: MapStyle) => void;
   onHome: () => void;
   onFit: () => void;
   // User GPS HUD
@@ -391,14 +343,7 @@ export default function MapInfoSidebar({
   busStops = [],
   onSelectBus,
   onSelectStop,
-  showLiveBuses,
-  onToggleLiveBuses,
-  operatorFilter,
-  onOperatorFilter,
   liveVehicles,
-  liveTraffic,
-  liveLoading,
-  onRefreshLive,
   mapStopCount,
   busLoading,
   onRefreshBusStops,
@@ -406,8 +351,7 @@ export default function MapInfoSidebar({
   onVisibilityChange,
   signalCount,
   turnaroundCount,
-  mapStyle,
-  onMapStyle,
+  mapStyle = "light",
   onHome,
   onFit,
   locationStatus,
@@ -484,18 +428,6 @@ export default function MapInfoSidebar({
     };
   }, [open, view, onClose]);
 
-  const counts = liveVehicles.reduce(
-    (acc, item) => {
-      acc[item.operatorKey] += 1;
-      return acc;
-    },
-    { mzuk: 0, ska: 0, other: 0 } as Record<WalbrzychOperatorKey, number>,
-  );
-
-  const dutyStats = isPlanner
-    ? dutyAssignmentStats(liveVehicles)
-    : { assigned: 0, eligible: 0 };
-
   const stopOptions: Array<{
     id: StopDisplayMode;
     icon: typeof Bus;
@@ -519,29 +451,12 @@ export default function MapInfoSidebar({
     userLocation && userLocation.speedKmh !== null && userLocation.speedKmh >= 1,
   );
 
-  const operatorSummary =
-    operatorFilter === "mzuk"
-      ? "tylko MZUK"
-      : operatorFilter === "ska"
-        ? "tylko ŚKA"
-        : operatorFilter === "other"
-          ? "tylko inni"
-          : "wszyscy przewoźnicy";
-
-  const gpsSummary = showLiveBuses
-    ? `Włączone · ${liveVehicles.length} w ruchu · ${operatorSummary}`
-    : "Ukryte na mapie";
-
   const stopsSummary =
     stopsValue === "off"
       ? "Przystanki ukryte"
       : stopsValue === "route"
         ? `Przy trasie (${mapStopCount})`
         : `Wszystkie przystanki (${mapStopCount})`;
-
-  const activeStyleMeta =
-    MAP_STYLES.find((s) => s.id === mapStyle) ?? MAP_STYLES[0];
-  const appearanceSummary = `${activeStyleMeta.label} · motyw ${theme === "dark" ? "ciemny" : "jasny"}`;
 
   const locationSummary: ReactNode = userLocation ? (
     <>
@@ -640,32 +555,11 @@ export default function MapInfoSidebar({
           />
 
           <RailButton
-            testId="rail-gps"
-            label="Panel: Autobusy GPS na żywo"
-            active={open && (view === "gps" || view === "bus")}
-            dotColor={
-              showLiveBuses && liveVehicles.length > 0
-                ? "bg-emerald-500"
-                : undefined
-            }
-            onClick={() => handleRailSelect("gps")}
-            icon={<Radio className="h-4.5 w-4.5" strokeWidth={2} />}
-          />
-
-          <RailButton
             testId="rail-visibility"
             label="Panel: Widoczność na mapie"
             active={open && view === "visibility"}
             onClick={() => handleRailSelect("visibility")}
             icon={<SlidersHorizontal className="h-4.5 w-4.5" strokeWidth={2} />}
-          />
-
-          <RailButton
-            testId="rail-appearance"
-            label="Panel: Styl mapy i motyw"
-            active={open && view === "appearance"}
-            onClick={() => handleRailSelect("appearance")}
-            icon={<Palette className="h-4.5 w-4.5" strokeWidth={2} />}
           />
 
           <div className="mt-auto flex flex-col items-center gap-1.5">
@@ -758,16 +652,41 @@ export default function MapInfoSidebar({
         {view === "home" ? (
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/45 px-4 py-3">
             <Logo showName={isPlanner} />
-            <button
-              type="button"
-              data-testid="map-sidebar-close"
-              onClick={onClose}
-              aria-label="Zwiń panel boczny mapy"
-              title="Zwiń panel boczny"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
-            >
-              <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
-            </button>
+            <div className="flex items-center gap-1">
+              {!showRail && onToggleTheme && (
+                <button
+                  type="button"
+                  onClick={onToggleTheme}
+                  aria-label={
+                    theme === "light"
+                      ? "Włącz ciemny motyw"
+                      : "Włącz jasny motyw"
+                  }
+                  title={
+                    theme === "light"
+                      ? "Włącz ciemny motyw"
+                      : "Włącz jasny motyw"
+                  }
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+                >
+                  {theme === "light" ? (
+                    <Moon className="h-4 w-4" strokeWidth={2} />
+                  ) : (
+                    <Sun className="h-4 w-4" strokeWidth={2} />
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                data-testid="map-sidebar-close"
+                onClick={onClose}
+                aria-label="Zwiń panel boczny mapy"
+                title="Zwiń panel boczny"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+              >
+                <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
+              </button>
+            </div>
           </div>
         ) : isCustomCardView ? (
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/45 px-3 py-2">
@@ -1048,42 +967,11 @@ export default function MapInfoSidebar({
                 </span>
 
                 <SidebarSummaryRow
-                  testId="sidebar-nav-gps"
-                  icon={
-                    <Radio
-                      className={cn(
-                        "h-4.5 w-4.5",
-                        showLiveBuses &&
-                          liveVehicles.length > 0 &&
-                          "animate-pulse",
-                      )}
-                      strokeWidth={2}
-                    />
-                  }
-                  title="Autobusy GPS na żywo"
-                  summary={gpsSummary}
-                  badge={
-                    showLiveBuses && liveVehicles.length > 0 ? (
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    ) : undefined
-                  }
-                  onClick={() => setView("gps")}
-                />
-
-                <SidebarSummaryRow
                   testId="sidebar-nav-visibility"
                   icon={<Eye className="h-4.5 w-4.5" strokeWidth={2} />}
                   title="Widoczność na mapie"
                   summary={stopsSummary}
                   onClick={() => setView("visibility")}
-                />
-
-                <SidebarSummaryRow
-                  testId="sidebar-nav-appearance"
-                  icon={<Palette className="h-4.5 w-4.5" strokeWidth={2} />}
-                  title="Styl mapy i motyw"
-                  summary={appearanceSummary}
-                  onClick={() => setView("appearance")}
                 />
 
                 <SidebarSummaryRow
@@ -1158,146 +1046,7 @@ export default function MapInfoSidebar({
         {view === "course" && courseContent}
 
         {/* ================================================================ */}
-        {/*  FOCUSED SETTING 1: AUTOBUSY GPS NA ŻYWO                         */}
-        {/* ================================================================ */}
-        {view === "gps" && (
-          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5">
-            <SidebarSwitch
-              label={`Autobusy GPS na mapie (${liveVehicles.length})`}
-              hint="Pozycje pojazdów MZUK i ŚKA aktualizowane na żywo"
-              checked={showLiveBuses}
-              onChange={() => onToggleLiveBuses()}
-            />
-
-            <button
-              type="button"
-              onClick={onRefreshLive}
-              disabled={liveLoading}
-              aria-label="Odśwież pozycje GPS autobusów"
-              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-soft/80 text-[12px] font-bold text-ink transition-colors hover:bg-soft disabled:opacity-45"
-            >
-              <RefreshCw
-                className={cn(
-                  "h-4 w-4 text-brand-ink",
-                  liveLoading && "animate-spin",
-                )}
-              />
-              Odśwież pozycje GPS teraz
-            </button>
-
-            <div className="border-t border-line/45 pt-3.5">
-              <span className="px-1 text-[11px] font-semibold text-mute">
-                Filtr przewoźnika
-              </span>
-              <div className="mt-2 flex flex-col gap-1">
-                {(
-                  [
-                    {
-                      id: "all",
-                      label: "Wszyscy przewoźnicy",
-                      count: liveVehicles.length,
-                    },
-                    { id: "mzuk", label: "MZUK", count: counts.mzuk },
-                    { id: "ska", label: "ŚKA", count: counts.ska },
-                    {
-                      id: "other",
-                      label: "Pozostali operatorzy",
-                      count: counts.other,
-                    },
-                  ] as const
-                ).map((item) => {
-                  const active = operatorFilter === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => onOperatorFilter(item.id)}
-                      className={cn(
-                        "flex h-10 items-center justify-between rounded-xl px-3 text-[12.5px] font-semibold transition-colors",
-                        active
-                          ? "bg-brand-soft font-bold text-brand-ink"
-                          : "text-ink-soft hover:bg-soft/75 hover:text-ink",
-                      )}
-                    >
-                      <span>{item.label}</span>
-                      <span className="metric rounded-full bg-soft px-2.5 py-0.5 text-[11px] font-bold text-ink">
-                        {item.count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {liveTraffic && liveTraffic.totalVehicles > 0 && (
-              <div className="grid grid-cols-3 gap-2 border-t border-line/45 pt-3.5 text-center">
-                <div className="rounded-xl bg-soft/65 p-2.5">
-                  <span className="metric block text-[16px] font-extrabold text-emerald-600 dark:text-emerald-400">
-                    {liveTraffic.onTimeCount}
-                  </span>
-                  <span className="text-[10.5px] font-medium text-mute">
-                    Planowo
-                  </span>
-                </div>
-                <div className="rounded-xl bg-soft/65 p-2.5">
-                  <span className="metric block text-[16px] font-extrabold text-rose-600 dark:text-rose-400">
-                    {liveTraffic.delayedCount}
-                  </span>
-                  <span className="text-[10.5px] font-medium text-mute">
-                    Opóźnione
-                  </span>
-                </div>
-                <div className="rounded-xl bg-soft/65 p-2.5">
-                  <span className="metric block text-[16px] font-extrabold text-ink">
-                    {liveTraffic.trackedOnTripCount}
-                  </span>
-                  <span className="text-[10.5px] font-medium text-mute">
-                    Na kursie
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <div className="border-t border-line/45 pt-3.5">
-              <span className="px-1 text-[11px] font-semibold text-mute">
-                Legenda punktualności GPS
-              </span>
-              <div className="mt-2.5 flex flex-col gap-2.5 px-1">
-                {LEGEND_ITEMS.map(([tone, text]) => (
-                  <div
-                    key={tone}
-                    className="flex items-center gap-3 text-[12px] text-ink-soft"
-                  >
-                    <span
-                      className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10"
-                      style={{ backgroundColor: DELAY_STYLES[tone].bg }}
-                    />
-                    <span>{text}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {isPlanner && dutyStats.eligible > 0 && (
-              <div
-                className="flex items-start gap-2.5 rounded-xl bg-brand-soft/55 p-3 text-[11.5px] leading-relaxed text-ink-soft"
-                data-testid="duty-stats"
-              >
-                <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-ink" />
-                <span>
-                  <strong className="font-bold text-ink">
-                    Brygady: {dutyStats.assigned}/{dutyStats.eligible} wozów
-                  </strong>{" "}
-                  dopasowanych po aktywnym kursie do rozkładu brygad.
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ================================================================ */}
-        {/*  FOCUSED SETTING 2: WIDOCZNOŚĆ NA MAPIE                          */}
+        {/*  FOCUSED SETTING 1: WIDOCZNOŚĆ NA MAPIE                          */}
         {/* ================================================================ */}
         {view === "visibility" && (
           <div
@@ -1406,107 +1155,7 @@ export default function MapInfoSidebar({
         )}
 
         {/* ================================================================ */}
-        {/*  FOCUSED SETTING 3: STYL MAPY I MOTYW                            */}
-        {/* ================================================================ */}
-        {view === "appearance" && (
-          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5">
-            <div className="flex flex-col gap-1.5">
-              <span className="px-1 pb-1 text-[11px] font-semibold text-mute">
-                Podkład mapy
-              </span>
-              {MAP_STYLES.map((style) => {
-                const Icon = style.icon;
-                const active = mapStyle === style.id;
-                return (
-                  <button
-                    key={style.id}
-                    type="button"
-                    aria-label={style.label}
-                    aria-pressed={active}
-                    onClick={() => onMapStyle(style.id)}
-                    className={cn(
-                      "flex items-center gap-3 rounded-xl p-2.5 text-left transition-colors",
-                      active ? "bg-brand-soft" : "hover:bg-soft/80",
-                    )}
-                  >
-                    <span
-                      className="grid h-11 w-14 shrink-0 place-items-center rounded-xl border border-line/50 shadow-xs"
-                      style={{ background: style.swatch }}
-                    >
-                      <Icon
-                        className={cn(
-                          "h-4.5 w-4.5",
-                          style.id === "dark" || style.id === "satellite"
-                            ? "text-white"
-                            : "text-ink",
-                        )}
-                      />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-bold text-ink">
-                        {style.label}
-                      </span>
-                      <span className="mt-0.5 block text-[11px] text-mute">
-                        {style.hint}
-                      </span>
-                    </span>
-                    {active && (
-                      <Check
-                        className="h-4.5 w-4.5 shrink-0 text-brand-ink"
-                        strokeWidth={2.5}
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {onToggleTheme && (
-              <div className="flex flex-col gap-2 border-t border-line/45 pt-3.5">
-                <span className="px-1 text-[11px] font-semibold text-mute">
-                  Motyw interfejsu
-                </span>
-                <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-soft p-1">
-                  <button
-                    type="button"
-                    aria-pressed={theme === "light"}
-                    onClick={() => {
-                      if (theme !== "light") onToggleTheme();
-                    }}
-                    className={cn(
-                      "flex h-9.5 items-center justify-center gap-2 rounded-lg text-[12px] font-bold transition-colors",
-                      theme === "light"
-                        ? "bg-surface text-brand-ink shadow-xs"
-                        : "text-mute hover:text-ink",
-                    )}
-                  >
-                    <Sun className="h-4 w-4" strokeWidth={2} />
-                    Jasny
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={theme === "dark"}
-                    onClick={() => {
-                      if (theme !== "dark") onToggleTheme();
-                    }}
-                    className={cn(
-                      "flex h-9.5 items-center justify-center gap-2 rounded-lg text-[12px] font-bold transition-colors",
-                      theme === "dark"
-                        ? "bg-surface text-brand-ink shadow-xs"
-                        : "text-mute hover:text-ink",
-                    )}
-                  >
-                    <Moon className="h-4 w-4" strokeWidth={2} />
-                    Ciemny
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ================================================================ */}
-        {/*  FOCUSED SETTING 4: MOJA LOKALIZACJA GPS                         */}
+        {/*  FOCUSED SETTING 2: MOJA LOKALIZACJA GPS                         */}
         {/* ================================================================ */}
         {view === "location" && (
           <div

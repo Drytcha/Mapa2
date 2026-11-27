@@ -25,6 +25,7 @@ import { useUserLocation } from "@/lib/useUserLocation";
 import {
   BusStopCard,
   LiveBusCard,
+  LiveFleetControl,
   MapContextMenu,
   MapControls,
   MapDrawingBanner,
@@ -853,7 +854,7 @@ function MapPlanerWorkspace() {
     const base = isPlanner
       ? liveVehicles
       : liveVehicles.filter((v) => !isPlannerOnlyLine(v.routeName));
-    return operatorFilter === "all"
+    return operatorFilter === "all" || operatorFilter === "other"
       ? base
       : base.filter((v) => v.operatorKey === operatorFilter);
   }, [liveVehicles, operatorFilter, isPlanner]);
@@ -3020,6 +3021,29 @@ function MapPlanerWorkspace() {
                         hideToggle={isRailViewport}
                       />
                     )}
+                    {(isRailViewport || !mapSidebarOpen) && !courseNavRoute && (
+                      <LiveFleetControl
+                        isPlanner={isPlanner}
+                        hideSearch
+                        showLiveBuses={showLiveBuses}
+                        onToggleLiveBuses={() => toggleVisibility("liveBuses")}
+                        operatorFilter={operatorFilter}
+                        onOperatorFilter={setOperatorFilter}
+                        liveVehicles={liveVehicles}
+                        busStops={busStops}
+                        liveTraffic={liveTraffic}
+                        liveLoading={liveLoading}
+                        onRefreshLive={() => void fetchLiveBuses(true)}
+                        signalCount={isPlanner ? trafficSignals.length : 0}
+                        showTrafficSignals={visibility.trafficSignals}
+                        onToggleTrafficSignals={() => toggleVisibility("trafficSignals")}
+                        turnaroundCount={isPlanner ? turnaroundSpots.length : 0}
+                        showTurnarounds={visibility.turnarounds}
+                        onToggleTurnarounds={() => toggleVisibility("turnarounds")}
+                        onSelectBus={handleSelectBus}
+                        onSelectStop={selectStopFromFinder}
+                      />
+                    )}
                   </div>
                   {/* Na telefonie (<768px) karta autobusu zostaje jako wygodna dolna szuflada nad mapą */}
                   {!isRailViewport && selectedLiveBus && (
@@ -3144,6 +3168,8 @@ function MapPlanerWorkspace() {
 
             <div className="pointer-events-none absolute right-2.5 top-2.5">
               <MapControls
+                mapStyle={mapStyle}
+                onMapStyle={setMapStyle}
                 onZoomIn={() => mapRef.current?.zoomIn()}
                 onZoomOut={() => mapRef.current?.zoomOut()}
                 onFit={() =>
