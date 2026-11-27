@@ -501,11 +501,12 @@ path.course-stop--tappable:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-width: 96px;
+  gap: 3px;
+  min-width: 0;
+  width: max-content;
   white-space: nowrap;
-  height: 28px;
-  padding: 0 10px 0 17px;
+  height: 25px;
+  padding: 0 8px 0 6px;
   border-radius: 999px;
   background: var(--delay-bg, #cbd5e1);
   color: var(--delay-fg, #273449);
@@ -515,9 +516,12 @@ path.course-stop--tappable:hover {
   font-weight: 800;
   line-height: 1;
   box-shadow:
-    0 0 0 2px rgba(15, 20, 26, 0.82),
-    0 5px 14px rgb(0 0 0 / 48%);
+    0 0 0 1.5px rgba(15, 20, 26, 0.78),
+    0 4px 12px rgb(0 0 0 / 42%);
   transition: box-shadow 0.16s ease;
+}
+.live-bus:has(.live-bus-op) {
+  padding-left: 10px;
 }
 .leaflet-vehicles-pane .live-bus,
 .leaflet-vehicles-pane .live-bus-chip {
@@ -534,40 +538,47 @@ path.course-stop--tappable:hover {
     0 0 0 3.5px rgba(215, 243, 110, 0.95),
     0 8px 26px rgba(0, 0, 0, 0.68);
 }
-/* Adaptacyjny wygląd autobusów zależny od zoomu: czystsza mapa z daleka */
-[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-label,
-[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-label {
-  opacity: 0;
-  max-height: 0;
-  overflow: hidden;
-  pointer-events: none;
-  margin: 0;
+/* Adaptacyjny wygląd autobusów zależny od zoomu:
+   - Na każdym zoomie widoczna ciasna pigułka „▲ Linia” bez pustego pola.
+   - Dodatkowy dymek „km/h | opóźnienie” i rozszerzenia (/brygada, #wóz) dopiero z bliska (>= 15) albo po zaznaczeniu. */
+[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-chip,
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-chip,
+[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-extra,
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-extra,
+[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-op,
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-op {
+  display: none;
 }
 [data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus {
-  height: 25px;
-  min-width: 78px;
-  padding: 0 9px 0 14px;
+  height: 23px;
+  padding: 0 7px 0 5px;
   font-size: 10.5px;
 }
 [data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus {
   height: 20px;
-  min-width: auto;
-  padding: 0 7px;
+  padding: 0 6px 0 4px;
   font-size: 9.5px;
   border-width: 1.5px;
 }
-[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-op,
 [data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-arrow {
-  display: none;
+  width: 15px;
+  height: 15px;
 }
-/* Telefon: mniejsze pigułki autobusów, żeby nie zasłaniały mapy i siebie nawzajem. */
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-arrow svg {
+  width: 13px;
+  height: 13px;
+}
+/* Telefon: zgrabne, ciasne pigułki autobusów bez nadmiarowej szerokości. */
 @media (max-width: 640px) {
   .leaflet-vehicles-pane .live-bus {
-    height: 24px;
-    min-width: 72px;
-    padding: 0 8px 0 14px;
+    height: 22px;
+    min-width: 0;
+    padding: 0 7px 0 5px;
     font-size: 10px;
     border-width: 1.5px;
+  }
+  .leaflet-vehicles-pane .live-bus:has(.live-bus-op) {
+    padding-left: 9px;
   }
   .leaflet-vehicles-pane .live-bus-op {
     width: 14px;
@@ -577,9 +588,13 @@ path.course-stop--tappable:hover {
   .leaflet-vehicles-pane .live-bus-chip {
     font-size: 8px;
   }
+  .leaflet-vehicles-pane .live-bus-arrow {
+    width: 17px;
+    height: 17px;
+  }
   .leaflet-vehicles-pane .live-bus-arrow svg {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
   }
 }
 .live-bus-op {
@@ -626,9 +641,35 @@ path.course-stop--tappable:hover {
 }
 /* Keep the direction and line readable without a wide default hitbox. */
 .live-bus--compact {
-  min-width: 52px;
-  padding: 0 8px;
-  gap: 4px;
+  min-width: 0;
+  padding: 0 7px 0 5px;
+  gap: 3px;
+}
+
+/* Numer przystanku (1, 2, 3…) wewnątrz kółka na wybranej trasie kursu / linii */
+.course-stop-num-wrap {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+.course-stop-num {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.48);
+  pointer-events: none;
+  user-select: none;
+}
+.course-stop-num--faded {
+  opacity: 0.65;
+}
+[data-zoom-tier="far"] .course-stop-num {
+  font-size: 8px;
 }
 .live-bus-dot {
   width: 8px;

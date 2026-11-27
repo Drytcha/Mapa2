@@ -26,7 +26,7 @@ interface MarkerLabelSegment {
   html: string;
 }
 
-const SEPARATOR = '<span class="live-bus-sep">|</span>';
+const SEPARATOR = '<span class="live-bus-sep live-bus-extra">|</span>';
 
 /**
  * Builds deduplicated label segments for a live bus marker:
@@ -51,7 +51,7 @@ function buildMarkerSegments(
       // Same line as duty prefix (e.g. line "2" + duty "2/03") -> single combined "2/03"
       segments.push({
         primary: true,
-        html: `<span class="live-bus-line">${escapeHtml(parsedDuty.line)}</span><span>/${escapeHtml(parsedDuty.suffix)}</span>`,
+        html: `<span class="live-bus-line">${escapeHtml(parsedDuty.line)}</span><span class="live-bus-extra">/${escapeHtml(parsedDuty.suffix)}</span>`,
       });
       hasExtra = true;
     } else {
@@ -69,7 +69,7 @@ function buildMarkerSegments(
     if (canonicalDuty) {
       // Cross-line trip (e.g. line "19" served by duty "9/01")
       segments.push({
-        html: `<span>${escapeHtml(canonicalDuty)}</span>`,
+        html: `<span class="live-bus-extra">${escapeHtml(canonicalDuty)}</span>`,
       });
       hasExtra = true;
     }
@@ -78,7 +78,7 @@ function buildMarkerSegments(
   if (options.vehicleNumber) {
     const vehicle = formatVehicleNumber(bus.vehicleId);
     if (vehicle) {
-      segments.push({ html: `<span>${escapeHtml(vehicle)}</span>` });
+      segments.push({ html: `<span class="live-bus-extra">${escapeHtml(vehicle)}</span>` });
       hasExtra = true;
     }
   }
@@ -119,7 +119,7 @@ export function buildBusMarker(
     `<div class="live-bus${compact ? " live-bus--compact" : ""}${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
     pill,
     `</div>`,
-    `<div class="live-bus-chip"><span>${escapeHtml(speedText)}</span>${SEPARATOR}`,
+    `<div class="live-bus-chip"><span>${escapeHtml(speedText)}</span><span class="live-bus-sep">|</span>`,
     `<span class="live-bus-delay" title="${escapeHtml(delayDescription)}">${escapeHtml(delayText)}</span></div></div>`,
   ].join("");
 

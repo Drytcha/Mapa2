@@ -10,6 +10,7 @@ import {
   ListOrdered,
   MapPin,
   Maximize2,
+  Navigation,
   Undo2,
   X,
 } from "lucide-react";
@@ -29,6 +30,8 @@ interface Props {
   onFit: () => void;
   onBack: () => void;
   onSelectStop: (lat: number, lon: number) => void;
+  /** Uruchamia nawigację kierowcy/użytkownika po całym przebiegu tego kursu. */
+  onStartNavigation?: () => void;
   onDrawerOpenChange?: (open: boolean) => void;
   /** Przystanek docelowy podróżnego; `null` = cała trasa kursu. */
   targetStopIndex?: number | null;
@@ -56,6 +59,7 @@ export default function CoursePreviewCard({
   onFit,
   onBack,
   onSelectStop,
+  onStartNavigation,
   onDrawerOpenChange,
   targetStopIndex = null,
   onSelectRouteTarget,
@@ -412,12 +416,12 @@ export default function CoursePreviewCard({
                     }
                     className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-0.5 text-left focus-visible:outline-2 focus-visible:outline-brand"
                   >
-                    <span className="relative flex w-4 shrink-0 justify-center self-stretch pt-0.5">
+                    <span className="relative flex w-5 shrink-0 justify-center self-stretch pt-0.5">
                       <span
-                        className="relative z-10 grid shrink-0 place-items-center rounded-full border-2 border-white text-[6px] font-extrabold text-white shadow-sm"
+                        className="metric relative z-10 grid shrink-0 place-items-center rounded-full border border-white text-[8px] font-black text-white shadow-xs"
                         style={{
-                          width: isTarget ? 14 : 12,
-                          height: isTarget ? 14 : 12,
+                          width: isTarget ? 19 : 17,
+                          height: isTarget ? 19 : 17,
                           backgroundColor: isTarget
                             ? "#7c3aed"
                             : isStart
@@ -425,8 +429,14 @@ export default function CoursePreviewCard({
                               : isEnd
                                 ? "#e11d48"
                                 : course.color,
+                          color:
+                            !isTarget && !isStart && !isEnd
+                              ? course.textColor || "#ffffff"
+                              : "#ffffff",
                         }}
-                      />
+                      >
+                        {index + 1}
+                      </span>
                     </span>
                     <span className="metric w-[37px] shrink-0 pt-px text-[9px] font-extrabold text-ink-soft">
                       {time}
@@ -478,39 +488,60 @@ export default function CoursePreviewCard({
           })}
         </ol>
 
-        <div className="flex shrink-0 items-center gap-1.5 border-t border-line/70 bg-raised/60 px-2.5 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-          {target ? (
+        <div className="flex shrink-0 flex-col gap-1.5 border-t border-line/70 bg-raised/60 px-2.5 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          {onStartNavigation && (
             <button
               type="button"
-              data-testid="course-target-clear"
-              onClick={() => selectTarget(null)}
-              title="Wróć do przebiegu całego kursu"
-              className="flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-2 text-[8.5px] font-extrabold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+              data-testid="course-start-navigation"
+              onClick={() => {
+                onStartNavigation();
+                collapseOnMobile();
+              }}
+              className="flex h-9 w-full items-center justify-center gap-1.5 rounded-xl bg-brand px-3 text-[11.5px] font-extrabold text-on-brand shadow-xs transition-opacity hover:opacity-92"
             >
-              <Undo2 className="h-3 w-3" strokeWidth={2.4} />
-              Cała trasa
+              <Navigation className="h-3.5 w-3.5" strokeWidth={2.3} />
+              Nawiguj po trasie kursu
             </button>
-          ) : null}
-          <button
-            type="button"
-            data-testid="course-target-fit"
-            onClick={() => {
-              onFit();
-              collapseOnMobile();
-            }}
-            className="flex h-8 flex-1 items-center justify-center gap-1 rounded-lg bg-brand px-2 text-[8.5px] font-extrabold text-on-brand transition-opacity hover:opacity-90"
-          >
-            <Maximize2 className="h-3 w-3" strokeWidth={2.4} />
-            {target ? "Dopasuj" : "Pokaż całą trasę"}
-          </button>
-          <button
-            type="button"
-            onClick={onBack}
-            title="Wróć do listy kursów tej brygady"
-            className="flex h-8 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-2.5 text-[8.5px] font-bold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
-          >
-            <ArrowLeft className="h-3 w-3" /> Kursówki
-          </button>
+          )}
+          <div className="flex items-center gap-1.5">
+            {target ? (
+              <button
+                type="button"
+                data-testid="course-target-clear"
+                onClick={() => selectTarget(null)}
+                title="Wróć do przebiegu całego kursu"
+                className="flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-2 text-[9px] font-extrabold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+              >
+                <Undo2 className="h-3 w-3" strokeWidth={2.4} />
+                Cała trasa
+              </button>
+            ) : null}
+            <button
+              type="button"
+              data-testid="course-target-fit"
+              onClick={() => {
+                onFit();
+                collapseOnMobile();
+              }}
+              className={cn(
+                "flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[9px] font-extrabold transition-colors",
+                onStartNavigation
+                  ? "border border-line bg-surface text-ink-soft hover:bg-soft hover:text-ink"
+                  : "bg-brand text-on-brand hover:opacity-90",
+              )}
+            >
+              <Maximize2 className="h-3 w-3" strokeWidth={2.4} />
+              {target ? "Dopasuj" : "Pokaż całą trasę"}
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              title="Wróć do listy kursów tej brygady"
+              className="flex h-8 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-2.5 text-[9px] font-bold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+            >
+              <ArrowLeft className="h-3 w-3" /> Kursówki
+            </button>
+          </div>
         </div>
       </aside>
     </div>
