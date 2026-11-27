@@ -23,6 +23,8 @@ import { cn } from "@/utils/cn";
 
 interface Props {
   course: CoursePreview;
+  /** Osadzony w lewym sidebarze zamiast osobnego prawego panelu. */
+  embedded?: boolean;
   onClose: () => void;
   onFit: () => void;
   onBack: () => void;
@@ -49,6 +51,7 @@ function isDesktopViewport(): boolean {
 
 export default function CoursePreviewCard({
   course,
+  embedded = false,
   onClose,
   onFit,
   onBack,
@@ -62,7 +65,9 @@ export default function CoursePreviewCard({
   // Na telefonie prawy sidebar startuje zwinięty, aby po kliknięciu kursu
   // od razu było widać całą trasę na mapie — użytkownik może go w każdej
   // chwili wysunąć z prawej krawędzi ekranu.
-  const [drawerOpen, setDrawerOpen] = useState<boolean>(() => isDesktopViewport());
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(() =>
+    embedded ? true : isDesktopViewport(),
+  );
 
   // Callback trzymamy w ref, żeby zmiana funkcji w rodzicu nie wyglądała jak
   // zamknięcie panelu: cleanup zgłaszałby „zwinięty” przy każdym re-renderze
@@ -130,12 +135,16 @@ export default function CoursePreviewCard({
   return (
     <div
       data-testid="course-preview-sidebar-root"
-      className="pointer-events-none absolute inset-0 z-[630] overflow-hidden"
+      className={cn(
+        embedded
+          ? "flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-surface"
+          : "pointer-events-none absolute inset-0 z-[560] overflow-hidden",
+      )}
     >
       {/* Delikatna strefa kliknięcia na telefonie: stuknięcie w mapę z lewej zwija
           prawy sidebar. Przyciemniamy tylko wąski pas obok panelu — reszta mapy
           (z trasą) zostaje widoczna i przesuwalna. */}
-      {drawerOpen && (
+      {!embedded && drawerOpen && (
         <button
           type="button"
           aria-label="Zwiń panel przebiegu kursu i pokaż mapę"
@@ -145,7 +154,7 @@ export default function CoursePreviewCard({
       )}
 
       {/* Uchwyt po prawej krawędzi do wysuwania panelu (widoczny gdy sidebar jest zwinięty) */}
-      {!drawerOpen && (
+      {!embedded && !drawerOpen && (
         <div
           data-testid="course-drawer-tab"
           className="pointer-events-auto absolute right-0 top-[56%] flex -translate-y-1/2 flex-col items-stretch overflow-hidden rounded-l-2xl border-y border-l border-line bg-surface/96 shadow-[0_12px_32px_rgba(13,42,28,0.28)] dark:bg-surface/95"
@@ -184,44 +193,50 @@ export default function CoursePreviewCard({
         </div>
       )}
 
-      {/* Rozsuwany prawy sidebar z przebiegiem kursu i listą przystanków */}
+      {/* Panel przebiegu kursu i lista przystanków */}
       <aside
         aria-label={`Przebieg kursu linii ${course.routeShort}`}
-        aria-hidden={!drawerOpen}
+        aria-hidden={!embedded && !drawerOpen}
         data-testid="course-preview-card"
-        data-open={drawerOpen ? "true" : "false"}
-        className={`pointer-events-auto absolute inset-y-0 right-0 flex w-[min(300px,84vw)] flex-col overflow-hidden border-l border-line bg-surface/98 shadow-[-12px_0_36px_rgba(13,42,28,0.24)] transition-transform duration-200 ease-out md:bottom-3 md:right-[54px] md:top-[52px] md:w-[300px] md:rounded-[14px] md:border md:shadow-[0_16px_44px_rgba(13,42,28,0.22)] dark:bg-surface/96 ${
-          drawerOpen
-            ? "translate-x-0"
-            : "pointer-events-none translate-x-[calc(100%+72px)]"
-        }`}
+        data-open={embedded || drawerOpen ? "true" : "false"}
+        className={cn(
+          embedded
+            ? "flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-surface"
+            : `pointer-events-auto absolute inset-y-0 right-0 flex w-[min(300px,84vw)] flex-col overflow-hidden border-l border-line bg-surface/98 shadow-[-12px_0_36px_rgba(13,42,28,0.24)] transition-transform duration-200 ease-out md:bottom-3 md:right-[54px] md:top-[52px] md:w-[300px] md:rounded-[14px] md:border md:shadow-[0_16px_44px_rgba(13,42,28,0.22)] dark:bg-surface/96 ${
+                drawerOpen
+                  ? "translate-x-0"
+                  : "pointer-events-none translate-x-[calc(100%+72px)]"
+              }`,
+        )}
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-line/70 bg-brand-soft/70 px-2.5 py-2">
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-line/50 px-3 py-2.5">
           <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
             <BusFront className="h-3.5 w-3.5" strokeWidth={2.3} />
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="text-[11px] font-extrabold text-ink">Przebieg kursu</h3>
-            <p className="text-[7.5px] font-bold uppercase tracking-[0.11em] text-brand-ink/75">
+            <h3 className="text-[12px] font-bold text-ink">Przebieg kursu</h3>
+            <p className="text-[10px] text-mute">
               Rozkład GTFS · {dateLabel}
             </p>
           </div>
-          <button
-            type="button"
-            data-testid="course-drawer-collapse"
-            onClick={() => setDrawerOpen(false)}
-            aria-label="Zwiń panel kursu do prawej krawędzi"
-            title="Zwiń panel i pokaż mapę"
-            className="flex h-7 shrink-0 items-center gap-0.5 rounded-lg border border-line bg-surface px-2 text-[8.5px] font-extrabold text-brand-ink transition-colors hover:bg-raised"
-          >
-            Mapa
-            <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.4} />
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              data-testid="course-drawer-collapse"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Zwiń panel kursu do prawej krawędzi"
+              title="Zwiń panel i pokaż mapę"
+              className="flex h-7 shrink-0 items-center gap-0.5 rounded-lg border border-line bg-surface px-2 text-[8.5px] font-extrabold text-brand-ink transition-colors hover:bg-raised"
+            >
+              Mapa
+              <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
             aria-label="Zamknij podgląd kursu"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-surface hover:text-ink"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-soft hover:text-ink"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2.3} />
           </button>

@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import CoursePreviewCard from "../src/components/CoursePreviewCard";
 import BusSearch from "../src/components/BusSearch";
 import MapInfoSidebar from "../src/components/MapInfoSidebar";
-import { MapControls, MapQuickBar } from "../src/components/MapOverlays";
+import { BusStopCard, LiveBusCard, MapControls, MapQuickBar } from "../src/components/MapOverlays";
 import { EMPTY_ROUTE } from "../src/lib/data";
 import { DEFAULT_VISIBILITY } from "../src/lib/visibility";
 import type { CoursePreview } from "../src/lib/engine/gtfsStore";
@@ -429,5 +429,150 @@ assert.match(plannerS1Search, /\bS1\b/, "planista widzi S1 na liście linii przy
 const appSource = await readFile(new URL("../src/components/MapPlanerApp.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(appSource, /Przystanki są ukryte\./, "usunięto komunikat o ukrytych przystankach");
 assert.doesNotMatch(appSource, /StopFinder/, "usunięto osobny dolny przycisk Przystanki");
+
+// ── 4. Pasek ikon przy lewej krawędzi (Icon Rail) + zintegrowane widoki w jednym sidebarze ──
+const desktopClosedWithRailHtml = renderToStaticMarkup(
+  <>
+    <MapQuickBar
+      sidebarOpen={false}
+      onToggleSidebar={noop}
+      showLiveBuses={true}
+      liveVehicles={sampleVehicles}
+      busStops={sampleStops}
+      onSelectBus={noop}
+      onSelectStop={noop}
+      hideToggle={true}
+    />
+    <MapInfoSidebar
+      {...baseSidebarProps}
+      open={false}
+      showRail={true}
+      isPlanner={false}
+      liveVehicles={sampleVehicles}
+      mapStopCount={sampleStops.length}
+      userLocation={sampleUserLocation}
+      locationStatus="active"
+    />
+  </>,
+);
+assert.match(desktopClosedWithRailHtml, /data-testid="map-icon-rail"/, "na desktopie stały wąski pasek ikon przy lewej krawędzi");
+for (const railId of [
+  "map-sidebar-toggle",
+  "rail-trip",
+  "rail-lines",
+  "rail-kursowki",
+  "rail-gps",
+  "rail-visibility",
+  "rail-appearance",
+  "rail-theme",
+  "rail-home",
+]) {
+  assert.match(desktopClosedWithRailHtml, new RegExp(`data-testid="${railId}"`), `ikona na pasku bocznym: ${railId}`);
+}
+assert.equal(
+  (desktopClosedWithRailHtml.match(/data-testid="map-sidebar-toggle"/g) ?? []).length,
+  1,
+  "dokładnie jeden przycisk map-sidebar-toggle (brak duplikatu między MapQuickBar a paskiem ikon)",
+);
+assert.equal(
+  (desktopClosedWithRailHtml.match(/type="search"/g) ?? []).length,
+  1,
+  "dokładnie jedno pole wyszukiwania gdy sidebar jest zwinięty",
+);
+assert.equal(
+  (desktopClosedWithRailHtml.match(/data-testid="user-speed"/g) ?? []).length,
+  1,
+  "dokładnie jeden wskaźnik prędkości GPS na pasku ikon gdy sidebar jest zwinięty",
+);
+assert.doesNotMatch(desktopClosedWithRailHtml, /Planista|Planer|Podróżny|Logowanie/i);
+
+// Otwarty widok przystanku, autobusu i kursu wewnątrz tego samego lewego sidebara
+const embeddedStopHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    showRail={true}
+    view="stop"
+    isPlanner={false}
+    userLocation={sampleUserLocation}
+    locationStatus="active"
+    stopContent={
+      <BusStopCard
+        embedded
+        stop={sampleStops[0]}
+        isPlanner={false}
+        alreadyInRoute={false}
+        canAdd={true}
+        onClose={noop}
+        onAddVia={noop}
+        onSetStart={noop}
+        onSetEnd={noop}
+        onCenter={noop}
+      />
+    }
+  />,
+);
+assert.match(embeddedStopHtml, /data-view="stop"/);
+assert.match(embeddedStopHtml, /data-testid="map-sidebar-back"/, "widok przystanku pozwala jednym kliknięciem wrócić do menu");
+assert.match(embeddedStopHtml, /Piłsudskiego - Plac Tuwima/);
+assert.equal(
+  (embeddedStopHtml.match(/data-testid="user-speed"/g) ?? []).length,
+  1,
+  "wskaźnik prędkości GPS pozostaje widoczny na pasku ikon podczas przeglądania przystanku",
+);
+
+const embeddedBusHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    showRail={true}
+    view="bus"
+    isPlanner={false}
+    busContent={
+      <LiveBusCard
+        embedded
+        isPlanner={false}
+        bus={sampleVehicles[0]}
+        onClose={noop}
+        onOpenKursowka={noop}
+        onSetOperator={noop}
+        onCenter={noop}
+      />
+    }
+  />,
+);
+assert.match(embeddedBusHtml, /data-view="bus"/);
+assert.doesNotMatch(embeddedBusHtml, /data-mobile-sheet="bus"/, "w trybie embedded karta autobusu nie tworzy osobnej dolnej szuflady");
+
+const embeddedCourseHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    {...baseSidebarProps}
+    open={true}
+    showRail={true}
+    view="course"
+    isPlanner={false}
+    courseContent={
+      <CoursePreviewCard
+        embedded
+        course={timedCourse}
+        onClose={noop}
+        onFit={noop}
+        onBack={noop}
+        onSelectStop={noop}
+      />
+    }
+  />,
+);
+assert.match(embeddedCourseHtml, /data-view="course"/);
+assert.match(embeddedCourseHtml, /course-preview-card/);
+assert.doesNotMatch(embeddedCourseHtml, /course-drawer-tab/, "osadzony w lewym sidebarze podgląd kursu nie dubluje prawego uchwytu");
+
+// ── 5. Znaczniki zależne od przybliżenia (data-zoom-tier w MapView + globals.css) ──
+const cssSource = await readFile(new URL("../src/app/globals.css", import.meta.url), "utf8");
+assert.match(cssSource, /data-zoom-tier="far"/, "styl kropek przystanków dla dalekiego widoku mapy");
+assert.match(cssSource, /data-zoom-tier="city"/, "styl dyskretnych kropek przystanków dla skali miasta");
+const mapViewSource = await readFile(new URL("../src/components/MapView.tsx", import.meta.url), "utf8");
+assert.match(mapViewSource, /dataset\.zoomTier/, "MapView aktualizuje data-zoom-tier przy zmianie przybliżenia");
+assert.match(mapViewSource, /"close"/, "MapView ustawia pełny tryb close przy dużym przybliżeniu");
 
 console.log("user view tests passed");

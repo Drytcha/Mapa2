@@ -131,7 +131,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="course-preview-stop"]').length === 4);
 
   const width = await sidebar.evaluate((element) => element.getBoundingClientRect().width);
-  assert.ok(width <= 320, `panel kursu jest delikatnie zmniejszony (jest ${Math.round(width)} px)`);
+  assert.ok(width <= 380, `panel kursu mieści się w lewym sidebarze (jest ${Math.round(width)} px)`);
   assert.ok(width >= 260, `panel nie jest za wąski dla treści (jest ${Math.round(width)} px)`);
 
   // Przebieg całego kursu: wszystkie przystanki widoczne, brak przycięcia.

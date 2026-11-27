@@ -4,6 +4,7 @@ import {
   Bus,
   BusFront,
   Check,
+  ChevronLeft,
   ChevronRight,
   Crosshair,
   Eye,
@@ -16,16 +17,17 @@ import {
   LocateOff,
   LogOut,
   Maximize2,
+  Menu,
   Moon,
   Navigation,
   Palette,
-  PanelLeftClose,
   Radio,
   RefreshCw,
   Route as RouteIcon,
   Ruler,
   Satellite,
   Settings2,
+  SlidersHorizontal,
   Sun,
   Truck,
   Waypoints,
@@ -33,7 +35,12 @@ import {
 import { useSharedClock } from "@/lib/core/runtimeHub";
 import { DELAY_STYLES, type DelayTone } from "@/lib/delay";
 import { dutyAssignmentStats } from "@/lib/engine/brigadeVerification";
-import { formatDistance, formatDistanceCompact, formatDurationShort, readableEngine } from "@/lib/geo";
+import {
+  formatDistance,
+  formatDistanceCompact,
+  formatDurationShort,
+  readableEngine,
+} from "@/lib/geo";
 import type {
   AppRole,
   BrigadeInfo,
@@ -65,6 +72,12 @@ import { Logo } from "./UI";
 
 export type SidebarView =
   | "home"
+  | "trip"
+  | "lines"
+  | "kursowki"
+  | "stop"
+  | "bus"
+  | "course"
   | "gps"
   | "visibility"
   | "appearance"
@@ -94,7 +107,7 @@ const MAP_STYLES: Array<{
   {
     id: "dark",
     label: "Mapa ciemna",
-    hint: "Stonowany podkład OSM nocą",
+    hint: "Stonowany podkład nocny",
     icon: Moon,
     swatch: "linear-gradient(135deg, #3a434f 0%, #2a313b 55%, #1e242c 100%)",
   },
@@ -114,6 +127,20 @@ const LEGEND_ITEMS: Array<[DelayTone, string]> = [
   ["early-big", "Przyspieszenie powyżej 1 min"],
 ];
 
+const VIEW_TITLES: Record<Exclude<SidebarView, "home">, string> = {
+  trip: "Wyznacz dojazd",
+  lines: "Linie autobusowe",
+  kursowki: "Kursówki i brygady",
+  stop: "Przystanek",
+  bus: "Autobus na żywo",
+  course: "Przebieg kursu",
+  gps: "Autobusy GPS na żywo",
+  visibility: "Widoczność na mapie",
+  appearance: "Styl mapy i motyw",
+  location: "Moja lokalizacja GPS",
+  route: "Parametry trasy",
+};
+
 function SidebarSwitch({
   label,
   hint,
@@ -131,12 +158,14 @@ function SidebarSwitch({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between gap-3 rounded-xl border border-line/75 bg-surface px-3 py-2.5 text-left transition-colors hover:bg-raised"
+      className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-soft/75"
     >
       <span className="min-w-0">
-        <span className="block text-[11px] font-bold text-ink">{label}</span>
+        <span className="block text-[12.5px] font-semibold text-ink">
+          {label}
+        </span>
         {hint && (
-          <span className="mt-0.5 block text-[9px] leading-snug text-mute">
+          <span className="mt-0.5 block text-[11px] leading-snug text-mute">
             {hint}
           </span>
         )}
@@ -181,40 +210,95 @@ function SidebarSummaryRow({
       data-testid={testId}
       aria-label={ariaLabel}
       onClick={onClick}
-      className="group flex w-full items-center gap-2.5 rounded-xl border border-line/75 bg-surface px-2.5 py-2 text-left transition-all hover:border-brand/35 hover:bg-raised/70"
+      className="group flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-soft/80"
     >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink transition-colors group-hover:bg-brand group-hover:text-on-brand">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-soft text-brand-ink transition-colors group-hover:bg-brand-soft">
         {icon}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[11px] font-extrabold text-ink">
+          <span className="truncate text-[13px] font-bold text-ink">
             {title}
           </span>
           {badge}
         </span>
-        <span className="mt-0.5 block truncate text-[9px] font-semibold text-mute">
+        <span className="mt-0.5 block truncate text-[11px] text-mute">
           {summary}
         </span>
       </span>
       <ChevronRight
-        className="h-4 w-4 shrink-0 text-mute transition-transform group-hover:translate-x-0.5 group-hover:text-ink"
+        className="h-4 w-4 shrink-0 text-mute/70 transition-transform group-hover:translate-x-0.5 group-hover:text-ink"
         strokeWidth={2}
       />
     </button>
   );
 }
 
+function RailButton({
+  icon,
+  label,
+  active,
+  dotColor,
+  onClick,
+  testId,
+}: {
+  icon: ReactNode;
+  label: string;
+  active?: boolean;
+  dotColor?: string;
+  onClick: () => void;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "relative grid h-9 w-9 place-items-center rounded-xl transition-colors",
+        active
+          ? "bg-brand-soft text-brand-ink"
+          : "text-ink-soft hover:bg-soft hover:text-ink",
+      )}
+    >
+      {active && (
+        <span
+          aria-hidden="true"
+          className="absolute -left-1.5 top-2 h-5 w-1 rounded-r-full bg-brand"
+        />
+      )}
+      {icon}
+      {dotColor && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute right-1 top-1 h-2 w-2 rounded-full ring-2 ring-surface",
+            dotColor,
+          )}
+        />
+      )}
+    </button>
+  );
+}
+
 export interface MapInfoSidebarProps {
   open: boolean;
+  onOpenChange?: (open: boolean) => void;
   onClose: () => void;
+  view?: SidebarView;
+  onViewChange?: (view: SidebarView) => void;
   initialView?: SidebarView;
+  /** Czy wyświetlać stały wąski pasek ikon po lewej (desktop md+). */
+  showRail?: boolean;
   role?: AppRole;
   onRoleChange?: (role: AppRole) => void;
   isPlanner: boolean;
   theme?: ThemeMode;
   onToggleTheme?: () => void;
-  // Navigation actions (replacing TopBar)
+  // Navigation actions
   kursowkiOpen?: boolean;
   linesOpen?: boolean;
   onOpenKursowki?: () => void;
@@ -271,20 +355,23 @@ export interface MapInfoSidebarProps {
   vehicle?: VehicleId;
   brigade?: BrigadeInfo;
   routeReady?: boolean;
+  // Embedded views rendered inside the same left sidebar
+  tripContent?: ReactNode;
+  linesContent?: ReactNode;
+  kursowkiContent?: ReactNode;
+  stopContent?: ReactNode;
+  busContent?: ReactNode;
+  courseContent?: ReactNode;
 }
-
-const SUBVIEW_TITLES: Record<Exclude<SidebarView, "home">, string> = {
-  gps: "Autobusy GPS na żywo",
-  visibility: "Widoczność na mapie",
-  appearance: "Styl mapy i motyw",
-  location: "Moja lokalizacja GPS",
-  route: "Parametry trasy",
-};
 
 export default function MapInfoSidebar({
   open,
+  onOpenChange,
   onClose,
+  view: controlledView,
+  onViewChange,
   initialView = "home",
+  showRail = false,
   onRoleChange,
   isPlanner,
   theme = "light",
@@ -338,14 +425,48 @@ export default function MapInfoSidebar({
   vehicle,
   brigade,
   routeReady = false,
+  tripContent,
+  linesContent,
+  kursowkiContent,
+  stopContent,
+  busContent,
+  courseContent,
 }: MapInfoSidebarProps) {
-  const [view, setView] = useState<SidebarView>(initialView);
-  const asideRef = useRef<HTMLElement | null>(null);
-  const now = useSharedClock(1_000, Boolean(userLocation && open));
+  const [internalView, setInternalView] = useState<SidebarView>(initialView);
+  const view = controlledView ?? internalView;
 
-  useEffect(() => {
-    if (!open) setView(initialView);
-  }, [open, initialView]);
+  const setView = (next: SidebarView) => {
+    setInternalView(next);
+    onViewChange?.(next);
+  };
+
+  const setOpen = (next: boolean) => {
+    if (next) {
+      onOpenChange?.(true);
+    } else {
+      onClose();
+    }
+  };
+
+  const handleRailSelect = (targetView: SidebarView) => {
+    if (open && view === targetView) {
+      onClose();
+      return;
+    }
+    if (targetView === "trip" && onOpenTripPlanner) {
+      onOpenTripPlanner();
+    } else if (targetView === "lines" && onOpenLines) {
+      onOpenLines();
+    } else if (targetView === "kursowki" && onOpenKursowki) {
+      onOpenKursowki();
+    }
+    setView(targetView);
+    setOpen(true);
+  };
+
+  const asideRef = useRef<HTMLElement | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
+  const now = useSharedClock(1_000, Boolean(userLocation && open));
 
   useEffect(() => {
     if (!open) return;
@@ -357,18 +478,9 @@ export default function MapInfoSidebar({
         onClose();
       }
     };
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target || !target.isConnected) return;
-      if (asideRef.current?.contains(target)) return;
-      if (target.closest('[data-testid="map-sidebar-toggle"]')) return;
-      onClose();
-    };
     window.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onPointerDown);
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [open, view, onClose]);
 
@@ -407,7 +519,6 @@ export default function MapInfoSidebar({
     userLocation && userLocation.speedKmh !== null && userLocation.speedKmh >= 1,
   );
 
-  // Concise 1-line summaries for the home screen
   const operatorSummary =
     operatorFilter === "mzuk"
       ? "tylko MZUK"
@@ -419,7 +530,7 @@ export default function MapInfoSidebar({
 
   const gpsSummary = showLiveBuses
     ? `Włączone · ${liveVehicles.length} w ruchu · ${operatorSummary}`
-    : "Wyłączone na mapie";
+    : "Ukryte na mapie";
 
   const stopsSummary =
     stopsValue === "off"
@@ -434,7 +545,11 @@ export default function MapInfoSidebar({
 
   const locationSummary: ReactNode = userLocation ? (
     <>
-      <span data-testid={view === "home" ? "user-speed" : undefined}>
+      <span
+        data-testid={
+          (open || !showRail) && view === "home" ? "user-speed" : undefined
+        }
+      >
         {userLocation.speedKmh === null
           ? "0,0"
           : formatUserSpeed(userLocation.speedKmh)}
@@ -459,20 +574,170 @@ export default function MapInfoSidebar({
         ? "Przeliczanie trasy…"
         : "Brak wyznaczonej trasy";
 
+  // Dedicated embedded views (stop, bus, course) manage their own rich headers,
+  // so we give them a clean slim navigation strip at top ("← Menu" + "Zwiń").
+  const isCustomCardView =
+    view === "stop" || view === "bus" || view === "course";
+
   return (
     <div
       data-testid="map-info-sidebar-root"
       className="pointer-events-none absolute inset-0 z-[650] overflow-hidden"
     >
-      {open && (
+      {/* Stały wąski pasek ikon przy lewej krawędzi (desktop md+) */}
+      {showRail && (
+        <nav
+          ref={railRef}
+          aria-label="Pasek nawigacji mapy"
+          data-testid="map-icon-rail"
+          className="pointer-events-auto absolute inset-y-0 left-0 z-[660] flex w-12 flex-col items-center gap-1.5 border-r border-line/55 bg-surface py-2.5"
+        >
+          <RailButton
+            testId="map-sidebar-toggle"
+            label={
+              open && view === "home"
+                ? "Zwiń panel boczny mapy"
+                : "Otwórz panel boczny mapy"
+            }
+            active={open && view === "home"}
+            onClick={() => handleRailSelect("home")}
+            icon={<Menu className="h-4.5 w-4.5" strokeWidth={2.1} />}
+          />
+
+          <span className="my-0.5 h-px w-6 bg-line/55" aria-hidden="true" />
+
+          {!isPlanner && (
+            <RailButton
+              testId="rail-trip"
+              label="Panel: Wyznacz dojazd (A → B)"
+              active={open && view === "trip"}
+              dotColor={
+                hasTripDest
+                  ? "bg-[#e11d48]"
+                  : hasTripOrigin
+                    ? "bg-[#0891b2]"
+                    : undefined
+              }
+              onClick={() => handleRailSelect("trip")}
+              icon={<RouteIcon className="h-4.5 w-4.5" strokeWidth={2} />}
+            />
+          )}
+
+          <RailButton
+            testId="rail-lines"
+            label="Panel: Linie autobusowe"
+            active={open && view === "lines"}
+            onClick={() => handleRailSelect("lines")}
+            icon={<Waypoints className="h-4.5 w-4.5" strokeWidth={2} />}
+          />
+
+          <RailButton
+            testId="rail-kursowki"
+            label="Panel: Kursówki i brygady"
+            active={open && (view === "kursowki" || view === "course")}
+            onClick={() => handleRailSelect("kursowki")}
+            icon={<BusFront className="h-4.5 w-4.5" strokeWidth={2} />}
+          />
+
+          <RailButton
+            testId="rail-gps"
+            label="Panel: Autobusy GPS na żywo"
+            active={open && (view === "gps" || view === "bus")}
+            dotColor={
+              showLiveBuses && liveVehicles.length > 0
+                ? "bg-emerald-500"
+                : undefined
+            }
+            onClick={() => handleRailSelect("gps")}
+            icon={<Radio className="h-4.5 w-4.5" strokeWidth={2} />}
+          />
+
+          <RailButton
+            testId="rail-visibility"
+            label="Panel: Widoczność na mapie"
+            active={open && view === "visibility"}
+            onClick={() => handleRailSelect("visibility")}
+            icon={<SlidersHorizontal className="h-4.5 w-4.5" strokeWidth={2} />}
+          />
+
+          <RailButton
+            testId="rail-appearance"
+            label="Panel: Styl mapy i motyw"
+            active={open && view === "appearance"}
+            onClick={() => handleRailSelect("appearance")}
+            icon={<Palette className="h-4.5 w-4.5" strokeWidth={2} />}
+          />
+
+          <div className="mt-auto flex flex-col items-center gap-1.5">
+            {userLocation && (
+              <button
+                type="button"
+                onClick={() => handleRailSelect("location")}
+                aria-label="Panel: Moja lokalizacja GPS"
+                title={`Moja prędkość GPS: ${userLocation.speedKmh === null ? "0,0" : formatUserSpeed(userLocation.speedKmh)} km/h`}
+                className={cn(
+                  "flex w-10 flex-col items-center rounded-xl py-1 text-center transition-colors hover:bg-soft",
+                  open && view === "location"
+                    ? "bg-brand-soft text-brand-ink"
+                    : "text-ink-soft",
+                )}
+              >
+                <span
+                  data-testid={
+                    !(open && (view === "home" || view === "location"))
+                      ? "user-speed"
+                      : undefined
+                  }
+                  className="metric text-[10px] font-extrabold leading-tight"
+                >
+                  {userLocation.speedKmh === null
+                    ? "0,0"
+                    : formatUserSpeed(userLocation.speedKmh)}
+                </span>
+                <span className="text-[7.5px] font-semibold uppercase leading-none text-mute">
+                  km/h
+                </span>
+              </button>
+            )}
+            {onToggleTheme && (
+              <RailButton
+                testId="rail-theme"
+                label={
+                  theme === "light"
+                    ? "Włącz ciemny motyw"
+                    : "Włącz jasny motyw"
+                }
+                onClick={onToggleTheme}
+                icon={
+                  theme === "light" ? (
+                    <Moon className="h-4 w-4" strokeWidth={2} />
+                  ) : (
+                    <Sun className="h-4 w-4" strokeWidth={2} />
+                  )
+                }
+              />
+            )}
+            <RailButton
+              testId="rail-home"
+              label="Wróć do widoku Wałbrzycha"
+              onClick={onHome}
+              icon={<Crosshair className="h-4 w-4" strokeWidth={2} />}
+            />
+          </div>
+        </nav>
+      )}
+
+      {/* Tło zamykające szufladę wyłącznie na telefonie (<md) */}
+      {open && !showRail && (
         <button
           type="button"
           aria-label="Zwiń panel boczny i pokaż mapę"
           onClick={onClose}
-          className="pointer-events-auto absolute inset-y-0 right-0 w-[calc(100%-min(320px,88vw))] bg-black/20 transition-opacity md:hidden"
+          className="pointer-events-auto absolute inset-y-0 right-0 w-[calc(100%-min(344px,92vw))] bg-black/15 transition-opacity md:hidden"
         />
       )}
 
+      {/* Główny rozwijany panel boczny */}
       <aside
         ref={asideRef}
         id="map-info-sidebar"
@@ -482,15 +747,16 @@ export default function MapInfoSidebar({
         data-view={view}
         inert={!open}
         className={cn(
-          "pointer-events-auto absolute inset-y-0 left-0 flex h-full w-[min(320px,88vw)] flex-col overflow-hidden border-r border-line bg-surface shadow-[14px_0_40px_rgba(13,42,28,0.22)] transition-transform duration-200 ease-out sm:w-[324px]",
+          "pointer-events-auto absolute inset-y-0 flex h-full w-[min(344px,92vw)] flex-col overflow-hidden border-r border-line/55 bg-surface shadow-[8px_0_30px_rgba(15,23,42,0.10)] transition-transform duration-200 ease-out sm:w-[360px]",
+          showRail ? "left-12" : "left-0",
           open
             ? "translate-x-0"
-            : "pointer-events-none -translate-x-[calc(100%+24px)]",
+            : "pointer-events-none -translate-x-[calc(100%+56px)]",
         )}
       >
-        {/* Top bar of the sidebar: either Brand header ("home") or Back header (sub-view) */}
+        {/* Górny pasek sidebara */}
         {view === "home" ? (
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2.5">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/45 px-4 py-3">
             <Logo showName={isPlanner} />
             <button
               type="button"
@@ -498,46 +764,72 @@ export default function MapInfoSidebar({
               onClick={onClose}
               aria-label="Zwiń panel boczny mapy"
               title="Zwiń panel boczny"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-raised/70 text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
             >
-              <PanelLeftClose className="h-4 w-4" strokeWidth={2.1} />
+              <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
             </button>
           </div>
-        ) : (
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-2.5 py-2">
+        ) : isCustomCardView ? (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/45 px-3 py-2">
             <button
               type="button"
               data-testid="map-sidebar-back"
               onClick={() => setView("home")}
               aria-label="Wróć do głównego panelu"
-              className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-[10.5px] font-extrabold text-brand-ink transition-colors hover:bg-brand-soft"
+              className="flex h-8 shrink-0 items-center gap-1 rounded-xl px-2.5 text-[12px] font-bold text-brand-ink transition-colors hover:bg-soft"
             >
-              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2.3} />
+              <ArrowLeft className="h-4 w-4" strokeWidth={2.2} />
+              Menu
+            </button>
+            <span className="truncate text-[12px] font-semibold text-mute">
+              {VIEW_TITLES[view]}
+            </span>
+            <button
+              type="button"
+              data-testid="map-sidebar-close"
+              onClick={onClose}
+              aria-label="Zwiń panel boczny mapy"
+              title="Zwiń panel boczny"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+            >
+              <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/45 px-3 py-2.5">
+            <button
+              type="button"
+              data-testid="map-sidebar-back"
+              onClick={() => setView("home")}
+              aria-label="Wróć do głównego panelu"
+              className="flex h-8 shrink-0 items-center gap-1 rounded-xl px-2.5 text-[12px] font-bold text-brand-ink transition-colors hover:bg-soft"
+            >
+              <ArrowLeft className="h-4 w-4" strokeWidth={2.2} />
               Wróć
             </button>
-            <h2 className="min-w-0 flex-1 truncate text-center text-[11.5px] font-extrabold text-ink">
-              {SUBVIEW_TITLES[view]}
+            <h2 className="min-w-0 flex-1 truncate text-center text-[13.5px] font-bold text-ink">
+              {VIEW_TITLES[view]}
             </h2>
             <button
               type="button"
               data-testid="map-sidebar-close"
               onClick={onClose}
               aria-label="Zwiń panel boczny mapy"
-              title="Zamknij panel boczny"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              title="Zwiń panel boczny"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
             >
-              <PanelLeftClose className="h-4 w-4" strokeWidth={2.1} />
+              <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
             </button>
           </div>
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 0: HOME — concise overview + navigation to focused views   */}
+        {/*  VIEW: HOME — gładki, czytelny przegląd z podwidokami            */}
         {/* ================================================================ */}
         {view === "home" && (
           <>
             {open && onSelectBus && onSelectStop && (
-              <div className="shrink-0 border-b border-line/70 bg-raised/30 px-3 py-2">
+              <div className="shrink-0 px-3.5 pb-1 pt-3">
                 <BusSearch
                   vehicles={liveVehicles}
                   stops={busStops}
@@ -550,29 +842,31 @@ export default function MapInfoSidebar({
               </div>
             )}
 
-            <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
-              {/* Rozkłady / Nawigacja */}
+            <div className="scroll-area flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-3">
               {!isPlanner ? (
-                <section className="flex flex-col gap-1.5">
-                  <span className="px-0.5 text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
+                <section className="flex flex-col gap-0.5">
+                  <span className="px-2.5 pb-1 text-[11px] font-semibold text-mute">
                     Podróż i rozkłady
                   </span>
 
                   {onOpenTripPlanner && (
                     <SidebarSummaryRow
                       testId="sidebar-open-trip-planner"
-                      icon={<RouteIcon className="h-4 w-4" strokeWidth={2.2} />}
+                      icon={<RouteIcon className="h-4.5 w-4.5" strokeWidth={2} />}
                       title="Wyznacz dojazd (A → B)"
                       summary={
                         tripOpen
-                          ? "Otwarty na mapie"
+                          ? "Aktywne wyszukiwanie trasy"
                           : hasTripOrigin || hasTripDest
                             ? "Wybrano punkty trasy — kontynuuj"
-                            : "Wyszukaj połączenie i dojście piesze"
+                            : "Połączenia z przesiadkami i dojściem pieszym"
                       }
                       badge={
                         (hasTripOrigin || hasTripDest) && (
-                          <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+                          <span
+                            className="inline-flex items-center gap-0.5"
+                            aria-hidden="true"
+                          >
                             {hasTripOrigin && (
                               <span className="h-2 w-2 rounded-full bg-[#0891b2]" />
                             )}
@@ -583,21 +877,8 @@ export default function MapInfoSidebar({
                         )
                       }
                       onClick={() => {
-                        onClose();
                         onOpenTripPlanner();
-                      }}
-                    />
-                  )}
-
-                  {onOpenKursowki && (
-                    <SidebarSummaryRow
-                      ariaLabel="Kursówki"
-                      icon={<BusFront className="h-4 w-4" strokeWidth={2.1} />}
-                      title="Kursówki"
-                      summary="Brygady i pełne kursy dzienne GTFS"
-                      onClick={() => {
-                        onClose();
-                        onOpenKursowki();
+                        setView("trip");
                       }}
                     />
                   )}
@@ -605,24 +886,37 @@ export default function MapInfoSidebar({
                   {onOpenLines && (
                     <SidebarSummaryRow
                       ariaLabel="Linie"
-                      icon={<Waypoints className="h-4 w-4" strokeWidth={2.1} />}
+                      icon={<Waypoints className="h-4.5 w-4.5" strokeWidth={2} />}
                       title="Linie"
-                      summary="Lista linii autobusowych i wariantów tras"
+                      summary="Przebiegi tras i warianty wszystkich linii"
                       onClick={() => {
-                        onClose();
                         onOpenLines();
+                        setView("lines");
+                      }}
+                    />
+                  )}
+
+                  {onOpenKursowki && (
+                    <SidebarSummaryRow
+                      ariaLabel="Kursówki"
+                      icon={<BusFront className="h-4.5 w-4.5" strokeWidth={2} />}
+                      title="Kursówki"
+                      summary="Brygady i pełne kursy dzienne GTFS"
+                      onClick={() => {
+                        onOpenKursowki();
+                        setView("kursowki");
                       }}
                     />
                   )}
                 </section>
               ) : (
-                <section className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between px-0.5">
-                    <span className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                      Narzędzia planisty
+                <section className="flex flex-col gap-2 px-1">
+                  <div className="flex items-center justify-between px-1.5">
+                    <span className="text-[11px] font-semibold text-mute">
+                      Moduły planisty
                     </span>
                     {route && (
-                      <span className="text-[8px] font-bold text-mute">
+                      <span className="text-[10.5px] font-medium text-mute">
                         {readableEngine(route.engine)}
                       </span>
                     )}
@@ -634,42 +928,60 @@ export default function MapInfoSidebar({
                         label: "Planer",
                         icon: RouteIcon,
                         active: !kursowkiOpen && !linesOpen,
-                        onClick: onOpenPlanner,
+                        onClick: () => {
+                          onClose();
+                          onOpenPlanner?.();
+                        },
                       },
                       {
                         id: "kursowki",
                         label: "Kursówki",
                         icon: BusFront,
                         active: kursowkiOpen,
-                        onClick: onOpenKursowki,
+                        onClick: () => {
+                          onOpenKursowki?.();
+                          setView("kursowki");
+                        },
                       },
                       {
                         id: "lines",
                         label: "Linie",
                         icon: Waypoints,
                         active: linesOpen,
-                        onClick: onOpenLines,
+                        onClick: () => {
+                          onOpenLines?.();
+                          setView("lines");
+                        },
                       },
                       {
                         id: "nav",
                         label: "Nawigacja",
                         icon: ListOrdered,
                         active: false,
-                        onClick: onOpenSteps,
+                        onClick: () => {
+                          onClose();
+                          onOpenSteps?.();
+                        },
                       },
                       {
                         id: "fleet",
                         label: "Flota",
                         icon: Truck,
                         active: false,
-                        onClick: onOpenFleet,
+                        onClick: () => {
+                          onClose();
+                          onOpenFleet?.();
+                        },
                       },
                       {
                         id: "report",
                         label: "Raporty",
                         icon: FileSpreadsheet,
                         active: false,
-                        onClick: onOpenReport,
+                        onClick: () => {
+                          onClose();
+                          onOpenReport?.();
+                        },
                       },
                     ].map((item) => {
                       const Icon = item.icon;
@@ -678,18 +990,18 @@ export default function MapInfoSidebar({
                           key={item.id}
                           type="button"
                           aria-label={item.label}
-                          onClick={() => {
-                            onClose();
-                            item.onClick?.();
-                          }}
+                          onClick={item.onClick}
                           className={cn(
-                            "flex h-9 items-center gap-2 rounded-xl border px-2.5 text-[10px] font-extrabold transition-colors",
+                            "flex h-10 items-center gap-2 rounded-xl px-3 text-[12px] font-bold transition-colors",
                             item.active
-                              ? "border-brand/40 bg-brand-soft text-brand-ink"
-                              : "border-line/75 bg-surface text-ink-soft hover:bg-raised hover:text-ink",
+                              ? "bg-brand-soft text-brand-ink"
+                              : "bg-soft/60 text-ink-soft hover:bg-soft hover:text-ink",
                           )}
                         >
-                          <Icon className="h-3.5 w-3.5 shrink-0 text-brand-ink" strokeWidth={2.1} />
+                          <Icon
+                            className="h-4 w-4 shrink-0 text-brand-ink"
+                            strokeWidth={2}
+                          />
                           <span className="truncate">{item.label}</span>
                         </button>
                       );
@@ -705,9 +1017,9 @@ export default function MapInfoSidebar({
                           onClose();
                           onOpenPdf();
                         }}
-                        className="flex h-8 items-center justify-center gap-1.5 rounded-xl bg-brand px-2.5 text-[9.5px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-9 items-center justify-center gap-1.5 rounded-xl bg-brand px-3 text-[11.5px] font-bold text-on-brand transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        <FileDown className="h-3.5 w-3.5" />
+                        <FileDown className="h-4 w-4" />
                         Eksport PDF
                       </button>
                     )}
@@ -719,9 +1031,9 @@ export default function MapInfoSidebar({
                           onClose();
                           onOpenSettings();
                         }}
-                        className="flex h-8 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                        className="flex h-9 items-center justify-center gap-1.5 rounded-xl bg-soft/70 px-3 text-[11.5px] font-semibold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
                       >
-                        <Settings2 className="h-3.5 w-3.5 text-brand-ink" />
+                        <Settings2 className="h-4 w-4 text-brand-ink" />
                         Źródła danych
                       </button>
                     )}
@@ -729,10 +1041,10 @@ export default function MapInfoSidebar({
                 </section>
               )}
 
-              {/* Ustawienia mapy — skrótowe wiersze otwierające osobny widok */}
-              <section className="flex flex-col gap-1.5">
-                <span className="px-0.5 text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-mute">
-                  Ustawienia i informacje
+              {/* Ustawienia mapy — gładka lista skrótów do pojedynczych widoków */}
+              <section className="flex flex-col gap-0.5">
+                <span className="px-2.5 pb-1 text-[11px] font-semibold text-mute">
+                  Ustawienia mapy
                 </span>
 
                 <SidebarSummaryRow
@@ -740,10 +1052,12 @@ export default function MapInfoSidebar({
                   icon={
                     <Radio
                       className={cn(
-                        "h-4 w-4",
-                        showLiveBuses && liveVehicles.length > 0 && "animate-pulse",
+                        "h-4.5 w-4.5",
+                        showLiveBuses &&
+                          liveVehicles.length > 0 &&
+                          "animate-pulse",
                       )}
-                      strokeWidth={2.2}
+                      strokeWidth={2}
                     />
                   }
                   title="Autobusy GPS na żywo"
@@ -758,7 +1072,7 @@ export default function MapInfoSidebar({
 
                 <SidebarSummaryRow
                   testId="sidebar-nav-visibility"
-                  icon={<Eye className="h-4 w-4" strokeWidth={2.1} />}
+                  icon={<Eye className="h-4.5 w-4.5" strokeWidth={2} />}
                   title="Widoczność na mapie"
                   summary={stopsSummary}
                   onClick={() => setView("visibility")}
@@ -766,7 +1080,7 @@ export default function MapInfoSidebar({
 
                 <SidebarSummaryRow
                   testId="sidebar-nav-appearance"
-                  icon={<Palette className="h-4 w-4" strokeWidth={2.1} />}
+                  icon={<Palette className="h-4.5 w-4.5" strokeWidth={2} />}
                   title="Styl mapy i motyw"
                   summary={appearanceSummary}
                   onClick={() => setView("appearance")}
@@ -774,7 +1088,7 @@ export default function MapInfoSidebar({
 
                 <SidebarSummaryRow
                   testId="sidebar-nav-location"
-                  icon={<LocateFixed className="h-4 w-4" strokeWidth={2.1} />}
+                  icon={<LocateFixed className="h-4.5 w-4.5" strokeWidth={2} />}
                   title="Moja lokalizacja GPS"
                   summary={locationSummary}
                   onClick={() => setView("location")}
@@ -783,7 +1097,7 @@ export default function MapInfoSidebar({
                 {isPlanner && (
                   <SidebarSummaryRow
                     testId="sidebar-nav-route"
-                    icon={<Ruler className="h-4 w-4" strokeWidth={2.1} />}
+                    icon={<Ruler className="h-4.5 w-4.5" strokeWidth={2} />}
                     title="Parametry trasy"
                     summary={routeSummary}
                     onClick={() => setView("route")}
@@ -792,44 +1106,65 @@ export default function MapInfoSidebar({
               </section>
             </div>
 
-            {/* Footer */}
-            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line bg-raised/30 px-3 py-2">
-              <button
-                type="button"
-                onClick={onHome}
-                aria-label="Wróć do widoku Wałbrzycha"
-                className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-              >
-                <Crosshair className="h-3.5 w-3.5 shrink-0 text-brand-ink" />
-                Widok Wałbrzycha
-              </button>
-
-              {isPlanner && onRoleChange && (
+            {!showRail || isPlanner ? (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line/45 px-3.5 py-2.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    onClose();
-                    onRoleChange("traveler");
-                  }}
-                  title="Profil Planista — przełącz na widok użytkownika"
-                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[9.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                  onClick={onHome}
+                  aria-label="Wróć do widoku Wałbrzycha"
+                  className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-soft/75 px-3 text-[11.5px] font-semibold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
                 >
-                  <LogOut className="h-3.5 w-3.5 text-brand-ink" />
-                  Planista · Wyloguj
+                  <Crosshair className="h-3.5 w-3.5 shrink-0 text-brand-ink" />
+                  Widok Wałbrzycha
                 </button>
-              )}
-            </div>
+
+                {isPlanner && onRoleChange && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onRoleChange("traveler");
+                    }}
+                    title="Profil Planista — przełącz na widok użytkownika"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-soft/75 px-3 text-[11.5px] font-semibold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+                  >
+                    <LogOut className="h-3.5 w-3.5 text-brand-ink" />
+                    Planista · Wyloguj
+                  </button>
+                )}
+              </div>
+            ) : null}
           </>
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 1: AUTOBUSY GPS NA ŻYWO                                    */}
+        {/*  EMBEDDED APP VIEWS (Dojazd, Linie, Kursówki, Przystanek, Wóz)   */}
+        {/* ================================================================ */}
+        {view === "trip" && tripContent}
+        {view === "lines" && linesContent}
+        {view === "kursowki" && kursowkiContent}
+        {view === "stop" && stopContent}
+        {busContent ? (
+          <div
+            className={
+              view === "bus"
+                ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+                : "hidden"
+            }
+          >
+            {busContent}
+          </div>
+        ) : null}
+        {view === "course" && courseContent}
+
+        {/* ================================================================ */}
+        {/*  FOCUSED SETTING 1: AUTOBUSY GPS NA ŻYWO                         */}
         {/* ================================================================ */}
         {view === "gps" && (
-          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5">
             <SidebarSwitch
               label={`Autobusy GPS na mapie (${liveVehicles.length})`}
-              hint="Pozycje pojazdów MZUK i ŚKA odświeżane na żywo"
+              hint="Pozycje pojazdów MZUK i ŚKA aktualizowane na żywo"
               checked={showLiveBuses}
               onChange={() => onToggleLiveBuses()}
             />
@@ -839,19 +1174,22 @@ export default function MapInfoSidebar({
               onClick={onRefreshLive}
               disabled={liveLoading}
               aria-label="Odśwież pozycje GPS autobusów"
-              className="flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface text-[10.5px] font-extrabold text-ink-soft transition-colors hover:bg-raised hover:text-brand-ink disabled:opacity-45"
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-soft/80 text-[12px] font-bold text-ink transition-colors hover:bg-soft disabled:opacity-45"
             >
               <RefreshCw
-                className={cn("h-3.5 w-3.5", liveLoading && "animate-spin")}
+                className={cn(
+                  "h-4 w-4 text-brand-ink",
+                  liveLoading && "animate-spin",
+                )}
               />
               Odśwież pozycje GPS teraz
             </button>
 
-            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
-              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+            <div className="border-t border-line/45 pt-3.5">
+              <span className="px-1 text-[11px] font-semibold text-mute">
                 Filtr przewoźnika
               </span>
-              <div className="mt-2 flex flex-col gap-1.5">
+              <div className="mt-2 flex flex-col gap-1">
                 {(
                   [
                     {
@@ -876,14 +1214,14 @@ export default function MapInfoSidebar({
                       aria-pressed={active}
                       onClick={() => onOperatorFilter(item.id)}
                       className={cn(
-                        "flex h-9 items-center justify-between rounded-lg border px-3 text-[10.5px] font-bold transition-colors",
+                        "flex h-10 items-center justify-between rounded-xl px-3 text-[12.5px] font-semibold transition-colors",
                         active
-                          ? "border-brand bg-brand-soft text-brand-ink"
-                          : "border-line/75 bg-surface text-ink-soft hover:bg-raised hover:text-ink",
+                          ? "bg-brand-soft font-bold text-brand-ink"
+                          : "text-ink-soft hover:bg-soft/75 hover:text-ink",
                       )}
                     >
                       <span>{item.label}</span>
-                      <span className="metric rounded-full bg-surface px-2 py-0.5 text-[9.5px] font-extrabold text-ink ring-1 ring-line">
+                      <span className="metric rounded-full bg-soft px-2.5 py-0.5 text-[11px] font-bold text-ink">
                         {item.count}
                       </span>
                     </button>
@@ -893,43 +1231,43 @@ export default function MapInfoSidebar({
             </div>
 
             {liveTraffic && liveTraffic.totalVehicles > 0 && (
-              <div className="grid grid-cols-3 gap-1.5 text-center">
-                <div className="rounded-xl border border-line/75 bg-surface p-2">
-                  <span className="metric block text-[14px] font-extrabold text-emerald-600 dark:text-emerald-400">
+              <div className="grid grid-cols-3 gap-2 border-t border-line/45 pt-3.5 text-center">
+                <div className="rounded-xl bg-soft/65 p-2.5">
+                  <span className="metric block text-[16px] font-extrabold text-emerald-600 dark:text-emerald-400">
                     {liveTraffic.onTimeCount}
                   </span>
-                  <span className="text-[8.5px] font-bold text-mute">
+                  <span className="text-[10.5px] font-medium text-mute">
                     Planowo
                   </span>
                 </div>
-                <div className="rounded-xl border border-line/75 bg-surface p-2">
-                  <span className="metric block text-[14px] font-extrabold text-rose-600 dark:text-rose-400">
+                <div className="rounded-xl bg-soft/65 p-2.5">
+                  <span className="metric block text-[16px] font-extrabold text-rose-600 dark:text-rose-400">
                     {liveTraffic.delayedCount}
                   </span>
-                  <span className="text-[8.5px] font-bold text-mute">
+                  <span className="text-[10.5px] font-medium text-mute">
                     Opóźnione
                   </span>
                 </div>
-                <div className="rounded-xl border border-line/75 bg-surface p-2">
-                  <span className="metric block text-[14px] font-extrabold text-ink">
+                <div className="rounded-xl bg-soft/65 p-2.5">
+                  <span className="metric block text-[16px] font-extrabold text-ink">
                     {liveTraffic.trackedOnTripCount}
                   </span>
-                  <span className="text-[8.5px] font-bold text-mute">
+                  <span className="text-[10.5px] font-medium text-mute">
                     Na kursie
                   </span>
                 </div>
               </div>
             )}
 
-            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
-              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+            <div className="border-t border-line/45 pt-3.5">
+              <span className="px-1 text-[11px] font-semibold text-mute">
                 Legenda punktualności GPS
               </span>
-              <div className="mt-2 flex flex-col gap-2">
+              <div className="mt-2.5 flex flex-col gap-2.5 px-1">
                 {LEGEND_ITEMS.map(([tone, text]) => (
                   <div
                     key={tone}
-                    className="flex items-center gap-2.5 text-[10px] font-semibold text-ink-soft"
+                    className="flex items-center gap-3 text-[12px] text-ink-soft"
                   >
                     <span
                       className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10"
@@ -943,12 +1281,12 @@ export default function MapInfoSidebar({
 
             {isPlanner && dutyStats.eligible > 0 && (
               <div
-                className="flex items-start gap-2 rounded-xl border border-brand/25 bg-brand-soft/45 p-3 text-[9.5px] leading-snug text-ink-soft"
+                className="flex items-start gap-2.5 rounded-xl bg-brand-soft/55 p-3 text-[11.5px] leading-relaxed text-ink-soft"
                 data-testid="duty-stats"
               >
-                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-ink" />
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-ink" />
                 <span>
-                  <strong className="font-extrabold text-ink">
+                  <strong className="font-bold text-ink">
                     Brygady: {dutyStats.assigned}/{dutyStats.eligible} wozów
                   </strong>{" "}
                   dopasowanych po aktywnym kursie do rozkładu brygad.
@@ -959,16 +1297,16 @@ export default function MapInfoSidebar({
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 2: WIDOCZNOŚĆ NA MAPIE                                     */}
+        {/*  FOCUSED SETTING 2: WIDOCZNOŚĆ NA MAPIE                          */}
         {/* ================================================================ */}
         {view === "visibility" && (
           <div
             role="region"
             aria-label="Ustawienia widoczności"
-            className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+            className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5"
           >
-            <div className="rounded-xl border border-line/75 bg-raised/35 p-3">
-              <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+            <div>
+              <span className="px-1 text-[11px] font-semibold text-mute">
                 Przystanki autobusowe
               </span>
               <div className="mt-2 flex gap-1 rounded-xl bg-soft p-1">
@@ -982,13 +1320,13 @@ export default function MapInfoSidebar({
                       aria-pressed={active}
                       onClick={() => onVisibilityChange({ stops: option.id })}
                       className={cn(
-                        "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-[10px] font-extrabold transition-colors",
+                        "flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg text-[12px] font-bold transition-colors",
                         active
                           ? "bg-surface text-brand-ink shadow-xs"
                           : "text-mute hover:text-ink",
                       )}
                     >
-                      <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                      <Icon className="h-4 w-4" strokeWidth={2} />
                       {option.label}
                     </button>
                   );
@@ -1000,19 +1338,19 @@ export default function MapInfoSidebar({
                 onClick={onRefreshBusStops}
                 disabled={busLoading}
                 aria-label="Pobierz przystanki dla bieżącego widoku mapy"
-                className="mt-2.5 flex h-8.5 w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[10px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-brand-ink disabled:opacity-45"
+                className="mt-2.5 flex h-9.5 w-full items-center justify-center gap-2 rounded-xl bg-soft/80 px-3 text-[12px] font-semibold text-ink transition-colors hover:bg-soft disabled:opacity-45"
               >
                 {busLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin text-brand-ink" />
                 ) : (
-                  <Bus className="h-3.5 w-3.5 text-brand-ink" />
+                  <Bus className="h-4 w-4 text-brand-ink" />
                 )}
                 <span>Odśwież przystanki w kadrze ({mapStopCount})</span>
               </button>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+            <div className="flex flex-col gap-1 border-t border-line/45 pt-3.5">
+              <span className="px-1 pb-1 text-[11px] font-semibold text-mute">
                 Oznaczenia autobusów GPS
               </span>
               <SidebarSwitch
@@ -1022,13 +1360,13 @@ export default function MapInfoSidebar({
               />
               <SidebarSwitch
                 label="Kursówka nad pojazdem"
-                hint="np. 15/01, 2/08"
+                hint="Widoczna po przybliżeniu mapy (np. 15/01)"
                 checked={visibility.busKursowka}
                 onChange={(next) => onVisibilityChange({ busKursowka: next })}
               />
               <SidebarSwitch
                 label="Numer taborowy wozu"
-                hint="np. #340, #3"
+                hint="Widoczny po przybliżeniu mapy (np. #340)"
                 checked={visibility.busVehicleNumber}
                 onChange={(next) =>
                   onVisibilityChange({ busVehicleNumber: next })
@@ -1037,8 +1375,8 @@ export default function MapInfoSidebar({
             </div>
 
             {isPlanner && (
-              <div className="flex flex-col gap-2">
-                <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+              <div className="flex flex-col gap-1 border-t border-line/45 pt-3.5">
+                <span className="px-1 pb-1 text-[11px] font-semibold text-mute">
                   Warstwy planisty
                 </span>
                 <SidebarSwitch
@@ -1050,7 +1388,7 @@ export default function MapInfoSidebar({
                 />
                 <SidebarSwitch
                   label={`Miejsca na zawrotkę${turnaroundCount > 0 ? ` (${turnaroundCount})` : ""}`}
-                  hint="dla wozów od 12 m"
+                  hint="Dla wozów od 12 m"
                   checked={visibility.turnarounds}
                   onChange={(next) => onVisibilityChange({ turnarounds: next })}
                 />
@@ -1060,7 +1398,7 @@ export default function MapInfoSidebar({
             <button
               type="button"
               onClick={() => onVisibilityChange({ ...DEFAULT_VISIBILITY })}
-              className="mt-auto rounded-xl border border-line bg-surface py-2 text-[10px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="mt-auto rounded-xl bg-soft/75 py-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:bg-soft hover:text-ink"
             >
               Przywróć domyślne ustawienia
             </button>
@@ -1068,12 +1406,12 @@ export default function MapInfoSidebar({
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 3: STYL MAPY I MOTYW                                       */}
+        {/*  FOCUSED SETTING 3: STYL MAPY I MOTYW                            */}
         {/* ================================================================ */}
         {view === "appearance" && (
-          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3">
-            <div className="flex flex-col gap-2">
-              <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5">
+            <div className="flex flex-col gap-1.5">
+              <span className="px-1 pb-1 text-[11px] font-semibold text-mute">
                 Podkład mapy
               </span>
               {MAP_STYLES.map((style) => {
@@ -1087,19 +1425,17 @@ export default function MapInfoSidebar({
                     aria-pressed={active}
                     onClick={() => onMapStyle(style.id)}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl border p-2.5 text-left transition-colors",
-                      active
-                        ? "border-brand bg-brand-soft"
-                        : "border-line/75 bg-surface hover:bg-raised",
+                      "flex items-center gap-3 rounded-xl p-2.5 text-left transition-colors",
+                      active ? "bg-brand-soft" : "hover:bg-soft/80",
                     )}
                   >
                     <span
-                      className="grid h-10 w-12 shrink-0 place-items-center rounded-lg border border-line/70 shadow-xs"
+                      className="grid h-11 w-14 shrink-0 place-items-center rounded-xl border border-line/50 shadow-xs"
                       style={{ background: style.swatch }}
                     >
                       <Icon
                         className={cn(
-                          "h-4 w-4",
+                          "h-4.5 w-4.5",
                           style.id === "dark" || style.id === "satellite"
                             ? "text-white"
                             : "text-ink",
@@ -1107,16 +1443,16 @@ export default function MapInfoSidebar({
                       />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[11px] font-extrabold text-ink">
+                      <span className="block text-[13px] font-bold text-ink">
                         {style.label}
                       </span>
-                      <span className="mt-0.5 block text-[9px] text-mute">
+                      <span className="mt-0.5 block text-[11px] text-mute">
                         {style.hint}
                       </span>
                     </span>
                     {active && (
                       <Check
-                        className="h-4 w-4 shrink-0 text-brand-ink"
+                        className="h-4.5 w-4.5 shrink-0 text-brand-ink"
                         strokeWidth={2.5}
                       />
                     )}
@@ -1126,11 +1462,11 @@ export default function MapInfoSidebar({
             </div>
 
             {onToggleTheme && (
-              <div className="flex flex-col gap-2">
-                <span className="px-0.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+              <div className="flex flex-col gap-2 border-t border-line/45 pt-3.5">
+                <span className="px-1 text-[11px] font-semibold text-mute">
                   Motyw interfejsu
                 </span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-soft p-1">
                   <button
                     type="button"
                     aria-pressed={theme === "light"}
@@ -1138,13 +1474,13 @@ export default function MapInfoSidebar({
                       if (theme !== "light") onToggleTheme();
                     }}
                     className={cn(
-                      "flex h-10 items-center justify-center gap-2 rounded-xl border text-[10.5px] font-extrabold transition-colors",
+                      "flex h-9.5 items-center justify-center gap-2 rounded-lg text-[12px] font-bold transition-colors",
                       theme === "light"
-                        ? "border-brand bg-brand-soft text-brand-ink"
-                        : "border-line/75 bg-surface text-ink-soft hover:bg-raised",
+                        ? "bg-surface text-brand-ink shadow-xs"
+                        : "text-mute hover:text-ink",
                     )}
                   >
-                    <Sun className="h-4 w-4" strokeWidth={2.1} />
+                    <Sun className="h-4 w-4" strokeWidth={2} />
                     Jasny
                   </button>
                   <button
@@ -1154,13 +1490,13 @@ export default function MapInfoSidebar({
                       if (theme !== "dark") onToggleTheme();
                     }}
                     className={cn(
-                      "flex h-10 items-center justify-center gap-2 rounded-xl border text-[10.5px] font-extrabold transition-colors",
+                      "flex h-9.5 items-center justify-center gap-2 rounded-lg text-[12px] font-bold transition-colors",
                       theme === "dark"
-                        ? "border-brand bg-brand-soft text-brand-ink"
-                        : "border-line/75 bg-surface text-ink-soft hover:bg-raised",
+                        ? "bg-surface text-brand-ink shadow-xs"
+                        : "text-mute hover:text-ink",
                     )}
                   >
-                    <Moon className="h-4 w-4" strokeWidth={2.1} />
+                    <Moon className="h-4 w-4" strokeWidth={2} />
                     Ciemny
                   </button>
                 </div>
@@ -1170,40 +1506,40 @@ export default function MapInfoSidebar({
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 4: MOJA LOKALIZACJA GPS                                    */}
+        {/*  FOCUSED SETTING 4: MOJA LOKALIZACJA GPS                         */}
         {/* ================================================================ */}
         {view === "location" && (
           <div
             aria-label="Twoja lokalizacja i prędkość"
             data-testid="user-location-hud"
-            className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+            className="scroll-area flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3.5 py-3.5"
           >
             <button
               type="button"
               onClick={onLocate}
               aria-label="Wycentruj na mojej lokalizacji w panelu"
               className={cn(
-                "flex h-10 w-full items-center justify-center gap-2 rounded-xl text-[10.5px] font-extrabold transition-colors",
+                "flex h-10 w-full items-center justify-center gap-2 rounded-xl text-[12px] font-bold transition-colors",
                 followingUser
                   ? "bg-brand text-on-brand"
-                  : "border border-line bg-surface text-ink hover:bg-raised",
+                  : "bg-soft/85 text-ink hover:bg-soft",
               )}
             >
-              <LocateFixed className="h-4 w-4" strokeWidth={2.2} />
+              <LocateFixed className="h-4 w-4" strokeWidth={2.1} />
               {followingUser
                 ? "Śledzenie Twojej pozycji włączone"
                 : "Wycentruj i śledź moją pozycję"}
             </button>
 
             {locationStatus === "requesting" && !userLocation ? (
-              <div className="flex items-center gap-2.5 rounded-xl border border-line/75 bg-raised/35 p-3.5 text-[10.5px] font-semibold text-ink-soft">
-                <Loader2 className="h-4 w-4 animate-spin text-brand-ink" />
+              <div className="flex items-center gap-2.5 rounded-xl bg-soft/65 p-4 text-[12px] text-ink-soft">
+                <Loader2 className="h-4.5 w-4.5 animate-spin text-brand-ink" />
                 Szukam sygnału GPS Twojego urządzenia…
               </div>
             ) : locationStatus === "denied" ||
               locationStatus === "unavailable" ? (
-              <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning-soft/80 p-3.5 text-[10px] leading-relaxed text-warning">
-                <LocateOff className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="flex items-start gap-2.5 rounded-xl bg-warning-soft/80 p-4 text-[11.5px] leading-relaxed text-warning">
+                <LocateOff className="mt-0.5 h-4.5 w-4.5 shrink-0" />
                 <div>
                   {locationStatus === "denied"
                     ? "Dostęp do lokalizacji został zablokowany w przeglądarce."
@@ -1212,7 +1548,7 @@ export default function MapInfoSidebar({
                     <button
                       type="button"
                       onClick={onRetryLocation}
-                      className="mt-1.5 block font-extrabold underline"
+                      className="mt-1.5 block font-bold underline"
                     >
                       Spróbuj ponownie włączyć GPS
                     </button>
@@ -1220,39 +1556,39 @@ export default function MapInfoSidebar({
                 </div>
               </div>
             ) : userLocation ? (
-              <div className="flex flex-col gap-2.5">
-                <div className="rounded-xl border border-line/75 bg-raised/35 p-3.5">
-                  <span className="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-mute">
+              <div className="flex flex-col gap-3">
+                <div className="rounded-2xl bg-soft/65 p-4">
+                  <span className="block text-[11px] font-semibold text-mute">
                     Aktualna prędkość
                   </span>
                   <p className="mt-1 flex items-baseline gap-1.5 leading-none">
                     <span
-                      className="metric text-[30px] font-extrabold text-ink"
+                      className="metric text-[34px] font-extrabold text-ink"
                       data-testid="user-speed"
                     >
                       {userLocation.speedKmh === null
                         ? "—"
                         : formatUserSpeed(userLocation.speedKmh)}
                     </span>
-                    <span className="text-[11px] font-bold text-mute">
+                    <span className="text-[13px] font-semibold text-mute">
                       km/h
                     </span>
                   </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-line/75 bg-surface p-3">
-                    <span className="block text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                  <div className="rounded-xl bg-soft/55 p-3.5">
+                    <span className="block text-[10.5px] font-semibold text-mute">
                       Kierunek ruchu
                     </span>
                     <span
-                      className="metric mt-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink"
+                      className="metric mt-1 flex items-center gap-1.5 text-[14px] font-bold text-ink"
                       data-testid="user-heading"
                     >
                       {userLocation.heading !== null ? (
                         <>
                           <Navigation
-                            className="h-3.5 w-3.5 shrink-0 text-brand-ink"
+                            className="h-4 w-4 shrink-0 text-brand-ink"
                             style={{
                               transform: `rotate(${userLocation.heading - 45}deg)`,
                             }}
@@ -1261,20 +1597,20 @@ export default function MapInfoSidebar({
                           {Math.round(userLocation.heading)}°
                         </>
                       ) : (
-                        <span className="text-[11px] font-semibold text-mute">
+                        <span className="text-[12px] font-medium text-mute">
                           {moving ? "—" : "stoisz"}
                         </span>
                       )}
                     </span>
                   </div>
 
-                  <div className="rounded-xl border border-line/75 bg-surface p-3">
-                    <span className="block text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-mute">
+                  <div className="rounded-xl bg-soft/55 p-3.5">
+                    <span className="block text-[10.5px] font-semibold text-mute">
                       Dokładność GPS
                     </span>
                     <span
                       className={cn(
-                        "metric mt-1 block text-[13px] font-extrabold",
+                        "metric mt-1 block text-[14px] font-bold",
                         weak ? "text-warning" : "text-ink",
                       )}
                       data-testid="user-accuracy"
@@ -1284,29 +1620,27 @@ export default function MapInfoSidebar({
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-line/75 bg-surface p-3">
-                  <dl className="grid grid-cols-2 gap-y-2 text-[10px]">
-                    <dt className="font-semibold text-mute">Prędkość maks.</dt>
-                    <dd className="metric text-right font-extrabold text-ink">
-                      {formatUserSpeed(userLocation.maxSpeedKmh)} km/h
-                    </dd>
-                    <dt className="font-semibold text-mute">Przebyty dystans</dt>
-                    <dd className="metric text-right font-extrabold text-ink">
-                      {formatDistanceCompact(userLocation.distanceM)}
-                    </dd>
-                    {userLocation.altitude !== null && (
-                      <>
-                        <dt className="font-semibold text-mute">Wysokość</dt>
-                        <dd className="metric text-right font-extrabold text-ink">
-                          {Math.round(userLocation.altitude)} m n.p.m.
-                        </dd>
-                      </>
-                    )}
-                  </dl>
-                </div>
+                <dl className="grid grid-cols-2 gap-y-2.5 border-t border-line/45 px-1 pt-3 text-[12px]">
+                  <dt className="text-mute">Prędkość maks.</dt>
+                  <dd className="metric text-right font-bold text-ink">
+                    {formatUserSpeed(userLocation.maxSpeedKmh)} km/h
+                  </dd>
+                  <dt className="text-mute">Przebyty dystans</dt>
+                  <dd className="metric text-right font-bold text-ink">
+                    {formatDistanceCompact(userLocation.distanceM)}
+                  </dd>
+                  {userLocation.altitude !== null && (
+                    <>
+                      <dt className="text-mute">Wysokość</dt>
+                      <dd className="metric text-right font-bold text-ink">
+                        {Math.round(userLocation.altitude)} m n.p.m.
+                      </dd>
+                    </>
+                  )}
+                </dl>
 
                 {(stale || weak) && (
-                  <p className="rounded-xl border border-warning/30 bg-warning-soft/70 px-3 py-2 text-[9.5px] font-semibold text-warning">
+                  <p className="rounded-xl bg-warning-soft/75 px-3 py-2.5 text-[11px] font-semibold text-warning">
                     {stale
                       ? `Ostatni odczyt GPS ${ageS} s temu.`
                       : "Słaby sygnał GPS — pozycja przybliżona."}
@@ -1314,19 +1648,19 @@ export default function MapInfoSidebar({
                 )}
               </div>
             ) : (
-              <p className="rounded-xl border border-line/75 bg-raised/35 p-3.5 text-[10px] leading-relaxed text-mute">
-                Kliknij przycisk powyżej, aby włączyć odczyt pozycji, prędkości
-                i kierunku GPS z urządzenia.
+              <p className="rounded-xl bg-soft/65 p-4 text-[12px] leading-relaxed text-mute">
+                Kliknij przycisk powyżej, aby sprawdzić prędkość, kierunek i
+                dokładność GPS urządzenia.
               </p>
             )}
           </div>
         )}
 
         {/* ================================================================ */}
-        {/*  VIEW 5: PARAMETRY TRASY (PLANISTA)                              */}
+        {/*  FOCUSED SETTING 5: PARAMETRY TRASY (PLANISTA)                   */}
         {/* ================================================================ */}
         {view === "route" && isPlanner && (
-          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div className="scroll-area flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3.5 py-3.5">
             {route && waypoints && metrics && vehicle && (
               <MapRouteCard
                 route={route}
@@ -1343,9 +1677,9 @@ export default function MapInfoSidebar({
               type="button"
               onClick={onFit}
               aria-label="Dopasuj trasę do widoku"
-              className="flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[10px] font-extrabold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-soft/80 px-3 text-[12px] font-bold text-ink transition-colors hover:bg-soft"
             >
-              <Maximize2 className="h-3.5 w-3.5 text-brand-ink" />
+              <Maximize2 className="h-4 w-4 text-brand-ink" />
               Dopasuj trasę do widoku mapy
             </button>
           </div>

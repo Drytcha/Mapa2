@@ -248,6 +248,7 @@ export function MapQuickBar({
   onSelectBus,
   onSelectStop,
   isPlanner = false,
+  hideToggle = false,
 }: {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
@@ -257,39 +258,45 @@ export function MapQuickBar({
   onSelectBus: (bus: LiveBusVehicle) => void;
   onSelectStop: (stop: BusStop) => void;
   isPlanner?: boolean;
+  /** Gdy obok jest stały pasek ikon (md+), nie dublujemy przycisku otwierania. */
+  hideToggle?: boolean;
 }) {
   return (
     <div
       data-testid="map-quick-bar"
-      className="pointer-events-auto flex h-9 w-[min(268px,calc(100vw-60px))] items-center gap-1 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)] sm:w-[284px]"
+      className="pointer-events-auto flex h-10 w-[min(272px,calc(100vw-60px))] items-center gap-1.5 rounded-2xl border border-line/60 bg-surface px-2 shadow-[0_4px_20px_rgba(15,23,42,0.10)] sm:w-[292px]"
     >
-      <button
-        type="button"
-        data-testid="map-sidebar-toggle"
-        aria-expanded={sidebarOpen}
-        aria-controls="map-info-sidebar"
-        aria-label={
-          sidebarOpen ? "Zwiń panel boczny mapy" : "Otwórz panel boczny mapy"
-        }
-        title="Otwórz boczny panel menu i ustawień"
-        onClick={onToggleSidebar}
-        className={cn(
-          "relative grid h-7 w-7 shrink-0 place-items-center rounded-lg transition-colors",
-          sidebarOpen
-            ? "bg-brand text-on-brand"
-            : "bg-raised text-brand-ink hover:bg-brand-soft",
-        )}
-      >
-        <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={2.2} />
-        {showLiveBuses && liveVehicles.length > 0 && !sidebarOpen && (
-          <span
-            aria-hidden="true"
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-surface"
-          />
-        )}
-      </button>
+      {!hideToggle && (
+        <>
+          <button
+            type="button"
+            data-testid="map-sidebar-toggle"
+            aria-expanded={sidebarOpen}
+            aria-controls="map-info-sidebar"
+            aria-label={
+              sidebarOpen ? "Zwiń panel boczny mapy" : "Otwórz panel boczny mapy"
+            }
+            title="Otwórz boczny panel menu i ustawień"
+            onClick={onToggleSidebar}
+            className={cn(
+              "relative grid h-7 w-7 shrink-0 place-items-center rounded-xl transition-colors",
+              sidebarOpen
+                ? "bg-brand text-on-brand"
+                : "text-brand-ink hover:bg-soft",
+            )}
+          >
+            <PanelLeftOpen className="h-4 w-4" strokeWidth={2.1} />
+            {showLiveBuses && liveVehicles.length > 0 && !sidebarOpen && (
+              <span
+                aria-hidden="true"
+                className="absolute right-0 top-0 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-surface"
+              />
+            )}
+          </button>
 
-      <span className="h-4 w-px shrink-0 bg-line" aria-hidden="true" />
+          <span className="h-4 w-px shrink-0 bg-line/60" aria-hidden="true" />
+        </>
+      )}
 
       <div className="min-w-0 flex-1">
         <BusSearch
@@ -578,12 +585,15 @@ export function ShapeOverlayControl({
 
 export function LiveBusCard({
   bus,
+  embedded = false,
   onClose,
   onOpenKursowka,
   onCenter,
   onSetOperator,
   isPlanner = false,
 }: {
+  /** Widok osadzony w lewym sidebarze zamiast osobnej karty na mapie. */
+  embedded?: boolean;
   /** Tylko planista może zmieniać przewoźnika i widzi szczegóły dopasowania brygady. */
   isPlanner?: boolean;
   bus: LiveBusVehicle;
@@ -663,25 +673,31 @@ export function LiveBusCard({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93 max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:z-[620] max-sm:w-auto max-sm:max-w-none max-sm:rounded-2xl max-sm:shadow-[0_-10px_40px_rgba(9,35,23,0.35)]",
-        isPlanner
-          ? "max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] max-sm:max-h-[52dvh]"
-          : "max-h-[calc(100dvh-190px)] w-[300px] max-w-[calc(100vw-24px)] max-sm:max-h-[38dvh]",
+        embedded
+          ? "pointer-events-auto flex h-full min-h-0 w-full flex-1 select-none flex-col overflow-hidden bg-surface"
+          : cn(
+              "pointer-events-auto flex select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in dark:bg-surface/93 max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:z-[620] max-sm:w-auto max-sm:max-w-none max-sm:rounded-2xl max-sm:shadow-[0_-10px_40px_rgba(9,35,23,0.35)]",
+              isPlanner
+                ? "max-h-[calc(100dvh-140px)] w-[324px] max-w-[calc(100vw-24px)] max-sm:max-h-[52dvh]"
+                : "max-h-[calc(100dvh-190px)] w-[300px] max-w-[calc(100vw-24px)] max-sm:max-h-[38dvh]",
+            ),
       )}
-      data-mobile-sheet="bus"
+      data-mobile-sheet={embedded ? undefined : "bus"}
     >
       {/* Uchwyt dolnej karty: na telefonie zwija kartę do paska z kierunkiem. */}
-      <button
-        type="button"
-        onClick={() => setSheetCollapsed((collapsed) => !collapsed)}
-        aria-expanded={!sheetCollapsed}
-        aria-label={sheetCollapsed ? "Rozwiń kartę autobusu" : "Zwiń kartę autobusu"}
-        data-testid="bus-sheet-handle"
-        className="mx-auto mt-1 flex h-4 w-full shrink-0 items-center justify-center sm:hidden"
-      >
-        <span className="h-1 w-10 rounded-full bg-line-strong/70" />
-      </button>
-      <div className="flex shrink-0 items-start gap-2.5 border-b border-line/70 bg-brand-soft/80 px-3 py-2.5">
+      {!embedded && (
+        <button
+          type="button"
+          onClick={() => setSheetCollapsed((collapsed) => !collapsed)}
+          aria-expanded={!sheetCollapsed}
+          aria-label={sheetCollapsed ? "Rozwiń kartę autobusu" : "Zwiń kartę autobusu"}
+          data-testid="bus-sheet-handle"
+          className="mx-auto mt-1 flex h-4 w-full shrink-0 items-center justify-center sm:hidden"
+        >
+          <span className="h-1 w-10 rounded-full bg-line-strong/70" />
+        </button>
+      )}
+      <div className={cn("flex shrink-0 items-start gap-2.5 border-b border-line/55 px-3.5 py-3", !embedded && "bg-brand-soft/80")}>
         <span
           className="metric mt-px grid h-8 min-w-[34px] shrink-0 place-items-center rounded-lg px-1.5 text-[12px] font-extrabold shadow-xs"
           style={{
@@ -1084,7 +1100,7 @@ export function MapControls({
     <div className="pointer-events-none relative flex select-none flex-col items-end">
       <div
         data-testid="map-controls-bar"
-        className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)]"
+        className="pointer-events-auto flex flex-col gap-0.5 rounded-2xl border border-line/60 bg-surface p-1 shadow-[0_4px_20px_rgba(15,23,42,0.10)]"
       >
         <button
           type="button"
@@ -1098,7 +1114,7 @@ export function MapControls({
           aria-pressed={locateState === "following"}
           data-testid="center-on-me"
           className={cn(
-            "relative grid h-7 w-7 place-items-center rounded-lg transition-colors",
+            "relative grid h-8 w-8 place-items-center rounded-xl transition-colors",
             locateState === "following"
               ? "bg-brand text-on-brand"
               : locateState === "denied"
@@ -1107,43 +1123,43 @@ export function MapControls({
           )}
         >
           {locateState === "denied" ? (
-            <LocateOff className="h-3.5 w-3.5" strokeWidth={2.1} />
+            <LocateOff className="h-4 w-4" strokeWidth={2} />
           ) : locateState === "requesting" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <LocateFixed className="h-3.5 w-3.5" strokeWidth={2.2} />
+            <LocateFixed className="h-4 w-4" strokeWidth={2} />
           )}
         </button>
-        <span className="mx-1.5 my-0.5 h-px bg-line" />
+        <span className="mx-2 my-0.5 h-px bg-line/50" />
         <button
           type="button"
           onClick={onZoomIn}
           title="Przybliż"
           aria-label="Przybliż mapę"
-          className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
         >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+          <Plus className="h-4 w-4" strokeWidth={2} />
         </button>
         <button
           type="button"
           onClick={onZoomOut}
           title="Oddal"
           aria-label="Oddal mapę"
-          className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
         >
-          <Minus className="h-3.5 w-3.5" strokeWidth={2.2} />
+          <Minus className="h-4 w-4" strokeWidth={2} />
         </button>
         {showFit && (
           <>
-            <span className="mx-1.5 my-0.5 h-px bg-line" />
+            <span className="mx-2 my-0.5 h-px bg-line/50" />
             <button
               type="button"
               onClick={onFit}
               title="Dopasuj trasę do widoku"
               aria-label="Dopasuj trasę do widoku"
-              className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
+              className="grid h-8 w-8 place-items-center rounded-xl text-ink-soft transition-colors hover:bg-soft hover:text-ink"
             >
-              <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
+              <Maximize2 className="h-4 w-4" strokeWidth={2} />
             </button>
           </>
         )}
@@ -1879,6 +1895,7 @@ export function MobilePlannerSheet({
 
 export function BusStopCard({
   stop,
+  embedded = false,
   isPlanner = true,
   alreadyInRoute,
   canAdd,
@@ -1894,6 +1911,7 @@ export function BusStopCard({
   onPreviewCourse,
 }: {
   className?: string;
+  embedded?: boolean;
   stop: BusStop;
   isPlanner?: boolean;
   alreadyInRoute: boolean;
@@ -1916,17 +1934,19 @@ export function BusStopCard({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex min-h-0 w-[352px] max-w-[calc(100vw-72px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] animate-rise-in dark:bg-surface/93",
+        embedded
+          ? "pointer-events-auto flex h-full min-h-0 w-full flex-1 select-none flex-col overflow-hidden bg-surface"
+          : "pointer-events-auto flex min-h-0 w-[352px] max-w-[calc(100vw-72px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.17)] animate-rise-in dark:bg-surface/93",
         className,
       )}
     >
-      <div className="flex items-start gap-2 border-b border-line/70 bg-brand-soft/70 px-2.5 py-2">
-        <span className="mt-px grid h-6 w-6 shrink-0 place-items-center rounded-md bg-brand text-on-brand">
-          <Bus className="h-3 w-3" strokeWidth={2} />
+      <div className={cn("flex items-start gap-2.5 border-b border-line/55 px-3.5 py-3", !embedded && "bg-brand-soft/70")}>
+        <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
+          <Bus className="h-3.5 w-3.5" strokeWidth={2.1} />
         </span>
         <div className="min-w-0 flex-1">
-          <span className="block text-[7px] font-extrabold uppercase tracking-[0.14em] text-brand-ink/70">
-            Przystanek autobusowy ·{" "}
+          <span className="block text-[10px] font-semibold text-mute">
+            Przystanek ·{" "}
             {stop.source === "osm"
               ? "OSM"
               : stop.source === "snapshot"
@@ -1934,7 +1954,7 @@ export function BusStopCard({
                 : "Rozkład Wałbrzych"}
             {stop.ref ? ` · stan. ${stop.ref}` : ""}
           </span>
-          <h3 className="mt-0.5 text-[12px] font-extrabold leading-tight tracking-[-0.02em] text-ink">
+          <h3 className="mt-0.5 text-[14px] font-extrabold leading-snug tracking-[-0.015em] text-ink">
             {stop.name}
           </h3>
         </div>
@@ -1942,21 +1962,21 @@ export function BusStopCard({
           type="button"
           onClick={onCenter}
           aria-label="Pokaż przystanek na mapie"
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute hover:bg-surface hover:text-ink"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-mute hover:bg-soft hover:text-ink"
         >
-          <Maximize2 className="h-3 w-3" />
+          <Maximize2 className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
           onClick={onClose}
           aria-label="Zamknij kartę przystanku"
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute transition-colors hover:bg-surface hover:text-ink"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-soft hover:text-ink"
         >
-          <X className="h-3 w-3" strokeWidth={2.3} />
+          <X className="h-3.5 w-3.5" strokeWidth={2.3} />
         </button>
       </div>
 
-      <div className="scroll-area min-h-0 max-h-[72vh] flex-1 overflow-y-auto px-2.5 pb-2 pt-2">
+      <div className={cn("scroll-area min-h-0 flex-1 overflow-y-auto px-3.5 pb-3 pt-2.5", !embedded && "max-h-[72vh]")}>
         {isPlanner && (
           <>
             {stop.lines.length > 0 ? (

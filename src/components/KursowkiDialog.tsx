@@ -14,6 +14,8 @@ import { Dialog } from "./Modals";
 
 interface Props {
   open: boolean;
+  /** Widok osadzony wewnątrz lewego sidebara zamiast pełnoekranowego okna. */
+  embedded?: boolean;
   initialKursowkaId?: string | null;
   initialKursowkaCode?: string | null;
   initialDateId?: string | null;
@@ -37,6 +39,7 @@ interface Props {
 
 export default function KursowkiDialog({
   open,
+  embedded = false,
   initialKursowkaId,
   initialKursowkaCode,
   initialDateId,
@@ -110,6 +113,89 @@ export default function KursowkiDialog({
       setSyncing(false);
     }
   };
+
+  if (embedded) {
+    if (!open) return null;
+    return (
+      <div className="sidebar-single-col flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-surface">
+        {(onOpenNsNhDiff || isPlanner) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line/50 px-3 py-2">
+            {onOpenNsNhDiff && (
+              <button
+                type="button"
+                data-testid="kursowki-open-ns-nh-diff"
+                onClick={onOpenNsNhDiff}
+                title="Porównaj rozkład niedzieli niehandlowej (NS) z niedzielą handlową (NH)"
+                className="flex h-7 items-center gap-1 rounded-lg bg-amber-500/12 px-2.5 text-[10.5px] font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+              >
+                <ShoppingBag className="h-3.5 w-3.5" />
+                <span>NS vs NH</span>
+              </button>
+            )}
+            {isPlanner && (
+              <button
+                type="button"
+                onClick={handleSyncGtfs}
+                disabled={syncing}
+                className="flex h-7 items-center gap-1 rounded-lg bg-soft px-2.5 text-[10.5px] font-bold text-ink-soft transition-colors hover:text-brand-ink disabled:opacity-50"
+              >
+                {syncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <DownloadCloud className="h-3.5 w-3.5" />
+                )}
+                <span>{syncing ? "Aktualizuję…" : "Aktualizuj GTFS"}</span>
+              </button>
+            )}
+          </div>
+        )}
+        {syncNotice && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+            <span>{syncNotice}</span>
+            <button
+              type="button"
+              onClick={() => setSyncNotice(null)}
+              className="underline"
+            >
+              Ukryj
+            </button>
+          </div>
+        )}
+        <div className="scroll-area min-h-0 flex-1 overflow-y-auto p-2.5">
+          {loading && !routes.length ? (
+            <div
+              role="status"
+              className="flex items-center gap-2 py-12 text-[11.5px] text-mute"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Wczytywanie linii i brygad…
+            </div>
+          ) : loadError && !routes.length ? (
+            <div
+              role="alert"
+              className="rounded-xl bg-warning-soft p-4 text-xs text-warning"
+            >
+              {loadError}
+            </div>
+          ) : (
+            <BrigadesPanel
+              routes={routes}
+              liveVehicles={liveVehicles}
+              onSelectBus={onSelectBus}
+              onShowShapeOverlay={onShowShapeOverlay}
+              onPreviewCourse={onPreviewCourse}
+              onLoadTripToPlanner={onLoadTripToPlanner}
+              initialKursowkaId={initialKursowkaId}
+              initialKursowkaCode={initialKursowkaCode}
+              initialDateId={initialDateId}
+              canLoadToPlanner={canLoadToPlanner}
+              showTechnicalNotes={isPlanner}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Dialog
