@@ -125,8 +125,8 @@ export default function TopBar({
   }, [roleMenuOpen]);
 
   return (
-    <header className="relative z-[1000] flex h-[58px] shrink-0 items-center gap-2 border-b border-line bg-surface px-3 sm:px-4 md:h-[62px]">
-      <div className="flex min-w-0 items-center gap-3 lg:w-[403px]">
+    <header className="relative z-[1000] flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface px-2.5 sm:px-3.5 md:h-12">
+      <div className="flex min-w-0 items-center gap-2.5 lg:w-[403px]">
         <Logo showName={isPlanner} />
         <span className="hidden rounded-full border border-line bg-raised px-1.5 py-[2px] text-[7px] font-extrabold uppercase tracking-[0.1em] text-mute 2xl:inline">
           Wałbrzych GTFS
@@ -228,11 +228,11 @@ export default function TopBar({
           onClick={onToggleTheme}
           aria-label={theme === "light" ? "Włącz ciemny motyw" : "Włącz jasny motyw"}
           title={theme === "light" ? "Ciemny motyw" : "Jasny motyw"}
-          className="flex h-8 w-[51px] items-center rounded-[10px] border border-line bg-raised p-[2px] transition-colors hover:border-line-strong"
+          className="flex h-7 w-[46px] items-center rounded-lg border border-line bg-raised p-[2px] transition-colors hover:border-line-strong"
         >
           <span
             className={cn(
-              "grid h-[26px] flex-1 place-items-center rounded-[7px] transition-all",
+              "grid h-[22px] flex-1 place-items-center rounded-[5px] transition-all",
               theme === "light" ? "bg-surface text-ink shadow-sm" : "text-mute"
             )}
           >
@@ -240,7 +240,7 @@ export default function TopBar({
           </span>
           <span
             className={cn(
-              "grid h-[26px] flex-1 place-items-center rounded-[7px] transition-all",
+              "grid h-[22px] flex-1 place-items-center rounded-[5px] transition-all",
               theme === "dark" ? "bg-surface text-ink shadow-sm" : "text-mute"
             )}
           >
@@ -295,9 +295,9 @@ export default function TopBar({
             type="button"
             onClick={() => setMenuOpen((current) => !current)}
             aria-label="Menu aplikacji"
-            className="grid h-8 w-8 place-items-center rounded-[10px] border border-line bg-surface text-ink-soft"
+            className="grid h-7 w-7 place-items-center rounded-lg border border-line bg-surface text-ink-soft"
           >
-            {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            {menuOpen ? <X className="h-3.5 w-3.5" /> : <Menu className="h-3.5 w-3.5" />}
           </button>
           {menuOpen && (
           <div className="absolute right-0 top-10 w-[235px] overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-[0_20px_55px_rgba(0,0,0,0.24)] animate-fade-in">

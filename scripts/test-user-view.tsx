@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import TopBar from "../src/components/TopBar";
 import CoursePreviewCard from "../src/components/CoursePreviewCard";
+import BusSearch from "../src/components/BusSearch";
+import MapInfoSidebar from "../src/components/MapInfoSidebar";
+import { MapControls, MapQuickBar } from "../src/components/MapOverlays";
 import { EMPTY_ROUTE } from "../src/lib/data";
+import { DEFAULT_VISIBILITY } from "../src/lib/visibility";
 import type { CoursePreview } from "../src/lib/engine/gtfsStore";
+import type { BusStop, LiveBusVehicle } from "../src/lib/types";
 
 const noop = () => {};
 const props = {
@@ -121,5 +127,255 @@ assert.ok(Math.abs(slice!.path.at(-1)![1] - 16.295) < 0.0002, "linia kończy si�
 assert.ok(slice!.rideMs === 600_000, "jazda od startu do przystanku to 10 minut");
 const toEnd = courseStopTarget(timedCourse, 2);
 assert.ok(toEnd && Math.abs(toEnd.meters - 1_408) < 60, "do końca kursu jest ok. 1,4 km po tej szerokości geograficznej");
+
+// ── 1. Ultra-kompaktowy prawy pasek narzędzi mapy (MapControls) ──
+const controlsHtml = renderToStaticMarkup(
+  <MapControls
+    onZoomIn={noop}
+    onZoomOut={noop}
+    onFit={noop}
+    onLocate={noop}
+    locateState="idle"
+  />,
+);
+assert.equal(
+  (controlsHtml.match(/data-testid="map-controls-bar"/g) ?? []).length,
+  1,
+  "narzędzia po prawej stronie mapy są w jednym kompaktowym kontenerze",
+);
+for (const label of [
+  "Wycentruj na mojej lokalizacji",
+  "Przybliż mapę",
+  "Oddal mapę",
+]) {
+  assert.match(controlsHtml, new RegExp(`aria-label="${label}"`), `zachowany przycisk: ${label}`);
+}
+assert.doesNotMatch(
+  controlsHtml,
+  /Dopasuj trasę do widoku/,
+  "bez aktywnej trasy nie zajmujemy miejsca guzikiem dopasowania",
+);
+const controlsWithFitHtml = renderToStaticMarkup(
+  <MapControls
+    onZoomIn={noop}
+    onZoomOut={noop}
+    onFit={noop}
+    onLocate={noop}
+    locateState="idle"
+    showFit
+  />,
+);
+assert.match(controlsWithFitHtml, /Dopasuj trasę do widoku/);
+
+// ── 2. Kompaktowy pasek na mapie (MapQuickBar) + wysuwany sidebar (MapInfoSidebar) ──
+const sampleStops: BusStop[] = [
+  {
+    id: "tt-a",
+    name: "Piłsudskiego - Plac Tuwima",
+    lat: 50.76697,
+    lon: 16.28661,
+    lines: ["7", "9", "S1"],
+    shelter: false,
+    source: "timetable",
+  },
+  {
+    id: "tt-b",
+    name: "Sikorskiego - Teatr",
+    lat: 50.769,
+    lon: 16.283,
+    lines: ["2", "11"],
+    shelter: true,
+    source: "timetable",
+  },
+];
+
+const sampleVehicles: LiveBusVehicle[] = [
+  {
+    vehicleId: "404",
+    model: "Solaris",
+    operatorKey: "ska",
+    operatorName: "ŚKA",
+    operatorSource: "auto",
+    routeName: "7",
+    routeColor: "#1e6fbf",
+    brigade: "01",
+    dutyCode: "7/01",
+    dutyStatus: "confirmed",
+    dutyLine: "7",
+    dutySource: "trip",
+    kursowka: "7/01",
+    tripId: "t7",
+    lat: 50.77,
+    lon: 16.28,
+    bearing: 90,
+    delaySeconds: 30,
+    speedKmh: 24,
+    headsign: "Koniec",
+    timestamp: 0,
+    upcomingStops: [],
+  },
+];
+
+const quickBarHtml = renderToStaticMarkup(
+  <MapQuickBar
+    sidebarOpen={false}
+    onToggleSidebar={noop}
+    showLiveBuses={true}
+    liveVehicles={sampleVehicles}
+    busStops={sampleStops}
+    onSelectBus={noop}
+    onSelectStop={noop}
+    onToggleTripPlanner={noop}
+  />,
+);
+assert.match(quickBarHtml, /data-testid="map-sidebar-toggle"/, "ikonka do rozwijania sidebaru z informacjami");
+assert.match(quickBarHtml, /Otwórz panel boczny mapy/);
+assert.match(quickBarHtml, /Szukaj przystanku lub autobusu/, "wspólna wyszukiwarka przystanków i autobusów");
+assert.match(quickBarHtml, /data-testid="quick-trip-planner"/, "kompaktowy przycisk planera podróży");
+
+const closedSidebarHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    open={false}
+    onClose={noop}
+    isPlanner={false}
+    showLiveBuses={true}
+    onToggleLiveBuses={noop}
+    operatorFilter="all"
+    onOperatorFilter={noop}
+    liveVehicles={sampleVehicles}
+    liveTraffic={null}
+    liveLoading={false}
+    onRefreshLive={noop}
+    mapStopCount={sampleStops.length}
+    busLoading={false}
+    onRefreshBusStops={noop}
+    visibility={DEFAULT_VISIBILITY}
+    onVisibilityChange={noop}
+    signalCount={0}
+    turnaroundCount={0}
+    mapStyle="dark"
+    onMapStyle={noop}
+    onHome={noop}
+    onFit={noop}
+    locationStatus="active"
+    userLocation={{
+      lat: 50.77,
+      lon: 16.28,
+      accuracy: 10,
+      altitude: 582,
+      heading: null,
+      speedKmh: 0,
+      maxSpeedKmh: 0,
+      distanceM: 12,
+      timestamp: Date.now(),
+    }}
+    followingUser={false}
+    onLocate={noop}
+    onRetryLocation={noop}
+    onOpenTripPlanner={noop}
+  />,
+);
+assert.match(closedSidebarHtml, /data-open="false"/, "sidebar startuje zwinięty, odsłaniając mapę");
+assert.match(closedSidebarHtml, /inert=""/, "zwinięty sidebar jest nieaktywny dla tabulacji");
+
+const openSidebarHtml = renderToStaticMarkup(
+  <MapInfoSidebar
+    open={true}
+    onClose={noop}
+    isPlanner={false}
+    showLiveBuses={true}
+    onToggleLiveBuses={noop}
+    operatorFilter="all"
+    onOperatorFilter={noop}
+    liveVehicles={sampleVehicles}
+    liveTraffic={null}
+    liveLoading={false}
+    onRefreshLive={noop}
+    mapStopCount={sampleStops.length}
+    busLoading={false}
+    onRefreshBusStops={noop}
+    visibility={DEFAULT_VISIBILITY}
+    onVisibilityChange={noop}
+    signalCount={0}
+    turnaroundCount={0}
+    mapStyle="dark"
+    onMapStyle={noop}
+    onHome={noop}
+    onFit={noop}
+    locationStatus="active"
+    userLocation={{
+      lat: 50.77,
+      lon: 16.28,
+      accuracy: 10,
+      altitude: 582,
+      heading: null,
+      speedKmh: 0,
+      maxSpeedKmh: 0,
+      distanceM: 12,
+      timestamp: Date.now(),
+    }}
+    followingUser={false}
+    onLocate={noop}
+    onRetryLocation={noop}
+    onOpenTripPlanner={noop}
+  />,
+);
+assert.match(openSidebarHtml, /data-open="true"/);
+assert.match(openSidebarHtml, /Panel mapy i informacje/);
+assert.match(openSidebarHtml, /GPS na żywo \(1\)/);
+assert.match(openSidebarHtml, /ŚKA \(1\)/);
+assert.match(openSidebarHtml, /Legenda punktualności GPS/);
+assert.match(openSidebarHtml, /Twoja lokalizacja i prędkość/);
+assert.match(openSidebarHtml, /582 m n\.p\.m\./);
+assert.match(openSidebarHtml, /Ustawienia widoczności/);
+assert.match(openSidebarHtml, /Styl mapy/);
+
+// Wyszukiwanie linii „7” pokazuje jednocześnie autobus GPS i przystanek tej linii; podróżny nie widzi S1.
+const combinedTravelerSearch = renderToStaticMarkup(
+  <BusSearch
+    vehicles={sampleVehicles}
+    stops={sampleStops}
+    onSelectVehicle={noop}
+    onSelectStop={noop}
+    query="7"
+    defaultOpen
+    isPlanner={false}
+  />,
+);
+assert.match(combinedTravelerSearch, /Brygada 7\/01/, "pokazuje pasujący autobus GPS");
+assert.match(combinedTravelerSearch, /Piłsudskiego - Plac Tuwima/, "pokazuje pasujący przystanek");
+assert.doesNotMatch(combinedTravelerSearch, /\bS1\b/, "podróżny nie widzi linii planistycznej S1 na przystanku");
+
+const travelerS1Search = renderToStaticMarkup(
+  <BusSearch
+    vehicles={sampleVehicles}
+    stops={sampleStops}
+    onSelectVehicle={noop}
+    onSelectStop={noop}
+    query="S1"
+    defaultOpen
+    isPlanner={false}
+  />,
+);
+assert.match(travelerS1Search, /Brak przystanków pasujących do wyszukiwania/, "S1 nie zwraca przystanków dla podróżnego");
+
+const plannerS1Search = renderToStaticMarkup(
+  <BusSearch
+    vehicles={sampleVehicles}
+    stops={sampleStops}
+    onSelectVehicle={noop}
+    onSelectStop={noop}
+    query="S1"
+    defaultOpen
+    isPlanner={true}
+  />,
+);
+assert.match(plannerS1Search, /Piłsudskiego - Plac Tuwima/, "planista znajduje przystanek po linii S1");
+assert.match(plannerS1Search, /\bS1\b/, "planista widzi S1 na liście linii przystanku");
+
+// ── 3. Usunięty komunikat „Przystanki są ukryte. Pokaż przystanki” i dolny guzik „Przystanki” ──
+const appSource = await readFile(new URL("../src/components/MapPlanerApp.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(appSource, /Przystanki są ukryte\./, "usunięto komunikat o ukrytych przystankach");
+assert.doesNotMatch(appSource, /StopFinder/, "usunięto osobny dolny przycisk Przystanki");
 
 console.log("user view tests passed");

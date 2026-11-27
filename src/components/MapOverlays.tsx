@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import {
   ArrowUp,
   ArrowUpDown,
@@ -11,11 +11,8 @@ import {
   ChevronUp,
   CornerUpLeft,
   Crosshair,
-  Eye,
-  EyeOff,
   Flag,
   Route,
-  Layers,
   ListOrdered,
   Loader2,
   LocateFixed,
@@ -23,17 +20,15 @@ import {
   MapPinned,
   Maximize2,
   Minus,
-  Moon,
   MousePointer2,
+  PanelLeftOpen,
   Pause,
   Play,
   Plus,
   Radio,
   RefreshCw,
-  Satellite,
   Scale,
   Square,
-  Sun,
   Timer,
   TrafficCone,
   Trash2,
@@ -76,11 +71,7 @@ import {
 } from "@/lib/delay";
 import { Pill, VehicleGlyph } from "./UI";
 
-import {
-  DEFAULT_VISIBILITY,
-  type StopDisplayMode,
-  type VisibilitySettings,
-} from "@/lib/visibility";
+import type { StopDisplayMode } from "@/lib/visibility";
 
 export type { StopDisplayMode };
 import GtfsSchedule from "./GtfsSchedule";
@@ -122,7 +113,7 @@ export function MapRouteCard({
   const brigadeTitle = formatBrigadeTitle(brigade);
   if (!routeReady && !hasStart && !hasEnd) return null;
   return (
-    <div className="pointer-events-none hidden w-[292px] max-w-[calc(100vw-116px)] select-none rounded-[14px] border border-line/80 bg-surface/95 px-3 py-2 shadow-[0_12px_35px_rgba(13,42,28,0.13)] dark:bg-surface/94 sm:block">
+    <div className="w-full select-none rounded-xl border border-line/80 bg-surface px-2.5 py-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="grid h-5 w-5 place-items-center rounded-md bg-brand text-on-brand">
@@ -246,6 +237,122 @@ export function MapRouteCard({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Compact Map Quick Bar (Sidebar Trigger + Unified Search + Trip Planner)   */
+/* -------------------------------------------------------------------------- */
+
+export function MapQuickBar({
+  sidebarOpen,
+  onToggleSidebar,
+  showLiveBuses,
+  liveVehicles,
+  busStops,
+  onSelectBus,
+  onSelectStop,
+  isPlanner = false,
+  tripOpen = false,
+  hasTripOrigin = false,
+  hasTripDest = false,
+  onToggleTripPlanner,
+}: {
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  showLiveBuses: boolean;
+  liveVehicles: LiveBusVehicle[];
+  busStops: BusStop[];
+  onSelectBus: (bus: LiveBusVehicle) => void;
+  onSelectStop: (stop: BusStop) => void;
+  isPlanner?: boolean;
+  tripOpen?: boolean;
+  hasTripOrigin?: boolean;
+  hasTripDest?: boolean;
+  onToggleTripPlanner?: () => void;
+}) {
+  return (
+    <div
+      data-testid="map-quick-bar"
+      className="pointer-events-auto flex h-9 w-[min(288px,calc(100vw-60px))] items-center gap-1 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)] sm:w-[320px]"
+    >
+      <button
+        type="button"
+        data-testid="map-sidebar-toggle"
+        aria-expanded={sidebarOpen}
+        aria-controls="map-info-sidebar"
+        aria-label={
+          sidebarOpen ? "Zwiń panel boczny mapy" : "Otwórz panel boczny mapy"
+        }
+        title="Panel mapy: informacje, GPS, filtry, legenda i warstwy"
+        onClick={onToggleSidebar}
+        className={cn(
+          "relative grid h-7 w-7 shrink-0 place-items-center rounded-lg transition-colors",
+          sidebarOpen
+            ? "bg-brand text-on-brand"
+            : "bg-raised text-brand-ink hover:bg-brand-soft",
+        )}
+      >
+        <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={2.2} />
+        {showLiveBuses && liveVehicles.length > 0 && !sidebarOpen && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-surface"
+          />
+        )}
+      </button>
+
+      <span className="h-4 w-px shrink-0 bg-line" aria-hidden="true" />
+
+      <div className="min-w-0 flex-1">
+        <BusSearch
+          vehicles={liveVehicles}
+          stops={busStops}
+          onSelectVehicle={onSelectBus}
+          onSelectStop={onSelectStop}
+          compact
+          embedded
+          showDutyStatus={isPlanner}
+          isPlanner={isPlanner}
+        />
+      </div>
+
+      {!isPlanner && onToggleTripPlanner && (
+        <>
+          <span className="h-4 w-px shrink-0 bg-line" aria-hidden="true" />
+          <button
+            type="button"
+            data-testid="quick-trip-planner"
+            onClick={onToggleTripPlanner}
+            aria-expanded={tripOpen}
+            aria-label={tripOpen ? "Zamknij planer podróży" : "Planer podróży"}
+            title="Planer podróży (A → B)"
+            className={cn(
+              "relative flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-[9px] font-extrabold transition-colors",
+              tripOpen
+                ? "bg-raised text-ink ring-1 ring-line-strong"
+                : "bg-brand text-on-brand hover:opacity-90",
+            )}
+          >
+            <Route className="h-3.5 w-3.5" strokeWidth={2.3} />
+            <span className="hidden sm:inline">Trasa</span>
+            {!tripOpen && (hasTripOrigin || hasTripDest) && (
+              <span
+                className="absolute -right-0.5 -top-0.5 flex gap-px"
+                aria-hidden="true"
+              >
+                {hasTripOrigin && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#0891b2] ring-1 ring-surface" />
+                )}
+                {hasTripDest && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#e11d48] ring-1 ring-surface" />
+                )}
+              </span>
+            )}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Live Fleet Bar (MZUK, ŚKA GPS) + Traffic Signals Toggle                   */
 /* -------------------------------------------------------------------------- */
 
@@ -255,6 +362,7 @@ export function LiveFleetControl({
   operatorFilter,
   onOperatorFilter,
   liveVehicles,
+  busStops = [],
   liveTraffic,
   liveLoading,
   onRefreshLive,
@@ -265,6 +373,7 @@ export function LiveFleetControl({
   showTurnarounds,
   onToggleTurnarounds,
   onSelectBus,
+  onSelectStop,
   isPlanner = false,
 }: {
   /** Planista widzi szczegóły dopasowania brygad; podróżny tylko wynik. */
@@ -274,6 +383,7 @@ export function LiveFleetControl({
   operatorFilter: "all" | WalbrzychOperatorKey;
   onOperatorFilter: (op: "all" | WalbrzychOperatorKey) => void;
   liveVehicles: LiveBusVehicle[];
+  busStops?: BusStop[];
   liveTraffic: LiveTrafficSummary | null;
   liveLoading: boolean;
   onRefreshLive: () => void;
@@ -284,6 +394,7 @@ export function LiveFleetControl({
   showTurnarounds: boolean;
   onToggleTurnarounds: () => void;
   onSelectBus: (bus: LiveBusVehicle) => void;
+  onSelectStop?: (stop: BusStop) => void;
 }) {
   const [legendExpanded, setLegendExpanded] = useState(false);
   const dutyStats = dutyAssignmentStats(liveVehicles);
@@ -353,12 +464,15 @@ export function LiveFleetControl({
         </button>
       </div>
 
-      <div className="pointer-events-auto w-[225px] max-w-full sm:w-[248px]">
+      <div className="pointer-events-auto w-[272px] max-w-full sm:w-[300px]">
         <BusSearch
           vehicles={liveVehicles}
+          stops={busStops}
           onSelectVehicle={onSelectBus}
+          onSelectStop={onSelectStop}
           compact
           showDutyStatus={isPlanner}
+          isPlanner={isPlanner}
         />
       </div>
 
@@ -994,193 +1108,29 @@ export function LiveBusCard({
 
 /* -------------------------------------------------------------------------- */
 
-const MAP_STYLES: Array<{
-  id: MapStyle;
-  label: string;
-  hint: string;
-  icon: typeof Sun;
-  swatch: string;
-}> = [
-  {
-    id: "light",
-    label: "Mapa jasna",
-    hint: "Ulice, chodniki, przystanki",
-    icon: Sun,
-    swatch: "linear-gradient(135deg, #f6f1e2 0%, #e6ecd9 55%, #cfe0e6 100%)",
-  },
-  {
-    id: "dark",
-    label: "Mapa ciemna",
-    hint: "OSM · ciemny (czytelny)",
-    icon: Moon,
-    swatch: "linear-gradient(135deg, #3a434f 0%, #2a313b 55%, #1e242c 100%)",
-  },
-  {
-    id: "satellite",
-    label: "Satelita",
-    hint: "Esri World Imagery + PL",
-    icon: Satellite,
-    swatch: "linear-gradient(135deg, #62705a 0%, #394f3e 50%, #263e44 100%)",
-  },
-];
-
-function VisibilitySwitch({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-raised"
-    >
-      <span className="min-w-0">
-        <span className="block text-[9.5px] font-bold text-ink">{label}</span>
-        {hint && (
-          <span className="block text-[7.5px] leading-snug text-mute">
-            {hint}
-          </span>
-        )}
-      </span>
-      <span
-        className={cn(
-          "relative h-4 w-7 shrink-0 rounded-full transition-colors",
-          checked ? "bg-brand" : "bg-line-strong",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute left-0 top-0.5 h-3 w-3 rounded-full bg-surface shadow-sm transition-transform",
-            checked ? "translate-x-[14px]" : "translate-x-0.5",
-          )}
-        />
-      </span>
-    </button>
-  );
-}
-
 export function MapControls({
-  mapStyle,
-  onMapStyle,
   onZoomIn,
   onZoomOut,
   onFit,
   onLocate,
   locateState,
-  busCount,
-  busLoading,
-  onRefreshBusStops,
-  onHome,
-  visibility,
-  onVisibilityChange,
-  isPlanner,
+  showFit = false,
 }: {
-  visibility: VisibilitySettings;
-  onVisibilityChange: (patch: Partial<VisibilitySettings>) => void;
-  /** Route-related layers (signals, turn-arounds, stops along the route) are planner-only. */
-  isPlanner: boolean;
-  mapStyle: MapStyle;
-  onMapStyle: (style: MapStyle) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onFit: () => void;
   /** Wycentruj mapę na lokalizacji GPS użytkownika. */
   onLocate: () => void;
   locateState: "idle" | "requesting" | "active" | "following" | "denied";
-  busCount: number;
-  busLoading: boolean;
-  onRefreshBusStops: () => void;
-  onHome: () => void;
+  /** Przycisk dopasowania pokazujemy tylko, gdy na mapie jest aktywna trasa / kurs. */
+  showFit?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const [visibilityOpen, setVisibilityOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!visibilityOpen) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node))
-        setVisibilityOpen(false);
-    };
-    const closeEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setVisibilityOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOutside, true);
-    window.addEventListener("keydown", closeEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside, true);
-      window.removeEventListener("keydown", closeEscape);
-    };
-  }, [visibilityOpen]);
-
-  const stopOptions: Array<{
-    id: StopDisplayMode;
-    icon: typeof Bus;
-    label: string;
-  }> = [
-    { id: "off", icon: EyeOff, label: "Ukryte" },
-    { id: "all", icon: Bus, label: "Wszystkie" },
-  ];
-  if (isPlanner)
-    stopOptions.push({ id: "route", icon: Route, label: "Przy trasie" });
-  // "Przy trasie" needs a planned route, which only the planner has.
-  const stopsValue: StopDisplayMode =
-    !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
-
   return (
-    <div
-      ref={rootRef}
-      className="pointer-events-none relative flex select-none flex-col items-end gap-1.5"
-    >
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(false);
-            setVisibilityOpen((current) => !current);
-          }}
-          title="Ustawienia widoczności"
-          aria-label="Ustawienia widoczności"
-          aria-expanded={visibilityOpen}
-          className={cn(
-            "grid h-7 w-7 place-items-center rounded-lg transition-colors",
-            visibilityOpen
-              ? "bg-brand text-on-brand"
-              : "text-ink-soft hover:bg-soft hover:text-ink",
-          )}
-        >
-          <Eye className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-      </div>
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
-        <button
-          type="button"
-          onClick={onRefreshBusStops}
-          title="Pobierz przystanki dla bieżącego widoku"
-          aria-label="Pobierz przystanki dla bieżącego widoku mapy"
-          className="relative grid h-7 w-7 place-items-center rounded-lg bg-brand text-on-brand transition-opacity hover:opacity-90"
-        >
-          <Bus className="h-3.5 w-3.5" strokeWidth={2} />
-          {busLoading && (
-            <span className="absolute inset-0 grid place-items-center rounded-lg bg-brand/90">
-              <Loader2 className="h-3 w-3 animate-spin text-on-brand" />
-            </span>
-          )}
-          {!busLoading && busCount > 0 && (
-            <span className="metric absolute -right-1 -top-1 min-w-[15px] rounded-full bg-highlight px-[3px] text-[7px] font-extrabold leading-[13px] text-[#17240f] shadow-sm">
-              {busCount > 999 ? "999+" : busCount}
-            </span>
-          )}
-        </button>
+    <div className="pointer-events-none relative flex select-none flex-col items-end">
+      <div
+        data-testid="map-controls-bar"
+        className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/85 bg-surface/95 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.16)]"
+      >
         <button
           type="button"
           onClick={onLocate}
@@ -1209,36 +1159,7 @@ export function MapControls({
             <LocateFixed className="h-3.5 w-3.5" strokeWidth={2.2} />
           )}
         </button>
-        <button
-          type="button"
-          onClick={onHome}
-          title="Wróć do Wałbrzycha"
-          aria-label="Wróć do widoku Wałbrzycha"
-          className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
-        >
-          <Crosshair className="h-3.5 w-3.5" strokeWidth={2.1} />
-        </button>
-        <span className="mx-1.5 h-px bg-line" />
-      </div>
-
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-line/80 bg-surface/94 p-1 shadow-[0_8px_24px_rgba(13,42,28,0.14)] ">
-        <button
-          type="button"
-          onClick={() => {
-            setVisibilityOpen(false);
-            setOpen((current) => !current);
-          }}
-          title="Styl mapy"
-          aria-label="Styl mapy"
-          aria-expanded={open}
-          className={cn(
-            "grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink",
-            open && "bg-soft text-brand-ink",
-          )}
-        >
-          <Layers className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-        <span className="mx-1.5 h-px bg-line" />
+        <span className="mx-1.5 my-0.5 h-px bg-line" />
         <button
           type="button"
           onClick={onZoomIn}
@@ -1257,172 +1178,21 @@ export function MapControls({
         >
           <Minus className="h-3.5 w-3.5" strokeWidth={2.2} />
         </button>
-        <span className="mx-1.5 h-px bg-line" />
-        <button
-          type="button"
-          onClick={onFit}
-          title="Dopasuj trasę do widoku"
-          aria-label="Dopasuj trasę do widoku"
-          className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
-        >
-          <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-      </div>
-
-      {visibilityOpen && (
-        <div
-          role="dialog"
-          aria-label="Ustawienia widoczności"
-          className="scroll-area pointer-events-auto absolute right-10 top-0 max-h-[calc(100dvh-150px)] w-[252px] max-w-[calc(100vw-64px)] overflow-y-auto rounded-xl border border-line bg-surface p-2 shadow-[0_20px_50px_rgba(0,0,0,0.22)] animate-fade-in"
-        >
-          <div className="flex items-center justify-between gap-2 px-1.5 pb-1">
-            <span className="text-[7.5px] font-extrabold uppercase tracking-[0.16em] text-mute">
-              Ustawienia widoczności
-            </span>
+        {showFit && (
+          <>
+            <span className="mx-1.5 my-0.5 h-px bg-line" />
             <button
               type="button"
-              onClick={() => setVisibilityOpen(false)}
-              aria-label="Zamknij ustawienia widoczności"
-              className="grid h-5 w-5 place-items-center rounded text-mute transition-colors hover:bg-soft hover:text-ink"
+              onClick={onFit}
+              title="Dopasuj trasę do widoku"
+              aria-label="Dopasuj trasę do widoku"
+              className="grid h-7 w-7 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-soft hover:text-ink"
             >
-              <X className="h-3 w-3" />
+              <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
-          </div>
-
-          <div className="px-1.5 pt-1 text-[9px] font-extrabold text-ink">
-            Przystanki
-          </div>
-          <div className="mt-1 flex gap-0.5 rounded-lg bg-soft p-0.5">
-            {stopOptions.map((option) => {
-              const Icon = option.icon;
-              const active = stopsValue === option.id;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => onVisibilityChange({ stops: option.id })}
-                  className={cn(
-                    "flex h-7 flex-1 items-center justify-center gap-1 rounded-md text-[8.5px] font-bold transition-colors",
-                    active
-                      ? "bg-surface text-brand-ink shadow-[0_1px_3px_rgba(13,42,28,0.12)]"
-                      : "text-mute hover:text-ink",
-                  )}
-                >
-                  <Icon className="h-3 w-3" strokeWidth={2} />
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-2.5 border-t border-line px-1.5 pt-2 text-[9px] font-extrabold text-ink">
-            Autobusy GPS
-          </div>
-          <VisibilitySwitch
-            label="Pokaż autobusy na mapie"
-            checked={visibility.liveBuses}
-            onChange={(next) => onVisibilityChange({ liveBuses: next })}
-          />
-          <p className="flex items-start gap-1 px-1.5 pb-1 text-[7.5px] leading-snug text-mute">
-            <Check
-              className="mt-px h-2.5 w-2.5 shrink-0 text-brand-ink"
-              strokeWidth={3}
-            />
-            Zawsze widoczne: kierunek jazdy, linia, prędkość i opóźnienie /
-            przyspieszenie.
-          </p>
-          <VisibilitySwitch
-            label="Kursówka"
-            hint="np. 15/01, 2/08"
-            checked={visibility.busKursowka}
-            onChange={(next) => onVisibilityChange({ busKursowka: next })}
-          />
-          <VisibilitySwitch
-            label="Numer taborowy"
-            hint="np. #340, #3"
-            checked={visibility.busVehicleNumber}
-            onChange={(next) => onVisibilityChange({ busVehicleNumber: next })}
-          />
-
-          {isPlanner && (
-            <>
-              <div className="mt-1.5 border-t border-line px-1.5 pt-2 text-[9px] font-extrabold text-ink">
-                Wyznaczona trasa
-              </div>
-              <VisibilitySwitch
-                label="Sygnalizacja świetlna"
-                checked={visibility.trafficSignals}
-                onChange={(next) =>
-                  onVisibilityChange({ trafficSignals: next })
-                }
-              />
-              <VisibilitySwitch
-                label="Miejsca na zawrotkę"
-                hint="dla wozów od 12 m"
-                checked={visibility.turnarounds}
-                onChange={(next) => onVisibilityChange({ turnarounds: next })}
-              />
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={() => onVisibilityChange({ ...DEFAULT_VISIBILITY })}
-            className="mt-1.5 w-full rounded-md border border-line py-1.5 text-[8.5px] font-bold text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-          >
-            Przywróć domyślne
-          </button>
-        </div>
-      )}
-
-      {open && (
-        <div className="pointer-events-auto absolute right-10 top-0 w-[186px] rounded-xl border border-line bg-surface p-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.22)] animate-fade-in">
-          <div className="px-2 py-1 text-[7.5px] font-extrabold uppercase tracking-[0.16em] text-mute">
-            Warstwy podkładu
-          </div>
-          {MAP_STYLES.map((style) => {
-            const Icon = style.icon;
-            const active = mapStyle === style.id;
-            return (
-              <button
-                key={style.id}
-                type="button"
-                onClick={() => {
-                  onMapStyle(style.id);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-                  active ? "bg-brand-soft" : "hover:bg-raised",
-                )}
-              >
-                <span
-                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line/60"
-                  style={{ background: style.swatch }}
-                >
-                  <Icon
-                    className={cn(
-                      "h-3 w-3",
-                      style.id === "dark" || style.id === "satellite"
-                        ? "text-white"
-                        : "text-ink",
-                    )}
-                  />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[9.5px] font-bold text-ink">
-                    {style.label}
-                  </span>
-                  <span className="block truncate text-[7.5px] text-mute">
-                    {style.hint}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1730,7 +1500,7 @@ export function NavigationHud({
   onStop: () => void;
   onOpenSteps: () => void;
 }) {
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(true);
   return (
     <div
       className={cn(
@@ -1899,7 +1669,7 @@ export function QuickComparison({
   onSelectVehicle: (vehicle: VehicleId) => void;
   onOpenReport: () => void;
 }) {
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(true);
   const rows = metrics.slice(0, 5);
   const base = rows[0];
   return (

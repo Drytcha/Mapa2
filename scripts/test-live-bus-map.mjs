@@ -219,6 +219,7 @@ try {
 
   // Nieruchomy autobus, ale nowe informacje GPS: postęp musi się odświeżyć
   // również wtedy, gdy współrzędne w ogóle się nie zmieniły.
+  await page.getByTestId("map-sidebar-toggle").click();
   feed.nextSequence = 2;
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.waitForFunction(() => {
@@ -253,6 +254,7 @@ try {
   await page.getByRole("button", { name: "Odśwież pozycje GPS autobusów" }).click();
   await page.getByTestId("route-progress-status").getByText(/Brak danych/).waitFor();
   assert.deepEqual(await page.locator(".leaflet-routeDone-pane path").evaluateAll((paths) => paths.map((path) => path.getAttribute("stroke"))), ["#94a3b8"]);
+  await page.getByTestId("map-sidebar-close").click();
 
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // Drugi klik w ten sam autobus zamyka kartę i chowa trasę.
@@ -290,9 +292,7 @@ try {
   const layout = await mobile.page.evaluate(() => {
     const sheet = document.querySelector('[data-mobile-sheet="bus"]');
     const rect = sheet.getBoundingClientRect();
-    const fleet = Array.from(document.querySelectorAll("div")).find((el) =>
-      /^GPS \(\d+\)/.test(el.textContent || ""),
-    );
+    const fleet = document.querySelector('[data-testid="map-quick-bar"]');
     const paths = Array.from(document.querySelectorAll(".leaflet-kursowka-pane path")).map((path) => {
       const box = path.getBoundingClientRect();
       return { top: box.top, bottom: box.bottom };
