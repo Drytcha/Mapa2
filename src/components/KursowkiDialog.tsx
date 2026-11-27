@@ -118,7 +118,7 @@ export default function KursowkiDialog({
     if (!open) return null;
     return (
       <div className="sidebar-single-col flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-surface">
-        {(onOpenNsNhDiff || isPlanner) && (
+        {isPlanner && (
           <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line/50 px-3 py-2">
             {onOpenNsNhDiff && (
               <button
@@ -132,21 +132,19 @@ export default function KursowkiDialog({
                 <span>NS vs NH</span>
               </button>
             )}
-            {isPlanner && (
-              <button
-                type="button"
-                onClick={handleSyncGtfs}
-                disabled={syncing}
-                className="flex h-7 items-center gap-1 rounded-lg bg-soft px-2.5 text-[10.5px] font-bold text-ink-soft transition-colors hover:text-brand-ink disabled:opacity-50"
-              >
-                {syncing ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <DownloadCloud className="h-3.5 w-3.5" />
-                )}
-                <span>{syncing ? "Aktualizuję…" : "Aktualizuj GTFS"}</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleSyncGtfs}
+              disabled={syncing}
+              className="flex h-7 items-center gap-1 rounded-lg bg-soft px-2.5 text-[10.5px] font-bold text-ink-soft transition-colors hover:text-brand-ink disabled:opacity-50"
+            >
+              {syncing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <DownloadCloud className="h-3.5 w-3.5" />
+              )}
+              <span>{syncing ? "Aktualizuję…" : "Aktualizuj GTFS"}</span>
+            </button>
           </div>
         )}
         {syncNotice && (
@@ -217,7 +215,7 @@ export default function KursowkiDialog({
             : "Kursy i brygady według aktualnego rozkładu"}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {onOpenNsNhDiff && (
+          {isPlanner && onOpenNsNhDiff && (
             <button
               type="button"
               data-testid="kursowki-open-ns-nh-diff"

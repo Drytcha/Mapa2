@@ -61,6 +61,13 @@ const CustomGtfsMapDrawToolbar = lazy(() => import("./CustomGtfsMapDrawToolbar")
 const PdfExportDialog = lazy(() => import("./PdfExportDialog"));
 const TripPlannerPanel = lazy(() => import("./TripPlannerPanel"));
 const CoursePreviewCard = lazy(() => import("./CoursePreviewCard"));
+import CourseNavigationHud from "./CourseNavigationHud";
+import { useSharedClock } from "@/lib/core/runtimeHub";
+import {
+  buildCourseNavRoute,
+  evaluateCourseNavigation,
+  type CourseNavRoute,
+} from "@/lib/courseNavigation";
 import {
   journeyToMapGeometry,
   journeyToRepairedMapGeometry,
@@ -480,9 +487,23 @@ function MapPlanerWorkspace() {
   const [scheduleDiffOpen, setScheduleDiffOpen] = useState(false);
   const [scheduleDiffPreset, setScheduleDiffPreset] = useState<"default" | "ns-nh">("default");
   const openScheduleDiff = useCallback((preset: "default" | "ns-nh" = "default") => {
+    if (!isPlanner) return;
     setScheduleDiffPreset(preset);
     setScheduleDiffOpen(true);
-  }, []);
+  }, [isPlanner]);
+
+  // Nawigacja kierowcy/użytkownika po całym przebiegu kursu linii
+  const [courseNavRoute, setCourseNavRoute] = useState<CourseNavRoute | null>(null);
+  const [courseNavMode, setCourseNavMode] = useState<"gps" | "sim">("gps");
+  const [courseNavSimMeters, setCourseNavSimMeters] = useState(0);
+  const [courseNavSimPlaying, setCourseNavSimPlaying] = useState(false);
+  const [courseNavSimSpeed, setCourseNavSimSpeed] = useState<1 | 3 | 8>(1);
+  const [courseNavStartedAt, setCourseNavStartedAt] = useState<number>(() => Date.now());
+  const [courseNavPunctualityMode, setCourseNavPunctualityMode] =
+    useState<"schedule" | "relative">("schedule");
+  const [courseNavManualStopOffset, setCourseNavManualStopOffset] = useState(0);
+  const [courseNavFollowCamera, setCourseNavFollowCamera] = useState(true);
+  const courseNavPrevAlongRef = useRef(0);
   const [routeAuditOpen, setRouteAuditOpen] = useState(false);
   const [customGtfsBuilderOpen, setCustomGtfsBuilderOpen] = useState(false);
   const [customGtfsMapSession, setCustomGtfsMapSession] =
@@ -1066,6 +1087,121 @@ function MapPlanerWorkspace() {
     arrivalToastRef.current = false;
   }, []);
 
+  const stopCourseNavigation = useCallback(() => {
+    setCourseNavRoute(null);
+    setCourseNavSimPlaying(false);
+    setCourseNavSimMeters(0);
+    setCourseNavManualStopOffset(0);
+    courseNavPrevAlongRef.current = 0;
+  }, []);
+
+  const startCourseNavigation = useCallback(
+    (source: NonNullable<typeof kursowkaOverlay> | NonNullable<NonNullable<typeof kursowkaOverlay>["course"]>) => {
+      const built = buildCourseNavRoute(source);
+      if (!built) {
+        showToast("Brak geometrii trasy do uruchomienia nawigacji.");
+        return;
+      }
+      stopNavigation();
+      setCourseTargetStop(null);
+      setBusOverlay(false);
+      setSelectedLiveBus(null);
+      courseNavPrevAlongRef.current = 0;
+      setCourseNavManualStopOffset(0);
+      setCourseNavSimMeters(0);
+      setCourseNavStartedAt(Date.now());
+      setCourseNavFollowCamera(true);
+
+      const now = Date.now();
+      const withinScheduleWindow =
+        built.startMs !== null &&
+        built.endMs !== null &&
+        now >= built.startMs - 45 * 60_000 &&
+        now <= built.endMs + 45 * 60_000;
+      setCourseNavPunctualityMode(withinScheduleWindow ? "schedule" : "relative");
+
+      const gpsUnavailable =
+        locationStatus === "denied" || locationStatus === "unavailable";
+      if (gpsUnavailable) {
+        setCourseNavMode("sim");
+        setCourseNavSimPlaying(true);
+      } else {
+        startLocation();
+        setCourseNavMode("gps");
+        setCourseNavSimPlaying(false);
+      }
+
+      setCourseNavRoute(built);
+      if (!isRailViewportRef.current) {
+        setMapSidebarOpen(false);
+        setCourseDrawerOpen(false);
+      }
+
+      const startPt = built.path[0];
+      if (startPt) {
+        mapRef.current?.centerOn(startPt[0], startPt[1], 16);
+      }
+      showToast(
+        gpsUnavailable
+          ? `Uruchomiono symulację przejazdu: ${built.title}.`
+          : `Nawigacja po trasie kursu uruchomiona: ${built.title}.`,
+      );
+    },
+    [locationStatus, showToast, startLocation, stopNavigation],
+  );
+
+  useEffect(() => {
+    if (!courseNavRoute || courseNavMode !== "sim" || !courseNavSimPlaying) return;
+    // Realistyczna średnia prędkość jazdy autobusu miejskiego ~34 km/h (9.5 m/s) × mnożnik
+    const stepMs = 120;
+    const metersPerTick = 9.5 * (stepMs / 1000) * courseNavSimSpeed;
+    const timer = window.setInterval(() => {
+      setCourseNavSimMeters((prev) => {
+        const next = Math.min(courseNavRoute.totalMeters, prev + metersPerTick);
+        if (next >= courseNavRoute.totalMeters) {
+          setCourseNavSimPlaying(false);
+        }
+        return next;
+      });
+    }, stepMs);
+    return () => window.clearInterval(timer);
+  }, [courseNavRoute, courseNavMode, courseNavSimPlaying, courseNavSimSpeed]);
+
+  const courseNavClock = useSharedClock(1000, Boolean(courseNavRoute));
+  const courseNavState = useMemo(() => {
+    if (!courseNavRoute) return null;
+    const evaluated = evaluateCourseNavigation({
+      route: courseNavRoute,
+      mode: courseNavMode,
+      gps: userLocation
+        ? {
+            lat: userLocation.lat,
+            lon: userLocation.lon,
+            accuracy: userLocation.accuracy,
+            speedKmh: userLocation.speedKmh,
+            heading: userLocation.heading,
+          }
+        : null,
+      simMeters: courseNavSimMeters,
+      prevAlongMeters: courseNavPrevAlongRef.current,
+      manualStopOffset: courseNavManualStopOffset,
+      nowMs: courseNavClock,
+      startedAtMs: courseNavStartedAt,
+      punctualityMode: courseNavPunctualityMode,
+    });
+    courseNavPrevAlongRef.current = evaluated.alongMeters;
+    return evaluated;
+  }, [
+    courseNavRoute,
+    courseNavMode,
+    userLocation,
+    courseNavSimMeters,
+    courseNavManualStopOffset,
+    courseNavClock,
+    courseNavStartedAt,
+    courseNavPunctualityMode,
+  ]);
+
   const handleRoleChange = (next: AppRole) => {
     if (next === role) return;
     overlayEpochRef.current += 1;
@@ -1077,6 +1213,8 @@ function MapPlanerWorkspace() {
     setSelectedLiveBus(null);
     setKursowkiOpen(false);
     setLinesOpen(false);
+    setScheduleDiffOpen(false);
+    stopCourseNavigation();
     setKursowkaOverlay(null);
     // The information window is available only to a logged-in planner.
     setSettingsOpen(false);
@@ -2403,9 +2541,21 @@ function MapPlanerWorkspace() {
   const hudRemainingTime = navActive
     ? metrics.duration * (1 - navProgress)
     : hudStep?.duration ?? 0;
-  const navCoord = useMemo<[number, number] | null>(
-    () => (navActive ? pointAtProgress(activeRoute, navProgress) : null),
-    [navActive, activeRoute, navProgress]
+  const navCoord = useMemo<[number, number] | null>(() => {
+    if (courseNavState) return courseNavState.position;
+    return navActive ? pointAtProgress(activeRoute, navProgress) : null;
+  }, [courseNavState, navActive, activeRoute, navProgress]);
+
+  const courseNavProgressOverlay = useMemo(
+    () =>
+      courseNavState
+        ? {
+            passed: courseNavState.splitPath.passed,
+            remaining: courseNavState.splitPath.remaining,
+            passedStopCount: courseNavState.passedStopCount,
+          }
+        : null,
+    [courseNavState],
   );
 
   const panelProps = {
@@ -2639,7 +2789,8 @@ function MapPlanerWorkspace() {
                 showToast("Cel przesunięty. Przeliczam połączenia i dojścia piesze.");
               }}
               navCoord={navCoord}
-              followNav={navActive && navPlaying}
+              followNav={courseNavState ? courseNavFollowCamera : navActive && navPlaying}
+              courseNavProgress={courseNavProgressOverlay}
               focus={focus}
               userLocation={userLocation}
               followUser={followUser}
@@ -2647,6 +2798,7 @@ function MapPlanerWorkspace() {
               onUserPan={() => {
                 userPannedRef.current = true;
                 setFollowUser(false);
+                if (courseNavRoute) setCourseNavFollowCamera(false);
               }}
               onLineClick={handleLineClick}
               onMarkerDrag={handleMarkerDrag}
@@ -2884,7 +3036,76 @@ function MapPlanerWorkspace() {
                   )}
                 </div>
               )}
-              {kursowkaOverlay && (!kursowkaOverlay.course || isPlanner) && (
+              {courseNavRoute && courseNavState && (
+                <CourseNavigationHud
+                  route={courseNavRoute}
+                  state={courseNavState}
+                  mode={courseNavMode}
+                  onModeChange={(nextMode) => {
+                    setCourseNavMode(nextMode);
+                    if (nextMode === "sim") {
+                      setCourseNavSimMeters(courseNavState.alongMeters);
+                      setCourseNavSimPlaying(true);
+                    } else {
+                      setCourseNavSimPlaying(false);
+                      startLocation();
+                    }
+                  }}
+                  simPlaying={courseNavSimPlaying}
+                  onToggleSimPlay={() => {
+                    if (courseNavSimMeters >= courseNavRoute.totalMeters - 10) {
+                      setCourseNavSimMeters(0);
+                      setCourseNavSimPlaying(true);
+                    } else {
+                      setCourseNavSimPlaying((v) => !v);
+                    }
+                  }}
+                  simSpeedMultiplier={courseNavSimSpeed}
+                  onCycleSimSpeed={() =>
+                    setCourseNavSimSpeed((s) => (s === 1 ? 3 : s === 3 ? 8 : 1))
+                  }
+                  gpsAvailable={Boolean(userLocation)}
+                  gpsSpeedKmh={userLocation?.speedKmh ?? null}
+                  followingCamera={courseNavFollowCamera}
+                  onRecenterCamera={() => {
+                    setCourseNavFollowCamera(true);
+                    mapRef.current?.centerOn(
+                      courseNavState.position[0],
+                      courseNavState.position[1],
+                      16,
+                    );
+                  }}
+                  punctualityMode={courseNavPunctualityMode}
+                  onTogglePunctualityMode={() =>
+                    setCourseNavPunctualityMode((m) =>
+                      m === "schedule" ? "relative" : "schedule",
+                    )
+                  }
+                  onStepStop={(delta) => {
+                    if (courseNavMode === "sim") {
+                      const targetIdx = Math.min(
+                        Math.max(0, courseNavState.nextStopIndex + delta),
+                        Math.max(0, courseNavRoute.stops.length - 1),
+                      );
+                      const stop = courseNavRoute.stops[targetIdx];
+                      if (stop) {
+                        setCourseNavSimMeters(stop.alongMeters);
+                      }
+                    } else {
+                      setCourseNavManualStopOffset((prev) => prev + delta);
+                    }
+                  }}
+                  onJumpToStop={(stopIndex) => {
+                    const stop = courseNavRoute.stops[stopIndex];
+                    if (stop) {
+                      setCourseNavFollowCamera(false);
+                      mapRef.current?.centerOn(stop.lat, stop.lon, 16);
+                    }
+                  }}
+                  onStopNavigation={stopCourseNavigation}
+                />
+              )}
+              {kursowkaOverlay && !kursowkaOverlay.course && !courseNavRoute && (
                 <ShapeOverlayControl
                   title={kursowkaOverlay.title}
                   progress={Boolean(kursowkaOverlay.liveVehicleId)}
@@ -2893,6 +3114,7 @@ function MapPlanerWorkspace() {
                   onClear={() => {
                     busOverlayRequestRef.current = null;
                     setBusOverlay(false);
+                    stopCourseNavigation();
                     setKursowkaOverlay(null);
                   }}
                 />
@@ -3161,6 +3383,11 @@ function MapPlanerWorkspace() {
                         : `Wyświetlono przebieg: ${overlay.title}.`,
                     );
                   }}
+                  onStartLineNavigation={(overlay) => {
+                    if (overlayEpoch !== overlayEpochRef.current) return;
+                    setKursowkaOverlay(overlay);
+                    startCourseNavigation(overlay);
+                  }}
                 />
               </Suspense>
             }
@@ -3176,9 +3403,13 @@ function MapPlanerWorkspace() {
                     setKursowkiOpen(false);
                     setSidebarView("home");
                   }}
-                  onOpenNsNhDiff={() => {
-                    openScheduleDiff("ns-nh");
-                  }}
+                  onOpenNsNhDiff={
+                    isPlanner
+                      ? () => {
+                          openScheduleDiff("ns-nh");
+                        }
+                      : undefined
+                  }
                   liveVehicles={liveVehicles}
                   onSelectBus={handleSelectBus}
                   onShowShapeOverlay={(overlay) => {
@@ -3190,7 +3421,7 @@ function MapPlanerWorkspace() {
                         : `Wyświetlono przebieg: ${overlay.title}.`,
                     );
                   }}
-                  onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
+                  onPreviewCourse={handlePreviewCourse}
                   onLoadTripToPlanner={(payload) => {
                     handleLoadTripToPlanner(payload);
                     setMapSidebarOpen(false);
@@ -3222,7 +3453,7 @@ function MapPlanerWorkspace() {
                     mapRef.current?.centerOn(selectedStop.lat, selectedStop.lon, 16)
                   }
                   onOpenKursowka={handleOpenKursowkaFromItem}
-                  onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
+                  onPreviewCourse={handlePreviewCourse}
                 />
               ) : null
             }
@@ -3242,7 +3473,7 @@ function MapPlanerWorkspace() {
               ) : null
             }
             courseContent={
-              isRailViewport && !isPlanner && kursowkaOverlay?.course && !busOverlay ? (
+              isRailViewport && kursowkaOverlay?.course && !busOverlay ? (
                 <Suspense fallback={null}>
                   <CoursePreviewCard
                     key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
@@ -3251,6 +3482,7 @@ function MapPlanerWorkspace() {
                     onClose={() => {
                       setCourseDrawerOpen(false);
                       setCourseSidebarOpen(false);
+                      stopCourseNavigation();
                       setKursowkaOverlay(null);
                       setSidebarView("home");
                     }}
@@ -3260,6 +3492,11 @@ function MapPlanerWorkspace() {
                       setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
                       setKursowkiOpen(true);
                       setSidebarView("kursowki");
+                    }}
+                    onStartNavigation={() => {
+                      if (kursowkaOverlay?.course) {
+                        startCourseNavigation(kursowkaOverlay.course);
+                      }
                     }}
                     targetStopIndex={courseTargetStop}
                     focusStopIndex={courseTargetStop}
@@ -3273,7 +3510,7 @@ function MapPlanerWorkspace() {
           />
 
           {/* Na telefonie (<768px) podgląd kursu startuje zwinięty z uchwytem po prawej, aby od razu odsłonić całą trasę */}
-          {!isRailViewport && !isPlanner && kursowkaOverlay?.course && !busOverlay && (
+          {!isRailViewport && kursowkaOverlay?.course && !busOverlay && (
             <Suspense fallback={null}>
               <CoursePreviewCard
                 key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
@@ -3281,6 +3518,7 @@ function MapPlanerWorkspace() {
                 onClose={() => {
                   setCourseDrawerOpen(false);
                   setCourseSidebarOpen(false);
+                  stopCourseNavigation();
                   setKursowkaOverlay(null);
                 }}
                 onFit={() => mapRef.current?.fitOverlay()}
@@ -3290,6 +3528,11 @@ function MapPlanerWorkspace() {
                   setKursowkiOpen(true);
                   setSidebarView("kursowki");
                   setMapSidebarOpen(true);
+                }}
+                onStartNavigation={() => {
+                  if (kursowkaOverlay?.course) {
+                    startCourseNavigation(kursowkaOverlay.course);
+                  }
                 }}
                 targetStopIndex={courseTargetStop}
                 focusStopIndex={courseTargetStop}
@@ -3365,7 +3608,7 @@ function MapPlanerWorkspace() {
         </main>
       </div>
 
-      {scheduleDiffOpen && (
+      {isPlanner && scheduleDiffOpen && (
         <Suspense fallback={null}>
           <ScheduleDiffDialog
             open={scheduleDiffOpen}

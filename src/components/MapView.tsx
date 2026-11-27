@@ -198,6 +198,12 @@ interface MapViewProps {
   onTripDestinationMove?: (lat: number, lon: number) => void;
   navCoord?: [number, number] | null;
   followNav?: boolean;
+  /** Podział trasy i zaliczone przystanki podczas aktywnej nawigacji po kursie linii. */
+  courseNavProgress?: {
+    passed: [number, number][];
+    remaining: [number, number][];
+    passedStopCount: number;
+  } | null;
   focus?: { lat: number; lon: number; zoom?: number; nonce: number } | null;
   /** Pozycja GPS użytkownika (kropka + okrąg dokładności). */
   userLocation?: MapUserLocation | null;
@@ -304,6 +310,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     onTripDestinationMove,
     navCoord,
     followNav = false,
+    courseNavProgress = null,
     focus,
     userLocation = null,
     followUser = false,
@@ -613,6 +620,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     const courseStopsPane = map.createPane("courseStops");
     courseStopsPane.style.zIndex = "625";
+
+    const courseStopLabelsPane = map.createPane("courseStopLabels");
+    courseStopLabelsPane.style.zIndex = "626";
+    courseStopLabelsPane.style.pointerEvents = "none";
 
     const stopPane = map.createPane("stops");
     stopPane.style.zIndex = "540";
@@ -969,35 +980,66 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       }).addTo(group);
     }
 
+    const addStopNumberBadge = (
+      targetGroup: L.LayerGroup,
+      lat: number,
+      lon: number,
+      stopNumber: number,
+      faded = false,
+      textColor = "#ffffff",
+    ) => {
+      L.marker([lat, lon], {
+        pane: "courseStopLabels",
+        interactive: false,
+        icon: L.divIcon({
+          className: "pin-wrap pin-wrap--passive",
+          html: `<div class="course-stop-num-wrap"><span class="course-stop-num${faded ? " course-stop-num--faded" : ""}" style="color:${escapeHtml(textColor)}" data-course-stop-num="${stopNumber}">${stopNumber}</span></div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      }).addTo(targetGroup);
+    };
+
     if (kursowkaOverlay.course) {
       const course = kursowkaOverlay.course;
       const target = kursowkaOverlay.courseTarget ?? null;
       course.stops.forEach((stop, index) => {
+        const stopNum = index + 1;
         const isFirst = index === 0;
         const isLast = index === course.stops.length - 1;
         const isTarget = target ? index === target.stopIndex : false;
         // Gdy wybrano przystanek docelowy, przystanki za nim blakną — trasa
         // prowadzi tylko do wybranego miejsca.
         const faded = Boolean(target && index > target.stopIndex);
-        const kind = isFirst ? "Start" : isLast ? "Koniec" : `Przystanek ${index + 1}`;
+        const kind = isFirst
+          ? `Start (#1)`
+          : isLast
+            ? `Koniec (#${stopNum})`
+            : `Przystanek #${stopNum}`;
         const time = formatWarsawClock(isLast ? stop.arrivalMs : stop.departureMs);
         const tooltip = `<b>${kind} · ${escapeHtml(time)}${stop.afterMidnight ? " (+1 dzień)" : ""}</b><br>${escapeHtml(stop.name)}${
           isTarget ? "<br><i>Jedziesz tutaj — trasa kończy się na tym przystanku</i>" : ""
         }`;
+        const fillColor = isTarget
+          ? "#7c3aed"
+          : faded
+            ? "#94a3b8"
+            : isFirst
+              ? "#0891b2"
+              : isLast
+                ? "#e11d48"
+                : course.color;
+        const numTextColor =
+          !isTarget && !faded && !isFirst && !isLast
+            ? course.textColor || "#ffffff"
+            : "#ffffff";
+
         const marker = L.circleMarker([stop.lat, stop.lon], {
           pane: "courseStops",
-          radius: isTarget ? 9 : isFirst || isLast ? 8 : 4.5,
-          weight: isTarget ? 3.5 : 2.5,
+          radius: isTarget ? 11 : isFirst || isLast ? 10 : 9,
+          weight: isTarget ? 3 : 2,
           color: isTarget ? "#7c3aed" : "#ffffff",
-          fillColor: isTarget
-            ? "#7c3aed"
-            : faded
-              ? "#94a3b8"
-              : isFirst
-                ? "#0891b2"
-                : isLast
-                  ? "#e11d48"
-                  : course.color,
+          fillColor,
           fillOpacity: faded ? 0.45 : 1,
           bubblingMouseEvents: false,
           // Klik w kropkę na mapie = „chcę dojechać tutaj”. Ten sam przystanek
@@ -1006,11 +1048,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         })
           .bindTooltip(tooltip, {
             direction: isLast ? "bottom" : "top",
-            offset: isLast ? [0, 10] : [0, -10],
-            permanent: isTarget || isFirst || isLast,
+            offset: isLast ? [0, 12] : [0, -12],
+            permanent: isTarget,
             className: isTarget ? "waypoint-tooltip waypoint-tooltip--target" : "waypoint-tooltip",
           })
           .addTo(group);
+        addStopNumberBadge(group, stop.lat, stop.lon, stopNum, faded, numTextColor);
         if (courseStopClickRef.current) {
           const routeStop = stop;
           marker.on("click", (event) => {
@@ -1020,25 +1063,29 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         }
       });
     }
-    // Podgląd całej linii / brygady: kropki przystanków z nazwą po najechaniu.
+    // Podgląd całej linii / brygady: numerowane kółka przystanków 1, 2, 3… z nazwą po najechaniu.
     if (!kursowkaOverlay.course && !kursowkaOverlay.liveVehicleId) {
-      for (const stop of kursowkaOverlay.stops) {
+      kursowkaOverlay.stops.forEach((stop, index) => {
+        const stopNum = index + 1;
+        const isFirst = index === 0;
+        const isLast = index === kursowkaOverlay.stops.length - 1;
         L.circleMarker([stop.lat, stop.lon], {
           pane: "courseStops",
-          radius: 3.5,
-          weight: 1.5,
+          radius: isFirst || isLast ? 10 : 9,
+          weight: 2,
           color: "#ffffff",
-          fillColor: lineColor,
+          fillColor: isFirst ? "#0891b2" : isLast ? "#e11d48" : lineColor,
           fillOpacity: 1,
           bubblingMouseEvents: false,
         })
-          .bindTooltip(escapeHtml(stop.name), {
+          .bindTooltip(`<b>#${stopNum}</b> · ${escapeHtml(stop.name)}`, {
             direction: "top",
-            offset: [0, -6],
+            offset: [0, -10],
             className: "waypoint-tooltip",
           })
           .addTo(group);
-      }
+        addStopNumberBadge(group, stop.lat, stop.lon, stopNum);
+      });
     }
     if (!kursowkaOverlay.courseTarget) fitOverlayMap();
   }, [kursowkaOverlay]);
@@ -1118,6 +1165,38 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!group) return;
     group.clearLayers();
     const overlay = kursowkaOverlay;
+    if (courseNavProgress && overlay && !overlay.liveVehicleId) {
+      const drawNav = (points: [number, number][], color: string, weight = 6) => {
+        if (points.length < 2) return;
+        L.polyline(points, {
+          color,
+          weight,
+          opacity: 1,
+          lineCap: "round",
+          lineJoin: "round",
+          pane: "routeDone",
+          interactive: false,
+        }).addTo(group);
+      };
+      drawNav(courseNavProgress.passed, pastRouteColor(theme === "dark"), 6);
+      drawNav(courseNavProgress.remaining, FUTURE_ROUTE_COLOR, 6);
+
+      const stopsToMark = overlay.course ? overlay.course.stops : overlay.stops;
+      for (let idx = 0; idx < Math.min(courseNavProgress.passedStopCount, stopsToMark.length); idx += 1) {
+        const stop = stopsToMark[idx];
+        L.circleMarker([stop.lat, stop.lon], {
+          pane: "courseStops",
+          radius: idx === 0 ? 10 : 9,
+          weight: 2,
+          color: "#ffffff",
+          fillColor: pastRouteColor(theme === "dark"),
+          fillOpacity: 1,
+          interactive: false,
+        }).addTo(group);
+      }
+      return;
+    }
+
     const vehicleId = overlay?.liveVehicleId;
     if (!overlay || !vehicleId || !overlay.polylines.length) {
       onRouteProgressStatusChange?.(null);
@@ -1126,18 +1205,29 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const bus = liveBuses.find((item) => item.vehicleId === vehicleId);
     const nextSequence = bus?.upcomingStops[0]?.sequence;
     const adjustedSequence = nextSequence == null ? undefined : nextSequence + (overlay.liveSequenceOffset ?? 0);
-    for (const stop of overlay.stops) {
+    overlay.stops.forEach((stop, idx) => {
+      const stopNum = idx + 1;
       const status = liveStopProgress(stop.sequence, adjustedSequence);
       const fillColor = status === "passed" ? pastRouteColor(theme === "dark")
         : status === "upcoming" ? FUTURE_ROUTE_COLOR : "#94a3b8";
       const label = status === "passed" ? "przejechany" : status === "upcoming" ? "przed autobusem" : "brak danych o postępie";
       L.circleMarker([stop.lat, stop.lon], {
-        pane: "courseStops", radius: 6, weight: 2, color: "#ffffff",
+        pane: "courseStops", radius: 9.5, weight: 2, color: "#ffffff",
         fillColor, fillOpacity: 1, bubblingMouseEvents: false,
-      }).bindTooltip(`${escapeHtml(stop.name)} · ${label}`, {
-        direction: "top", offset: [0, -8], className: "waypoint-tooltip",
+      }).bindTooltip(`<b>#${stopNum}</b> · ${escapeHtml(stop.name)} · ${label}`, {
+        direction: "top", offset: [0, -10], className: "waypoint-tooltip",
       }).addTo(group);
-    }
+      L.marker([stop.lat, stop.lon], {
+        pane: "courseStopLabels",
+        interactive: false,
+        icon: L.divIcon({
+          className: "pin-wrap pin-wrap--passive",
+          html: `<div class="course-stop-num-wrap"><span class="course-stop-num${status === "passed" ? " course-stop-num--faded" : ""}" data-course-stop-num="${stopNum}">${stopNum}</span></div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      }).addTo(group);
+    });
 
     const path = overlay.polylines[0];
     const range = stopSegmentRange(overlay.stops, stopAnchors, adjustedSequence);
@@ -1166,7 +1256,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     // Dodatkowych niepołączonych fragmentów nie da się pewnie przyporządkować.
     for (const extra of overlay.polylines.slice(1)) draw(extra, "#94a3b8");
-  }, [kursowkaOverlay, liveBuses, theme, onRouteProgressStatusChange, stopAnchors]);
+  }, [kursowkaOverlay, liveBuses, theme, onRouteProgressStatusChange, stopAnchors, courseNavProgress]);
 
   /* Planer podróży pasażera: start, odcinki piesze/autobusowe, przesiadki i cel */
   useEffect(() => {

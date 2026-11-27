@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Eye, Loader2, MapPinned, Pencil, Search, Waypoints, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Eye, Loader2, MapPinned, Navigation, Pencil, Search, Waypoints, X } from "lucide-react";
 import { DateTime } from "luxon";
 import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import { foldPolish, isPlannerOnlyLine } from "@/lib/core/text";
@@ -23,6 +23,8 @@ interface Props {
   isPlanner?: boolean;
   onClose: () => void;
   onShowShapeOverlay: (overlay: KursowkaShapeOverlay) => void;
+  /** Uruchamia nawigację po pełnym przebiegu wybranego wariantu linii. */
+  onStartLineNavigation?: (overlay: KursowkaShapeOverlay) => void;
   /** Tylko dla Planisty: otwiera interaktywny edytor przebiegu trasy wybranego wariantu. */
   onEditLineRoute?: (lineShort: string, variantKey?: string | null) => void;
 }
@@ -147,6 +149,7 @@ export default function LinesDialog({
   isPlanner = false,
   onClose,
   onShowShapeOverlay,
+  onStartLineNavigation,
   onEditLineRoute,
 }: Props) {
   const [entries, setEntries] = useState<LineEntry[]>([]);
@@ -213,7 +216,13 @@ export default function LinesDialog({
       : selected.variants.slice(0, VARIANTS_COLLAPSED)
     : [];
 
-  const showOnMap = async (entry: LineEntry, variants: LineVariant[], title: string, busy: string) => {
+  const showOnMap = async (
+    entry: LineEntry,
+    variants: LineVariant[],
+    title: string,
+    busy: string,
+    startNavigation = false,
+  ) => {
     if (busyKey) return;
     setBusyKey(busy);
     setError("");
@@ -228,7 +237,11 @@ export default function LinesDialog({
         return;
       }
       onShowShapeOverlay(overlay);
-      if (!embedded) onClose();
+      if (startNavigation && onStartLineNavigation) {
+        onStartLineNavigation(overlay);
+      } else if (!embedded) {
+        onClose();
+      }
     } catch {
       setError("Nie udało się narysować trasy. Spróbuj ponownie.");
     } finally {
@@ -323,12 +336,16 @@ export default function LinesDialog({
                         setExpanded(false);
                         if (embedded) {
                           setEmbeddedDetailOpen(true);
-                          void showOnMap(
-                            entry,
-                            entry.variants,
-                            `Linia ${entry.shortName} · wszystkie warianty`,
-                            "all",
-                          );
+                          const mainVariant = entry.variants[0];
+                          if (mainVariant) {
+                            setSelectedKey(mainVariant.key);
+                            void showOnMap(
+                              entry,
+                              [mainVariant],
+                              `Linia ${entry.shortName} · ${mainVariant.headsign}`,
+                              mainVariant.key,
+                            );
+                          }
                         }
                       }}
                       className={cn(
@@ -552,11 +569,37 @@ export default function LinesDialog({
                                 variant.key
                               )
                             }
+                            title="Pokaż przebieg tego wariantu i numery przystanków na mapie"
                             className="flex shrink-0 items-center gap-1 rounded-md border border-line bg-surface px-2 text-[8.5px] font-extrabold text-brand-ink transition-colors hover:border-brand/50 disabled:opacity-60"
                           >
                             {busyKey === variant.key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />}
                             <span className="hidden sm:inline">Mapa</span>
                           </button>
+                          {onStartLineNavigation && (
+                            <button
+                              type="button"
+                              data-testid="line-variant-navigate"
+                              disabled={Boolean(busyKey)}
+                              onClick={() =>
+                                void showOnMap(
+                                  selected,
+                                  [variant],
+                                  `Linia ${selected.shortName} · ${variant.headsign}`,
+                                  `nav:${variant.key}`,
+                                  true,
+                                )
+                              }
+                              title="Włącz nawigację GPS po całym przebiegu tego wariantu linii"
+                              className="flex shrink-0 items-center gap-1 rounded-md bg-brand px-2 text-[8.5px] font-extrabold text-on-brand transition-opacity hover:opacity-90 disabled:opacity-60"
+                            >
+                              {busyKey === `nav:${variant.key}` ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Navigation className="h-3 w-3" />
+                              )}
+                              <span>Nawiguj</span>
+                            </button>
+                          )}
                         </li>
                       );
                     })}

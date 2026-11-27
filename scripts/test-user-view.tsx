@@ -3,9 +3,16 @@ import { readFile } from "node:fs/promises";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import CoursePreviewCard from "../src/components/CoursePreviewCard";
+import CourseNavigationHud from "../src/components/CourseNavigationHud";
 import BusSearch from "../src/components/BusSearch";
+import KursowkiDialog from "../src/components/KursowkiDialog";
 import MapInfoSidebar from "../src/components/MapInfoSidebar";
 import { BusStopCard, LiveBusCard, MapControls, MapQuickBar } from "../src/components/MapOverlays";
+import { buildBusMarker } from "../src/lib/busMarker";
+import {
+  buildCourseNavRoute,
+  evaluateCourseNavigation,
+} from "../src/lib/courseNavigation";
 import { EMPTY_ROUTE } from "../src/lib/data";
 import { DEFAULT_VISIBILITY } from "../src/lib/visibility";
 import type { CoursePreview } from "../src/lib/engine/gtfsStore";
@@ -567,12 +574,232 @@ assert.match(embeddedCourseHtml, /data-view="course"/);
 assert.match(embeddedCourseHtml, /course-preview-card/);
 assert.doesNotMatch(embeddedCourseHtml, /course-drawer-tab/, "osadzony w lewym sidebarze podgląd kursu nie dubluje prawego uchwytu");
 
-// ── 5. Znaczniki zależne od przybliżenia (data-zoom-tier w MapView + globals.css) ──
+// ── 5. Znaczniki zależne od przybliżenia + kompaktowe pigułki autobusów bez pustych boksów ──
 const cssSource = await readFile(new URL("../src/app/globals.css", import.meta.url), "utf8");
 assert.match(cssSource, /data-zoom-tier="far"/, "styl kropek przystanków dla dalekiego widoku mapy");
 assert.match(cssSource, /data-zoom-tier="city"/, "styl dyskretnych kropek przystanków dla skali miasta");
+assert.doesNotMatch(
+  cssSource,
+  /\.live-bus-label\s*\{\s*opacity:\s*0/,
+  "nie ukrywamy numeru linii przez opacity:0 (co zostawiało szerokie puste boksy)",
+);
+assert.match(
+  cssSource,
+  /\.live-bus-chip[\s\S]*?display:\s*none/,
+  "dymek km/h i rozszerzenia są chowane przez display:none przy oddaleniu mapy",
+);
+
+const busMarkerSample = buildBusMarker(
+  sampleVehicles[0],
+  { kursowka: true, vehicleNumber: true },
+  false,
+);
+assert.match(busMarkerSample.html, /class="live-bus-line">7</, "numer linii jest zawsze oznaczony jako główny element pigułki");
+assert.match(busMarkerSample.html, /class="live-bus-extra">\/01</, "końcówka brygady ma klasę live-bus-extra chowaną przy oddaleniu");
+
 const mapViewSource = await readFile(new URL("../src/components/MapView.tsx", import.meta.url), "utf8");
 assert.match(mapViewSource, /dataset\.zoomTier/, "MapView aktualizuje data-zoom-tier przy zmianie przybliżenia");
 assert.match(mapViewSource, /"close"/, "MapView ustawia pełny tryb close przy dużym przybliżeniu");
+assert.match(mapViewSource, /courseStopLabels/, "MapView tworzy warstwę numerów przystanków 1, 2, 3…");
+assert.equal(
+  (mapViewSource.match(/data-course-stop-num=/g) ?? []).length >= 2,
+  true,
+  "numery przystanków są renderowane na trasach kursów, linii i autobusów GPS",
+);
+
+// ── 6. Porównywarka NS vs NH wyłącznie w widoku Planisty ──
+const passengerKursowkiHtml = renderToStaticMarkup(
+  <KursowkiDialog
+    open={true}
+    embedded={true}
+    isPlanner={false}
+    liveVehicles={sampleVehicles}
+    onSelectBus={noop}
+    onClose={noop}
+    onOpenNsNhDiff={noop}
+    onLoadTripToPlanner={noop}
+  />,
+);
+assert.doesNotMatch(
+  passengerKursowkiHtml,
+  /NS vs NH|kursowki-open-ns-nh-diff/,
+  "pasażer nie widzi porównywarki NS vs NH",
+);
+
+const plannerKursowkiHtml = renderToStaticMarkup(
+  <KursowkiDialog
+    open={true}
+    embedded={true}
+    isPlanner={true}
+    liveVehicles={sampleVehicles}
+    onSelectBus={noop}
+    onClose={noop}
+    onOpenNsNhDiff={noop}
+    onLoadTripToPlanner={noop}
+  />,
+);
+assert.match(
+  plannerKursowkiHtml,
+  /kursowki-open-ns-nh-diff/,
+  "planista widzi porównywarkę NS vs NH w Kursówkach",
+);
+
+// ── 7. Numery przystanków 1, 2, 3… oraz nawigacja po całym przebiegu kursu (sterownik autobusu) ──
+const courseCardWithNavHtml = renderToStaticMarkup(
+  <CoursePreviewCard
+    embedded
+    course={timedCourse}
+    onClose={noop}
+    onFit={noop}
+    onBack={noop}
+    onSelectStop={noop}
+    onStartNavigation={noop}
+  />,
+);
+assert.match(courseCardWithNavHtml, /course-start-navigation/, "w podglądzie kursu jest przycisk uruchomienia nawigacji po trasie");
+assert.match(courseCardWithNavHtml, /Nawiguj po trasie kursu/);
+
+// Trasa ze skrętem w prawo o 90° (północ -> wschód) i 3 przystankami
+const turnCourse: CoursePreview = {
+  ...timedCourse,
+  startMs: 1_700_000_000_000,
+  endMs: 1_700_000_600_000,
+  polylines: [
+    [
+      [50.7700, 16.2800],
+      [50.7720, 16.2800],
+      [50.7740, 16.2800], // skręt w prawo na wschód
+      [50.7740, 16.2840],
+      [50.7740, 16.2880],
+    ],
+  ],
+  stops: [
+    {
+      id: "s1",
+      name: "Piłsudskiego - Start",
+      lat: 50.7700,
+      lon: 16.2800,
+      sequence: 1,
+      arrivalMs: 1_700_000_000_000,
+      departureMs: 1_700_000_000_000,
+      afterMidnight: false,
+    },
+    {
+      id: "s2",
+      name: "Sikorskiego - Skrzyżowanie",
+      lat: 50.7740,
+      lon: 16.2800,
+      sequence: 2,
+      arrivalMs: 1_700_000_300_000,
+      departureMs: 1_700_000_300_000,
+      afterMidnight: false,
+    },
+    {
+      id: "s3",
+      name: "Piaskowa Góra - Pętla",
+      lat: 50.7740,
+      lon: 16.2880,
+      sequence: 3,
+      arrivalMs: 1_700_000_600_000,
+      departureMs: 1_700_000_600_000,
+      afterMidnight: false,
+    },
+  ],
+};
+
+const navRoute = buildCourseNavRoute(turnCourse);
+assert.ok(navRoute, "buduje strukturę nawigacji z przebiegu kursu");
+assert.equal(navRoute.stops.length, 3);
+assert.deepEqual(
+  navRoute.stops.map((s) => s.number),
+  [1, 2, 3],
+  "przystanki w nawigacji mają kolejną numerację 1, 2, 3",
+);
+assert.ok(
+  navRoute.maneuvers.some((m) => m.kind === "right"),
+  "wykrywa skręt w prawo na trasie kursu",
+);
+
+// Pozycja GPS na pierwszym odcinku (w połowie drogi między przystankiem #1 a zakrętem #2), spóźniony o 90 s
+const onRouteState = evaluateCourseNavigation({
+  route: navRoute,
+  mode: "gps",
+  gps: { lat: 50.7720, lon: 16.2800, accuracy: 10, speedKmh: 32, heading: 0 },
+  simMeters: 0,
+  prevAlongMeters: 0,
+  nowMs: 1_700_000_150_000 + 90_000,
+  startedAtMs: 1_700_000_000_000,
+  punctualityMode: "schedule",
+});
+assert.equal(onRouteState.offRoute, false, "pojazd na trasie nie zgłasza zjechania z linii");
+assert.equal(onRouteState.nextStop?.number, 2, "następny przystanek to #2");
+assert.equal(onRouteState.nextManeuver.kind, "right", "sterownik zapowiada zbliżający się skręt w prawo");
+assert.ok(
+  onRouteState.scheduleDeltaSeconds !== null &&
+    Math.abs(onRouteState.scheduleDeltaSeconds - 90) <= 5,
+  `odchyłka rozkładowa wylicza ~90 s opóźnienia (jest ${onRouteState.scheduleDeltaSeconds})`,
+);
+assert.ok(onRouteState.splitPath.passed.length >= 2 && onRouteState.splitPath.remaining.length >= 2);
+
+const hudOnRouteHtml = renderToStaticMarkup(
+  <CourseNavigationHud
+    route={navRoute}
+    state={onRouteState}
+    mode="gps"
+    onModeChange={noop}
+    simPlaying={false}
+    onToggleSimPlay={noop}
+    simSpeedMultiplier={1}
+    onCycleSimSpeed={noop}
+    gpsAvailable={true}
+    gpsSpeedKmh={32}
+    followingCamera={true}
+    onRecenterCamera={noop}
+    punctualityMode="schedule"
+    onTogglePunctualityMode={noop}
+    onStepStop={noop}
+    onJumpToStop={noop}
+    onStopNavigation={noop}
+  />,
+);
+assert.match(hudOnRouteHtml, /course-nav-hud/);
+assert.match(hudOnRouteHtml, /Skręć w prawo/);
+assert.match(hudOnRouteHtml, /Sikorskiego - Skrzyżowanie/);
+assert.match(hudOnRouteHtml, /-1:30/, "sterownik pokazuje opóźnienie w formacie -1:30");
+
+// Zjechanie z trasy (> 200 m na zachód) uruchamia ostrzeżenie na sterowniku
+const offRouteState = evaluateCourseNavigation({
+  route: navRoute,
+  mode: "gps",
+  gps: { lat: 50.7720, lon: 16.2750, accuracy: 10, speedKmh: 25 },
+  simMeters: 0,
+  prevAlongMeters: onRouteState.alongMeters,
+  nowMs: 1_700_000_200_000,
+  startedAtMs: 1_700_000_000_000,
+  punctualityMode: "schedule",
+});
+assert.equal(offRouteState.offRoute, true, "wykrywa zjechanie z trasy linii");
+const hudOffRouteHtml = renderToStaticMarkup(
+  <CourseNavigationHud
+    route={navRoute}
+    state={offRouteState}
+    mode="gps"
+    onModeChange={noop}
+    simPlaying={false}
+    onToggleSimPlay={noop}
+    simSpeedMultiplier={1}
+    onCycleSimSpeed={noop}
+    gpsAvailable={true}
+    gpsSpeedKmh={25}
+    followingCamera={true}
+    onRecenterCamera={noop}
+    punctualityMode="schedule"
+    onTogglePunctualityMode={noop}
+    onStepStop={noop}
+    onJumpToStop={noop}
+    onStopNavigation={noop}
+  />,
+);
+assert.match(hudOffRouteHtml, /course-nav-offroute/, "sterownik ostrzega o zjechaniu z trasy linii");
 
 console.log("user view tests passed");

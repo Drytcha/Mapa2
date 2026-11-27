@@ -1758,19 +1758,39 @@ export default function BrigadesPanel({
                           {breakMinutes === null ? "" : minutesLabel(breakMinutes)}
                         </span>
                       )}
-                      {showTechnicalNotes && canLoadToPlanner && (
-                        <span className="hidden justify-end sm:flex">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void loadSingleTripToPlanner(selected, trip)
-                            }
-                            disabled={loadingTripId === trip.id}
-                            title="Wczytaj wszystkie przystanki i godzinę tego kursu do Planera tras"
-                            className="rounded border border-line bg-raised px-1.5 py-0.5 text-[7.5px] font-extrabold text-ink-soft transition-colors hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink disabled:opacity-50"
-                          >
-                            {loadingTripId === trip.id ? "…" : "Kurs →"}
-                          </button>
+                      {showTechnicalNotes && (canLoadToPlanner || onPreviewCourse) && (
+                        <span className="flex justify-end gap-1">
+                          {onPreviewCourse && (
+                            <button
+                              type="button"
+                              data-testid="preview-course-button"
+                              aria-label={`Pokaż przebieg kursu linii ${trip.lineId} od ${formatBrigadeClock(trip.startMs)}`}
+                              onClick={() => void handlePreviewCourse(trip.id)}
+                              disabled={previewingTripId !== null}
+                              title="Pokaż przebieg tego kursu i włącz nawigację po trasie"
+                              className="inline-flex h-5 items-center gap-0.5 rounded border border-brand/30 bg-brand-soft px-1.5 text-[7.5px] font-extrabold text-brand-ink transition-colors hover:bg-brand hover:text-on-brand disabled:opacity-50"
+                            >
+                              {previewingTripId === trip.id ? (
+                                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                              ) : (
+                                <MapIcon className="h-2.5 w-2.5" />
+                              )}
+                              Trasa
+                            </button>
+                          )}
+                          {canLoadToPlanner && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void loadSingleTripToPlanner(selected, trip)
+                              }
+                              disabled={loadingTripId === trip.id}
+                              title="Wczytaj wszystkie przystanki i godzinę tego kursu do Planera tras"
+                              className="hidden rounded border border-line bg-raised px-1.5 py-0.5 text-[7.5px] font-extrabold text-ink-soft transition-colors hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink disabled:opacity-50 sm:inline-flex"
+                            >
+                              {loadingTripId === trip.id ? "…" : "Kurs →"}
+                            </button>
+                          )}
                         </span>
                       )}
                       {!showTechnicalNotes && onPreviewCourse && (
