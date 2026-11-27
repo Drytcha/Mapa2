@@ -495,20 +495,19 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     // przy pierwszym kadrze domyślnie jest on otwarty.
     const sidebarVisible = overlay.course ? courseSidebarOpen !== false : true;
 
-    // Panel kursu zajmuje prawą krawędź. Leaflet centruje zawartość w polu
-    // `viewport - padding`, więc margines rezerwujący miejsce na panel musi być
-    // po prawej (bottom-right) — wtedy trasa ląduje na środku WOLNEJ części
-    // mapy, a nie pod panelem.
+    // Wszystkie panele (kurs, linia, autobus, przystanek) otwierają się w lewym
+    // sidebarze obok paska ikon, więc rezerwujemy miejsce po lewej stronie
+    // (`paddingTopLeft`), aby trasa wypadała na środku odsłoniętej części mapy.
     let paddingTopLeft: [number, number];
     let paddingBottomRight: [number, number];
     let maxZoom: number;
-    if (!narrow && overlay.course && sidebarVisible) {
+    if (!narrow && sidebarVisible) {
       const panel = Math.min(
-        COURSE_SIDEBAR_WIDTH + COURSE_PANEL_RIGHT + 24,
+        COURSE_SIDEBAR_WIDTH + COURSE_PANEL_RIGHT + 60,
         Math.max(0, size.x - 260),
       );
-      paddingTopLeft = [24, 84];
-      paddingBottomRight = [panel, overlay.courseTarget ? 64 : 96];
+      paddingTopLeft = [panel, 48];
+      paddingBottomRight = [56, overlay.courseTarget ? 56 : 72];
       maxZoom = targetPath ? 16 : 15;
     } else if (narrow) {
       paddingTopLeft = [16, 72];
@@ -684,8 +683,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const setBusy = (busy: boolean) => () => {
       container.classList.toggle("map-busy", busy);
     };
+    const syncZoomTier = () => {
+      const z = map.getZoom();
+      container.dataset.zoomTier = z < 13 ? "far" : z < 15 ? "city" : "close";
+    };
+    syncZoomTier();
     map.on("movestart zoomstart", setBusy(true));
     map.on("moveend zoomend", setBusy(false));
+    map.on("zoomend", syncZoomTier);
 
     const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
     observer.observe(container);

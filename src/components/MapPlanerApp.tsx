@@ -20,7 +20,7 @@ import type {
 import type { LineEditorMapHandlers } from "./LineRouteEditorPanel";
 import type { CustomGtfsResumeTarget } from "./CustomGtfsBuilderDialog";
 import type { CustomGtfsMapSession } from "./CustomGtfsMapDrawToolbar";
-import MapInfoSidebar from "./MapInfoSidebar";
+import MapInfoSidebar, { type SidebarView } from "./MapInfoSidebar";
 import { useUserLocation } from "@/lib/useUserLocation";
 import {
   BusStopCard,
@@ -270,6 +270,9 @@ function MapPlanerWorkspace() {
       : fleet[0]?.id ?? "";
 
   const [isDesktop, setIsDesktop] = useState(() => true);
+  const [isRailViewport, setIsRailViewport] = useState(() => true);
+  const isRailViewportRef = useRef(true);
+  isRailViewportRef.current = isRailViewport;
   const [role, setRole] = useState<AppRole>(() => loadRole());
   const isPlanner = role === "planner";
   const [theme, setTheme] = useState<ThemeMode>(() => loadTheme());
@@ -321,6 +324,7 @@ function MapPlanerWorkspace() {
   const [selectedStop, setSelectedStop] = useState<BusStop | null>(null);
   const [contextMenu, setContextMenu] = useState<MapContextMenuState | null>(null);
   const [mapSidebarOpen, setMapSidebarOpen] = useState(false);
+  const [sidebarView, setSidebarView] = useState<SidebarView>("home");
   const [plannerLoginOpen, setPlannerLoginOpen] = useState(false);
 
   // Bezpośredni link ?planista=1 otwiera logowanie planisty bez eksponowania go w UI pasażera.
@@ -692,6 +696,8 @@ function MapPlanerWorkspace() {
   useEffect(() => {
     if (window.location.hash.includes("/walbrzych/brigades/")) {
       setKursowkiOpen(true);
+      setSidebarView("kursowki");
+      setMapSidebarOpen(true);
     }
   }, []);
 
@@ -918,6 +924,29 @@ function MapPlanerWorkspace() {
     query.addEventListener("change", handleChange);
     return () => query.removeEventListener("change", handleChange);
   }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 768px)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsRailViewport(event.matches);
+    };
+    setIsRailViewport(query.matches);
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+  }, []);
+
+  // Wyznaczanie dojazdu otwiera się bezpośrednio jako widok w lewym sidebarze;
+  // na wąskim ekranie telefonu podczas wskazywania punktu na mapie tymczasowo
+  // chowamy szufladę, aby odsłonić mapę pod palcem.
+  useEffect(() => {
+    if (isPlanner || !tripOpen) return;
+    if (tripPick && !isRailViewport) {
+      setMapSidebarOpen(false);
+      return;
+    }
+    setSidebarView("trip");
+    setMapSidebarOpen(true);
+  }, [isPlanner, tripOpen, tripPick, isRailViewport]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -1159,19 +1188,29 @@ function MapPlanerWorkspace() {
     // A late first GPS fix must not move the map away from the selected stop.
     userPannedRef.current = true;
     setFollowUser(false);
-    setMapSidebarOpen(false);
     setSelectedLiveBus(null);
-    setSelectedStop((current) => (current?.id === stop.id ? null : stop));
+    setSelectedStop((current) => {
+      const next = current?.id === stop.id ? null : stop;
+      if (next) {
+        setSidebarView("stop");
+        setMapSidebarOpen(true);
+      } else {
+        setSidebarView("home");
+        if (!isRailViewportRef.current) setMapSidebarOpen(false);
+      }
+      return next;
+    });
     if (center) mapRef.current?.centerOn(stop.lat, stop.lon, 16);
   }, []);
 
   const selectStopFromFinder = useCallback((stop: BusStop) => {
     userPannedRef.current = true;
     setFollowUser(false);
-    setMapSidebarOpen(false);
     busOverlayRequestRef.current = null;
     setSelectedLiveBus(null);
     setSelectedStop(stop);
+    setSidebarView("stop");
+    setMapSidebarOpen(true);
     setBusQuery("");
     updateVisibility({ stops: "all" });
     mapRef.current?.centerOn(stop.lat, stop.lon, 16);
@@ -2017,7 +2056,10 @@ function MapPlanerWorkspace() {
   const handleOpenKursowkaFromItem = useCallback((kursowkaId: string, kursowkaCode: string) => {
     setKursowkaDeepLink({ id: kursowkaId || null, code: kursowkaCode || null });
     setKursowkaReturnDateId(null);
+    setLinesOpen(false);
     setKursowkiOpen(true);
+    setSidebarView("kursowki");
+    setMapSidebarOpen(true);
   }, []);
 
   const handlePreviewCourse = useCallback(async (
@@ -2049,6 +2091,13 @@ function MapPlanerWorkspace() {
       setTripOpen(false);
       setTripPick(null);
       setContextMenu(null);
+      if (isRailViewportRef.current) {
+        setSidebarView("course");
+        setMapSidebarOpen(true);
+        setCourseSidebarOpen(true);
+      } else {
+        setMapSidebarOpen(false);
+      }
       if (!options?.silent) {
         showToast(`Pokazuję przebieg kursu linii ${course.routeShort} i ${course.stops.length} przystanków.`);
       }
@@ -2158,14 +2207,20 @@ function MapPlanerWorkspace() {
   const closeLiveBus = useCallback(() => {
     busOverlayRequestRef.current = null;
     setSelectedLiveBus(null);
+    setSidebarView((current) => (current === "bus" ? "home" : current));
   }, []);
 
   const handleSelectBus = useCallback((bus: LiveBusVehicle) => {
     setOperatorFilter("all");
     updateVisibility({ liveBuses: true });
-    setMapSidebarOpen(false);
     setSelectedStop(null);
     setSelectedLiveBus(bus);
+    if (isRailViewportRef.current) {
+      setSidebarView("bus");
+      setMapSidebarOpen(true);
+    } else {
+      setMapSidebarOpen(false);
+    }
     // Nigdy nie zostawiaj poprzedniej trasy pod nowo wybranym pojazdem.
     setKursowkaOverlay(null);
     setBusOverlay(false);
@@ -2662,7 +2717,15 @@ function MapPlanerWorkspace() {
           </Suspense>
 
           <div className="pointer-events-none absolute inset-0 z-[500] select-none">
-            <div className="pointer-events-none absolute left-2.5 top-2.5 flex max-h-[calc(100%-20px)] max-w-[calc(100%-56px)] flex-col items-start gap-1.5">
+            <div
+              className={`pointer-events-none absolute top-3 flex max-h-[calc(100%-24px)] max-w-[calc(100%-64px)] flex-col items-start gap-2 ${
+                isRailViewport
+                  ? mapSidebarOpen
+                    ? "left-[420px]"
+                    : "left-[60px]"
+                  : "left-2.5 top-2.5"
+              }`}
+            >
               {gtfsPreviewStatus.active && (
                 <div
                   role="status"
@@ -2791,7 +2854,7 @@ function MapPlanerWorkspace() {
                 />
               ) : (
                 <div className="pointer-events-none flex min-h-0 flex-col items-start gap-1.5">
-                  <div className={selectedStop || selectedLiveBus || courseDrawerOpen ? "hidden sm:contents" : "contents"}>
+                  <div className={selectedLiveBus || courseDrawerOpen ? "hidden sm:contents" : "contents"}>
                     {!mapSidebarOpen && (
                       <MapQuickBar
                         sidebarOpen={mapSidebarOpen}
@@ -2802,57 +2865,12 @@ function MapPlanerWorkspace() {
                         onSelectBus={handleSelectBus}
                         onSelectStop={selectStopFromFinder}
                         isPlanner={isPlanner}
+                        hideToggle={isRailViewport}
                       />
                     )}
-                    {!isPlanner && tripOpen && (
-                      <Suspense fallback={null}>
-                        <TripPlannerPanel
-                          buses={liveVehicles}
-                          origin={tripOrigin}
-                          destination={tripDest}
-                          onOriginChange={updateTripOrigin}
-                          onDestinationChange={updateTripDest}
-                          onSwap={handleSwapTripPoints}
-                          onClearAll={handleClearTripPoints}
-                          savedPlaces={savedPlaces}
-                          onDeleteSavedPlace={handleDeleteSavedPlace}
-                          lastSavedTrip={lastSavedTrip}
-                          onRestoreLastTrip={handleRestoreLastTrip}
-                          pickTarget={tripPick}
-                          onPickTargetChange={setTripPick}
-                          onSelectBus={handleSelectBus}
-                          onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
-                          onPreview={setTripPreview}
-                          onRefresh={() => setTripNonce((value) => value + 1)}
-                          onClose={() => {
-                            setTripOpen(false);
-                            setTripPick(null);
-                          }}
-                          refreshNonce={tripNonce}
-                        />
-                      </Suspense>
-                    )}
                   </div>
-                  {selectedStop && (
-                    <BusStopCard
-                      stop={selectedStop}
-                      isPlanner={isPlanner}
-                      alreadyInRoute={selectedStopInRoute}
-                      canAdd={waypoints.length < MAX_WAYPOINTS}
-                      onClose={() => setSelectedStop(null)}
-                      onAddVia={() => addBusStop(selectedStop, "via")}
-                      onSetStart={() => addBusStop(selectedStop, "start")}
-                      onSetEnd={() => addBusStop(selectedStop, "end")}
-                      onSetTripStart={() => setTravelerStopEndpoint(selectedStop, "origin")}
-                      onSetTripEnd={() => setTravelerStopEndpoint(selectedStop, "destination")}
-                      onCenter={() =>
-                        mapRef.current?.centerOn(selectedStop.lat, selectedStop.lon, 16)
-                      }
-                      onOpenKursowka={handleOpenKursowkaFromItem}
-                      onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
-                    />
-                  )}
-                  {selectedLiveBus && (
+                  {/* Na telefonie (<768px) karta autobusu zostaje jako wygodna dolna szuflada nad mapą */}
+                  {!isRailViewport && selectedLiveBus && (
                     <LiveBusCard
                       isPlanner={isPlanner}
                       bus={selectedLiveBus}
@@ -2966,7 +2984,37 @@ function MapPlanerWorkspace() {
 
           <MapInfoSidebar
             open={mapSidebarOpen}
-            onClose={() => setMapSidebarOpen(false)}
+            onOpenChange={(nextOpen) => {
+              setMapSidebarOpen(nextOpen);
+              if (!nextOpen) {
+                setKursowkiOpen(false);
+                setLinesOpen(false);
+                if (sidebarView === "course") {
+                  setCourseSidebarOpen(false);
+                }
+              }
+            }}
+            onClose={() => {
+              setMapSidebarOpen(false);
+              setKursowkiOpen(false);
+              setLinesOpen(false);
+              if (sidebarView === "course") {
+                setCourseSidebarOpen(false);
+              }
+            }}
+            view={sidebarView}
+            onViewChange={(nextView) => {
+              setSidebarView(nextView);
+              setLinesOpen(nextView === "lines");
+              setKursowkiOpen(nextView === "kursowki");
+              if (nextView === "trip") {
+                setTripOpen(true);
+              }
+              if (sidebarView === "course" && nextView !== "course") {
+                setCourseSidebarOpen(false);
+              }
+            }}
+            showRail={isRailViewport}
             role={role}
             onRoleChange={handleRoleChange}
             isPlanner={isPlanner}
@@ -2979,10 +3027,14 @@ function MapPlanerWorkspace() {
               setKursowkaDeepLink({});
               setKursowkaReturnDateId(null);
               setKursowkiOpen(true);
+              setSidebarView("kursowki");
+              setMapSidebarOpen(true);
             }}
             onOpenLines={() => {
               setKursowkiOpen(false);
               setLinesOpen(true);
+              setSidebarView("lines");
+              setMapSidebarOpen(true);
             }}
             onOpenPlanner={() => {
               setKursowkiOpen(false);
@@ -3041,6 +3093,8 @@ function MapPlanerWorkspace() {
             onOpenTripPlanner={() => {
               setTripOpen(true);
               setTripPick(null);
+              setSidebarView("trip");
+              setMapSidebarOpen(true);
             }}
             route={isPlanner ? activeRoute : undefined}
             waypoints={isPlanner ? waypoints : undefined}
@@ -3048,9 +3102,178 @@ function MapPlanerWorkspace() {
             vehicle={isPlanner ? vehicle : undefined}
             brigade={isPlanner ? brigade : undefined}
             routeReady={routeReady}
+            tripContent={
+              !isPlanner ? (
+                <Suspense fallback={null}>
+                  <TripPlannerPanel
+                    embedded
+                    buses={liveVehicles}
+                    origin={tripOrigin}
+                    destination={tripDest}
+                    onOriginChange={updateTripOrigin}
+                    onDestinationChange={updateTripDest}
+                    onSwap={handleSwapTripPoints}
+                    onClearAll={handleClearTripPoints}
+                    savedPlaces={savedPlaces}
+                    onDeleteSavedPlace={handleDeleteSavedPlace}
+                    lastSavedTrip={lastSavedTrip}
+                    onRestoreLastTrip={handleRestoreLastTrip}
+                    pickTarget={tripPick}
+                    onPickTargetChange={setTripPick}
+                    onSelectBus={handleSelectBus}
+                    onCenter={(lat, lon, zoom = 15) => mapRef.current?.centerOn(lat, lon, zoom)}
+                    onPreview={setTripPreview}
+                    onRefresh={() => setTripNonce((value) => value + 1)}
+                    onClose={() => {
+                      setTripOpen(false);
+                      setTripPick(null);
+                      setSidebarView("home");
+                    }}
+                    refreshNonce={tripNonce}
+                  />
+                </Suspense>
+              ) : null
+            }
+            linesContent={
+              <Suspense fallback={null}>
+                <LinesDialog
+                  open={sidebarView === "lines"}
+                  embedded
+                  isPlanner={isPlanner}
+                  onClose={() => {
+                    setLinesOpen(false);
+                    setSidebarView("home");
+                  }}
+                  onEditLineRoute={
+                    isPlanner
+                      ? (lineShort, variantKey) => {
+                          openLineRouteEditor(lineShort, variantKey ?? null);
+                          setMapSidebarOpen(false);
+                        }
+                      : undefined
+                  }
+                  onShowShapeOverlay={(overlay) => {
+                    if (overlayEpoch !== overlayEpochRef.current) return;
+                    setKursowkaOverlay(overlay);
+                    showToast(
+                      overlay.unresolvedGaps
+                        ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
+                        : `Wyświetlono przebieg: ${overlay.title}.`,
+                    );
+                  }}
+                />
+              </Suspense>
+            }
+            kursowkiContent={
+              <Suspense fallback={null}>
+                <KursowkiDialog
+                  open={sidebarView === "kursowki"}
+                  embedded
+                  initialKursowkaId={kursowkaDeepLink.id}
+                  initialKursowkaCode={kursowkaDeepLink.code}
+                  initialDateId={kursowkaReturnDateId}
+                  onClose={() => {
+                    setKursowkiOpen(false);
+                    setSidebarView("home");
+                  }}
+                  onOpenNsNhDiff={() => {
+                    openScheduleDiff("ns-nh");
+                  }}
+                  liveVehicles={liveVehicles}
+                  onSelectBus={handleSelectBus}
+                  onShowShapeOverlay={(overlay) => {
+                    if (overlayEpoch !== overlayEpochRef.current) return;
+                    setKursowkaOverlay(overlay);
+                    showToast(
+                      overlay.unresolvedGaps
+                        ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
+                        : `Wyświetlono przebieg: ${overlay.title}.`,
+                    );
+                  }}
+                  onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
+                  onLoadTripToPlanner={(payload) => {
+                    handleLoadTripToPlanner(payload);
+                    setMapSidebarOpen(false);
+                  }}
+                  canLoadToPlanner={isPlanner}
+                  isPlanner={isPlanner}
+                />
+              </Suspense>
+            }
+            stopContent={
+              selectedStop ? (
+                <BusStopCard
+                  embedded
+                  stop={selectedStop}
+                  isPlanner={isPlanner}
+                  alreadyInRoute={selectedStopInRoute}
+                  canAdd={waypoints.length < MAX_WAYPOINTS}
+                  onClose={() => {
+                    setSelectedStop(null);
+                    setSidebarView("home");
+                    if (!isRailViewport) setMapSidebarOpen(false);
+                  }}
+                  onAddVia={() => addBusStop(selectedStop, "via")}
+                  onSetStart={() => addBusStop(selectedStop, "start")}
+                  onSetEnd={() => addBusStop(selectedStop, "end")}
+                  onSetTripStart={() => setTravelerStopEndpoint(selectedStop, "origin")}
+                  onSetTripEnd={() => setTravelerStopEndpoint(selectedStop, "destination")}
+                  onCenter={() =>
+                    mapRef.current?.centerOn(selectedStop.lat, selectedStop.lon, 16)
+                  }
+                  onOpenKursowka={handleOpenKursowkaFromItem}
+                  onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
+                />
+              ) : null
+            }
+            busContent={
+              isRailViewport && selectedLiveBus ? (
+                <LiveBusCard
+                  embedded
+                  isPlanner={isPlanner}
+                  bus={selectedLiveBus}
+                  onClose={closeLiveBus}
+                  onOpenKursowka={(code) => handleOpenKursowkaFromItem("", code)}
+                  onSetOperator={handleSetOperator}
+                  onCenter={() =>
+                    mapRef.current?.centerOn(selectedLiveBus.lat, selectedLiveBus.lon, 16)
+                  }
+                />
+              ) : null
+            }
+            courseContent={
+              isRailViewport && !isPlanner && kursowkaOverlay?.course && !busOverlay ? (
+                <Suspense fallback={null}>
+                  <CoursePreviewCard
+                    key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
+                    embedded
+                    course={kursowkaOverlay.course}
+                    onClose={() => {
+                      setCourseDrawerOpen(false);
+                      setCourseSidebarOpen(false);
+                      setKursowkaOverlay(null);
+                      setSidebarView("home");
+                    }}
+                    onFit={() => mapRef.current?.fitOverlay()}
+                    onBack={() => {
+                      setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
+                      setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
+                      setKursowkiOpen(true);
+                      setSidebarView("kursowki");
+                    }}
+                    targetStopIndex={courseTargetStop}
+                    focusStopIndex={courseTargetStop}
+                    focusNonce={courseFocusNonce}
+                    onSelectRouteTarget={toggleCourseTarget}
+                    onSelectStop={(lat, lon) => mapRef.current?.centerOn(lat, lon, 16)}
+                  />
+                </Suspense>
+              ) : null
+            }
           />
 
-          {!isPlanner && kursowkaOverlay?.course && !busOverlay && (
+          {/* Na telefonie (<768px) podgląd kursu startuje zwinięty z uchwytem po prawej, aby od razu odsłonić całą trasę */}
+          {!isRailViewport && !isPlanner && kursowkaOverlay?.course && !busOverlay && (
             <Suspense fallback={null}>
               <CoursePreviewCard
                 key={`${kursowkaOverlay.course.tripId}|${kursowkaOverlay.course.dateId}`}
@@ -3065,6 +3288,8 @@ function MapPlanerWorkspace() {
                   setKursowkaDeepLink({ code: kursowkaOverlay.course?.dutyCode || null });
                   setKursowkaReturnDateId(kursowkaOverlay.course?.dateId ?? null);
                   setKursowkiOpen(true);
+                  setSidebarView("kursowki");
+                  setMapSidebarOpen(true);
                 }}
                 targetStopIndex={courseTargetStop}
                 focusStopIndex={courseTargetStop}
@@ -3139,61 +3364,6 @@ function MapPlanerWorkspace() {
           )}
         </main>
       </div>
-
-      {kursowkiOpen && (
-        <Suspense fallback={null}>
-          <KursowkiDialog
-            open={kursowkiOpen}
-            initialKursowkaId={kursowkaDeepLink.id}
-            initialKursowkaCode={kursowkaDeepLink.code}
-            initialDateId={kursowkaReturnDateId}
-            onClose={() => setKursowkiOpen(false)}
-            onOpenNsNhDiff={() => {
-              setKursowkiOpen(false);
-              openScheduleDiff("ns-nh");
-            }}
-            liveVehicles={liveVehicles}
-            onSelectBus={handleSelectBus}
-            onShowShapeOverlay={(overlay) => {
-              if (overlayEpoch !== overlayEpochRef.current) return;
-              setKursowkaOverlay(overlay);
-              showToast(
-                overlay.unresolvedGaps
-                  ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
-                  : `Wyświetlono przebieg: ${overlay.title}.`,
-              );
-            }}
-            onPreviewCourse={!isPlanner ? handlePreviewCourse : undefined}
-            onLoadTripToPlanner={handleLoadTripToPlanner}
-            canLoadToPlanner={isPlanner}
-            isPlanner={isPlanner}
-          />
-        </Suspense>
-      )}
-
-      {linesOpen && (
-        <Suspense fallback={null}>
-          <LinesDialog
-            open={linesOpen}
-            isPlanner={isPlanner}
-            onClose={() => setLinesOpen(false)}
-            onEditLineRoute={
-              isPlanner
-                ? (lineShort, variantKey) => openLineRouteEditor(lineShort, variantKey ?? null)
-                : undefined
-            }
-            onShowShapeOverlay={(overlay) => {
-              if (overlayEpoch !== overlayEpochRef.current) return;
-              setKursowkaOverlay(overlay);
-              showToast(
-                overlay.unresolvedGaps
-                  ? `${overlay.unresolvedGaps} odcinków poprowadzono w linii prostej (brak geometrii dróg). Wyświetlono przebieg: ${overlay.title}.`
-                  : `Wyświetlono przebieg: ${overlay.title}.`,
-              );
-            }}
-          />
-        </Suspense>
-      )}
 
       {scheduleDiffOpen && (
         <Suspense fallback={null}>

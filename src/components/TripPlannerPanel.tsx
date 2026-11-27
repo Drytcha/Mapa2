@@ -60,6 +60,8 @@ type PlanState =
   | { status: "done"; plan: JourneyPlan };
 
 interface TripPlannerPanelProps {
+  /** Widok osadzony bezpośrednio w lewym sidebarze. */
+  embedded?: boolean;
   buses: LiveBusVehicle[];
   origin: JourneyPoint | null;
   destination: JourneyPoint | null;
@@ -493,6 +495,7 @@ export default function TripPlannerPanel({
   onRefresh,
   onClose,
   refreshNonce,
+  embedded = false,
 }: TripPlannerPanelProps) {
   const [savedOpen, setSavedOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -740,30 +743,39 @@ export default function TripPlannerPanel({
   );
 
   return (
-    <div className="pointer-events-auto flex max-h-[min(640px,calc(100dvh-130px))] w-[332px] max-w-[calc(100vw-24px)] select-none flex-col overflow-hidden rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in sm:max-h-[min(640px,calc(100dvh-280px))] dark:bg-surface/93">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line/70 bg-brand-soft/80 px-3 py-2">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
-          <Route className="h-3.5 w-3.5" strokeWidth={2.4} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-[12px] font-extrabold leading-tight tracking-[-0.01em] text-ink">
-            Planer podróży
-          </h3>
-          <p className="text-[7.5px] font-bold uppercase tracking-[0.12em] text-brand-ink/75">
-            rozkład + GPS · skomunikowania
-          </p>
+    <div
+      className={cn(
+        "pointer-events-auto flex select-none flex-col overflow-hidden bg-surface",
+        embedded
+          ? "h-full min-h-0 w-full flex-1"
+          : "max-h-[min(640px,calc(100dvh-130px))] w-[332px] max-w-[calc(100vw-24px)] rounded-[14px] border border-line/80 bg-surface/96 shadow-[0_16px_44px_rgba(13,42,28,0.19)] animate-rise-in sm:max-h-[min(640px,calc(100dvh-280px))] dark:bg-surface/93",
+      )}
+    >
+      {!embedded && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-line/70 bg-brand-soft/80 px-3 py-2">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-on-brand">
+            <Route className="h-3.5 w-3.5" strokeWidth={2.4} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[12px] font-extrabold leading-tight tracking-[-0.01em] text-ink">
+              Planer podróży
+            </h3>
+            <p className="text-[7.5px] font-bold uppercase tracking-[0.12em] text-brand-ink/75">
+              rozkład + GPS · skomunikowania
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Zamknij planer podróży"
+            className="grid h-6 w-6 place-items-center rounded-md text-mute transition-colors hover:bg-surface hover:text-ink"
+          >
+            <X className="h-3 w-3" strokeWidth={2.3} />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Zamknij planer podróży"
-          className="grid h-6 w-6 place-items-center rounded-md text-mute transition-colors hover:bg-surface hover:text-ink"
-        >
-          <X className="h-3 w-3" strokeWidth={2.3} />
-        </button>
-      </div>
+      )}
 
-      <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
+      <div className={cn("scroll-area min-h-0 flex-1 overflow-y-auto", embedded ? "px-3.5 py-3" : "px-3 py-2.5")}>
         {pickTarget && (
           <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2 py-1.5 text-[8.5px] font-bold text-sky-700 dark:text-sky-300">
             <Crosshair className="h-3 w-3 shrink-0" strokeWidth={2.4} />

@@ -162,6 +162,7 @@ try {
 
   // Pasażer widzi linię 7 z badge „Poprawiona”, a NIE widzi przycisków „Edytuj”
   await travelerPage.getByTestId("line-card").first().waitFor({ state: "visible", timeout: 15_000 });
+  await travelerPage.getByTestId("line-card").first().click();
   await travelerPage.getByTestId("line-variant").first().waitFor({ state: "visible", timeout: 10_000 });
   const variantText = await travelerPage.getByTestId("line-variant").first().textContent();
   assert.match(variantText ?? "", /Poprawiona/i, "pasażer widzi zapisaną korektę trasy");

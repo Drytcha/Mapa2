@@ -212,7 +212,7 @@ try {
       }
       return count;
     }, png.toString("base64"));
-    assert.ok(bluePixels > 30, `expected painted blue marker pixels, got ${bluePixels}`);
+    assert.ok(bluePixels > 25, `expected painted blue marker pixels, got ${bluePixels}`);
   }
 
   // The GTFS update during startup must not wait for optional Overpass data.
@@ -227,7 +227,9 @@ try {
       height: getComputedStyle(element).height,
       background: getComputedStyle(element).backgroundColor,
     }));
-    assert.deepEqual(style, { width: "26px", height: "26px", background: "rgb(7, 93, 204)" });
+    // Zoom-adaptive markers: at initial city zoom (14), stops are clean 12×12 dots;
+    // when zoomed in (>=15) or selected, they expand to full 24×24 icons.
+    assert.deepEqual(style, { width: "12px", height: "12px", background: "rgb(7, 93, 204)" });
     assert.match(await stop.locator("..").getAttribute("aria-label"), /^Przystanek Piłsudskiego/);
     await assertBlueStopActuallyPainted(page, stop);
 

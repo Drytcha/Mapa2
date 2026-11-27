@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Eye, Loader2, MapPinned, Pencil, Search, Waypoints, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Eye, Loader2, MapPinned, Pencil, Search, Waypoints, X } from "lucide-react";
 import { DateTime } from "luxon";
 import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import { foldPolish, isPlannerOnlyLine } from "@/lib/core/text";
@@ -17,6 +17,8 @@ import { Dialog } from "./Modals";
 
 interface Props {
   open: boolean;
+  /** Widok osadzony w lewym sidebarze zamiast pełnoekranowego modala. */
+  embedded?: boolean;
   /** Linie planistyczne (S1–S4) widzi tylko planista. */
   isPlanner?: boolean;
   onClose: () => void;
@@ -141,6 +143,7 @@ function RoutePreview({
 
 export default function LinesDialog({
   open,
+  embedded = false,
   isPlanner = false,
   onClose,
   onShowShapeOverlay,
@@ -154,6 +157,7 @@ export default function LinesDialog({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [embeddedDetailOpen, setEmbeddedDetailOpen] = useState(false);
 
   const today = useMemo(
     () => Number(DateTime.now().setZone(WARSAW_ZONE).toFormat("yyyyLLdd")),
@@ -224,7 +228,7 @@ export default function LinesDialog({
         return;
       }
       onShowShapeOverlay(overlay);
-      onClose();
+      if (!embedded) onClose();
     } catch {
       setError("Nie udało się narysować trasy. Spróbuj ponownie.");
     } finally {
@@ -232,54 +236,62 @@ export default function LinesDialog({
     }
   };
 
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      label="Linie Wałbrzych"
-      className="duty-dialog-shell h-[94dvh] max-w-[1240px]"
-    >
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-1.5">
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-ink">
-          <Waypoints className="h-3.5 w-3.5" />
-        </span>
-        <h2 className="text-[13px] font-extrabold tracking-[-0.02em] text-ink">Linie Wałbrzych</h2>
-        <span className="hidden min-w-0 truncate text-[9px] text-mute md:inline">
-          Wszystkie linie i przebieg ich tras według aktualnego rozkładu
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Zamknij"
-          className="ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute transition-colors hover:bg-raised hover:text-ink"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </header>
+  if (embedded && !open) return null;
+
+  const content = (
+    <>
+      {!embedded && (
+        <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-1.5">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-ink">
+            <Waypoints className="h-3.5 w-3.5" />
+          </span>
+          <h2 className="text-[13px] font-extrabold tracking-[-0.02em] text-ink">Linie Wałbrzych</h2>
+          <span className="hidden min-w-0 truncate text-[9px] text-mute md:inline">
+            Wszystkie linie i przebieg ich tras według aktualnego rozkładu
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Zamknij"
+            className="ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute transition-colors hover:bg-raised hover:text-ink"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </header>
+      )}
 
       {loading && !entries.length ? (
-        <div role="status" className="flex items-center gap-2 p-6 text-[10px] text-mute">
+        <div role="status" className="flex items-center gap-2 p-6 text-[11.5px] text-mute">
           <Loader2 className="h-4 w-4 animate-spin" />
           Wczytywanie linii i tras…
         </div>
       ) : error && !entries.length ? (
-        <div role="alert" className="m-3 rounded-lg border border-warning/30 bg-warning-soft p-4 text-xs text-warning">
+        <div role="alert" className="m-3 rounded-xl bg-warning-soft p-4 text-xs text-warning">
           {error}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div className={cn("flex min-h-0 flex-1", embedded ? "flex-col" : "flex-col md:flex-row")}>
           {/* ── Lista linii ───────────────────────────────────────────── */}
-          <aside className="flex max-h-[38dvh] shrink-0 flex-col border-b border-line md:max-h-none md:w-[310px] md:border-b-0 md:border-r">
-            <div className="shrink-0 p-2">
-              <div className="flex h-8 items-center gap-1.5 rounded-md border border-line bg-raised px-2 focus-within:border-brand/60">
-                <Search className="h-3 w-3 shrink-0 text-mute" />
+          <aside
+            className={cn(
+              "flex flex-col",
+              embedded
+                ? embeddedDetailOpen
+                  ? "hidden"
+                  : "min-h-0 flex-1"
+                : "max-h-[38dvh] shrink-0 border-b border-line md:max-h-none md:w-[310px] md:border-b-0 md:border-r",
+            )}
+          >
+            <div className="shrink-0 px-3 pb-2 pt-2.5">
+              <div className="flex h-9 items-center gap-2 rounded-xl bg-soft/80 px-3 transition-colors focus-within:bg-soft focus-within:ring-2 focus-within:ring-brand/30">
+                <Search className="h-3.5 w-3.5 shrink-0 text-mute" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Szukaj linii lub miejsca (np. 7, Szczawno)"
+                  placeholder="Szukaj linii lub kierunku…"
                   aria-label="Szukaj linii"
                   autoComplete="off"
-                  className="min-w-0 flex-1 bg-transparent text-[10px] font-semibold text-ink outline-none placeholder:font-medium placeholder:text-mute"
+                  className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-ink outline-none placeholder:font-medium placeholder:text-mute"
                 />
                 {query && (
                   <button
@@ -288,15 +300,15 @@ export default function LinesDialog({
                     aria-label="Wyczyść wyszukiwanie"
                     className="grid h-5 w-5 place-items-center rounded text-mute hover:text-ink"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
-              <p className="mt-1.5 px-0.5 text-[8.5px] font-bold text-mute">
+              <p className="mt-2 px-1 text-[11px] font-semibold text-mute">
                 {filtered.length} {filtered.length === 1 ? "linia" : "linii"}
               </p>
             </div>
-            <ul aria-label="Lista linii" className="scroll-area min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
+            <ul aria-label="Lista linii" className="scroll-area min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 pb-3">
               {filtered.map((entry) => {
                 const isActive = selected?.shortName === entry.shortName;
                 return (
@@ -309,26 +321,35 @@ export default function LinesDialog({
                         setSelectedLine(entry.shortName);
                         setSelectedKey(null);
                         setExpanded(false);
+                        if (embedded) {
+                          setEmbeddedDetailOpen(true);
+                          void showOnMap(
+                            entry,
+                            entry.variants,
+                            `Linia ${entry.shortName} · wszystkie warianty`,
+                            "all",
+                          );
+                        }
                       }}
                       className={cn(
-                        "flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition-colors",
-                        isActive
-                          ? "border-brand bg-brand-soft"
-                          : "border-line bg-raised/60 hover:border-line-strong hover:bg-raised"
+                        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors",
+                        !embedded && isActive
+                          ? "bg-brand-soft"
+                          : "hover:bg-soft/75",
                       )}
                     >
                       <span
-                        className="metric grid h-8 min-w-[38px] shrink-0 place-items-center rounded-md px-1.5 text-[13px] font-extrabold"
+                        className="metric grid h-9 min-w-[42px] shrink-0 place-items-center rounded-lg px-2 text-[14px] font-extrabold shadow-xs"
                         style={{ backgroundColor: entry.color, color: entry.textColor }}
                       >
                         {entry.shortName}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[10px] font-extrabold text-ink">{entry.longName}</span>
-                        <span className="block truncate text-[8.5px] font-semibold text-mute">
+                        <span className="block truncate text-[12.5px] font-bold text-ink">{entry.longName}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-mute">
                           {entry.variants.length} {entry.variants.length === 1 ? "wariant trasy" : "warianty/ów trasy"}
                           {entry.from > today && (
-                            <span className="ml-1 font-extrabold text-warning">· od {dateLabel(entry.from)}</span>
+                            <span className="ml-1 font-bold text-warning">· od {dateLabel(entry.from)}</span>
                           )}
                         </span>
                       </span>
@@ -337,13 +358,30 @@ export default function LinesDialog({
                 );
               })}
               {!filtered.length && (
-                <li className="px-2 py-6 text-center text-[10px] text-mute">Brak linii pasujących do wyszukiwania.</li>
+                <li className="px-3 py-8 text-center text-[12px] text-mute">Brak linii pasujących do wyszukiwania.</li>
               )}
             </ul>
           </aside>
 
           {/* ── Szczegóły wybranej linii ─────────────────────────────── */}
-          <section className="scroll-area min-h-0 flex-1 overflow-y-auto p-3" aria-label="Trasa wybranej linii">
+          <section
+            className={cn(
+              "scroll-area min-h-0 flex-1 overflow-y-auto p-3.5",
+              embedded && !embeddedDetailOpen && "hidden",
+            )}
+            aria-label="Trasa wybranej linii"
+          >
+            {embedded && (
+              <button
+                type="button"
+                data-testid="lines-back-to-list"
+                onClick={() => setEmbeddedDetailOpen(false)}
+                className="mb-3 flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-[12px] font-bold text-brand-ink transition-colors hover:bg-soft/80"
+              >
+                <ArrowLeft className="h-4 w-4" strokeWidth={2.2} />
+                Wszystkie linie
+              </button>
+            )}
             {selected ? (
               <div className="mx-auto max-w-[760px] space-y-3">
                 <div className="flex items-start gap-3">
@@ -557,11 +595,30 @@ export default function LinesDialog({
                 </div>
               </div>
             ) : (
-              <p className="py-10 text-center text-[10px] text-mute">Brak linii w aktualnym rozkładzie.</p>
+              <p className="py-10 text-center text-[12px] text-mute">Brak linii w aktualnym rozkładzie.</p>
             )}
           </section>
         </div>
       )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-surface">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      label="Linie Wałbrzych"
+      className="duty-dialog-shell h-[94dvh] max-w-[1240px]"
+    >
+      {content}
     </Dialog>
   );
 }

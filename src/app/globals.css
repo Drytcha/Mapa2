@@ -393,18 +393,46 @@ path.course-stop--tappable:hover {
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   background: #075dcc;
   border: 2px solid #ffffff;
   color: #ffffff;
-  box-shadow: 0 0 0 1px rgb(5 23 51 / 68%), 0 3px 9px rgb(0 0 0 / 35%);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 26%);
   transition:
+    width 0.16s ease,
+    height 0.16s ease,
+    border-radius 0.16s ease,
     transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
     background-color 0.16s ease,
     box-shadow 0.16s ease;
-  animation: stopPop 0.26s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: stopPop 0.22s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+/* Zoom zależny od skali: przy oddaleniu dyskretne kropki, po przybliżeniu pełne ikony */
+[data-zoom-tier="city"] .bus-stop:not(.bus-stop--on):not(:hover) {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border-width: 2px;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 28%);
+}
+[data-zoom-tier="city"] .bus-stop:not(.bus-stop--on):not(:hover) svg {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+[data-zoom-tier="far"] .bus-stop:not(.bus-stop--on):not(:hover) {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border-width: 1.5px;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 24%);
+}
+[data-zoom-tier="far"] .bus-stop:not(.bus-stop--on):not(:hover) svg {
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
 /* Keep the hitbox tight to the visible icon so map panning is not blocked. */
 .bus-stop:hover {
@@ -505,6 +533,32 @@ path.course-stop--tappable:hover {
   box-shadow:
     0 0 0 3.5px rgba(215, 243, 110, 0.95),
     0 8px 26px rgba(0, 0, 0, 0.68);
+}
+/* Adaptacyjny wygląd autobusów zależny od zoomu: czystsza mapa z daleka */
+[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-label,
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-label {
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  margin: 0;
+}
+[data-zoom-tier="city"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus {
+  height: 25px;
+  min-width: 78px;
+  padding: 0 9px 0 14px;
+  font-size: 10.5px;
+}
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus {
+  height: 20px;
+  min-width: auto;
+  padding: 0 7px;
+  font-size: 9.5px;
+  border-width: 1.5px;
+}
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-op,
+[data-zoom-tier="far"] .live-bus-wrap:not(:hover):not(.live-bus-wrap--selected) .live-bus-arrow {
+  display: none;
 }
 /* Telefon: mniejsze pigułki autobusów, żeby nie zasłaniały mapy i siebie nawzajem. */
 @media (max-width: 640px) {
@@ -1023,6 +1077,15 @@ input[type="range"] {
 @media (min-width: 900px) {
   .duty-browser-grid {
     grid-template-columns: 330px minmax(0, 1fr);
+  }
+  .sidebar-single-col .duty-browser-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar-single-col .duty-browser-grid[data-mobile-view="list"] > .duty-detail-pane {
+    display: none;
+  }
+  .sidebar-single-col .duty-browser-grid[data-mobile-view="detail"] > .duty-list-pane {
+    display: none;
   }
 }
 @media (max-width: 899px) {

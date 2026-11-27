@@ -1343,9 +1343,9 @@ export default function BrigadesPanel({
           <button
             type="button"
             onClick={() => setMobileView("list")}
-            className="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1 text-[10px] font-bold text-brand-ink min-[900px]:hidden"
+            className="flex shrink-0 items-center gap-1.5 border-b border-line/60 px-3 py-2 text-[11px] font-bold text-brand-ink transition-colors hover:bg-soft/70 min-[900px]:hidden [.sidebar-single-col_&]:flex"
           >
-            <ArrowLeft className="h-3 w-3" /> Lista brygad
+            <ArrowLeft className="h-3.5 w-3.5" /> Lista brygad
           </button>
 
           {detailLoading ? (
