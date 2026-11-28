@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Bus, BusFront, Search, X } from "lucide-react";
 import type { BusStop, LiveBusVehicle } from "@/lib/types";
+import { getLatestFleetSnapshot, onRuntimeEvent } from "@/lib/core/runtimeHub";
 import { filterStops, stopDisplayName } from "@/lib/busStops";
 import { normalizeBusLine } from "@/lib/busMarker";
 import {
@@ -24,7 +25,7 @@ import { cn } from "@/utils/cn";
 type SearchScope = "all" | "stops" | "buses";
 
 interface Props {
-  vehicles: LiveBusVehicle[];
+  vehicles?: LiveBusVehicle[];
   stops?: BusStop[];
   onSelectVehicle: (bus: LiveBusVehicle) => void;
   onSelectStop?: (stop: BusStop) => void;
@@ -51,7 +52,7 @@ function stopMatchRank(stop: BusStop, foldedTerm: string): number {
 
 /** Unified map search for stops and live GPS buses, independent of map layer filters. */
 export default function BusSearch({
-  vehicles,
+  vehicles: propVehicles,
   stops = [],
   onSelectVehicle,
   onSelectStop,
@@ -78,6 +79,20 @@ export default function BusSearch({
   const hasStopSearch = Boolean(onSelectStop);
   const trimmedQuery = query.trim();
   const foldedTerm = foldPolish(trimmedQuery);
+  const needsLiveVehicles = propVehicles === undefined && (open || Boolean(trimmedQuery));
+  const [internalVehicles, setInternalVehicles] = useState<LiveBusVehicle[]>(
+    () => (propVehicles === undefined ? getLatestFleetSnapshot()?.vehicles ?? [] : []),
+  );
+
+  useEffect(() => {
+    if (!needsLiveVehicles) return;
+    setInternalVehicles(getLatestFleetSnapshot()?.vehicles ?? []);
+    return onRuntimeEvent("fleet:updated", ({ snapshot }) => {
+      setInternalVehicles(snapshot.vehicles);
+    });
+  }, [needsLiveVehicles]);
+
+  const vehicles = propVehicles ?? internalVehicles;
 
   useEffect(() => {
     if (!open) return;

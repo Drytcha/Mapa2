@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   ArrowUp,
   ArrowUpLeft,
@@ -19,8 +19,10 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { useSharedClock } from "@/lib/core/runtimeHub";
 import { formatWarsawClock } from "@/lib/core/time";
 import {
+  computeCoursePunctuality,
   formatNavDistance,
   type CourseManeuverKind,
   type CourseNavRoute,
@@ -32,6 +34,7 @@ import { cn } from "@/utils/cn";
 export interface CourseNavigationHudProps {
   route: CourseNavRoute;
   state: CourseNavState;
+  startedAtMs?: number;
   mode: "gps" | "sim";
   onModeChange: (mode: "gps" | "sim") => void;
   simPlaying: boolean;
@@ -72,9 +75,10 @@ function ManeuverIcon({ kind }: { kind: CourseManeuverKind }) {
   }
 }
 
-export default function CourseNavigationHud({
+function CourseNavigationHudInner({
   route,
   state,
+  startedAtMs,
   mode,
   onModeChange,
   simPlaying,
@@ -92,8 +96,21 @@ export default function CourseNavigationHud({
   onStopNavigation,
 }: CourseNavigationHudProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const clockNow = useSharedClock(
+    1_000,
+    startedAtMs !== undefined && route.startMs !== null,
+  );
 
-  const deltaSec = state.scheduleDeltaSeconds;
+  const deltaSec =
+    startedAtMs !== undefined
+      ? computeCoursePunctuality(
+          route,
+          state.alongMeters,
+          clockNow,
+          startedAtMs,
+          punctualityMode,
+        )
+      : state.scheduleDeltaSeconds;
   const punctualityStyle =
     deltaSec !== null ? DELAY_STYLES[delayTone(deltaSec)] : null;
   const punctualityText =
@@ -440,3 +457,6 @@ export default function CourseNavigationHud({
     </section>
   );
 }
+
+const CourseNavigationHud = memo(CourseNavigationHudInner);
+export default CourseNavigationHud;

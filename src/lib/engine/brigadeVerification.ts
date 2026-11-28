@@ -97,6 +97,10 @@ export function updateDynamicDutyOperators(
   }
 }
 
+export function exportDynamicDutyOperators(): Record<string, "ska" | "mzuk"> {
+  return Object.fromEntries(dynamicDutyOperators);
+}
+
 /** Zwraca oficjalnego przewoźnika (ŚKA lub MZUK) dla brygady i identyfikatora rozkładu (np. 387_RS, 5/02). */
 export function resolveDutyOperator(
   serviceId: string | null | undefined,

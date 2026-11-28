@@ -767,6 +767,22 @@ export function evaluateCourseNavigation(params: {
   };
 }
 
+export function computeCoursePunctuality(
+  route: CourseNavRoute,
+  alongMeters: number,
+  nowMs: number,
+  startedAtMs: number,
+  punctualityMode: "schedule" | "relative",
+): number | null {
+  const plannedMs = interpolatePlannedTimeMs(route, alongMeters);
+  if (plannedMs === null || route.startMs === null) return null;
+  const referenceNowMs =
+    punctualityMode === "relative"
+      ? route.startMs + Math.max(0, nowMs - startedAtMs)
+      : nowMs;
+  return Math.round((referenceNowMs - plannedMs) / 1000);
+}
+
 export function formatNavDistance(meters: number): string {
   const m = Math.max(0, Math.round(meters));
   if (m < 1000) {

@@ -8,6 +8,11 @@ import { createDarkTileLayer } from "@/lib/mapTiles";
 import { TILES } from "@/lib/services";
 import { isWaypointSet } from "@/lib/data";
 import { buildBusMarker } from "@/lib/busMarker";
+import {
+  BusMotionInterpolator,
+  indexRoutePolyline,
+  type IndexedRoutePolyline,
+} from "@/lib/busInterpolation";
 import { COURSE_SIDEBAR_WIDTH } from "@/lib/courseRoute";
 import { FUTURE_ROUTE_COLOR, liveStopProgress, pastRouteColor, splitRouteAtBus, splitRouteAtLastPassedStop, routeStopAnchors, stopSegmentRange } from "@/lib/routeProgress";
 import { stopDisplayName, WALBRZYCH_CENTER, WALBRZYCH_ZOOM } from "@/lib/busStops";
@@ -267,9 +272,12 @@ function createStopDivIcon(id: string, state: string): L.DivIcon {
 
 interface LiveBusMarkerEntry {
   marker: L.Marker;
-  html: string;
+  templateKey: string;
   tooltip: string;
   selected: boolean;
+  lastLat: number;
+  lastLon: number;
+  lastBearing: number | null;
 }
 
 const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
@@ -337,6 +345,16 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!kursowkaOverlay?.liveVehicleId || !kursowkaOverlay.polylines[0]) return null;
     return routeStopAnchors(kursowkaOverlay.polylines[0], kursowkaOverlay.stops);
   }, [kursowkaOverlay]);
+  const indexedLiveRoutes = useMemo<ReadonlyMap<string, IndexedRoutePolyline>>(() => {
+    const map = new Map<string, IndexedRoutePolyline>();
+    if (kursowkaOverlay?.liveVehicleId && kursowkaOverlay.polylines[0]?.length >= 2) {
+      const indexed = indexRoutePolyline(kursowkaOverlay.polylines[0]);
+      if (indexed) {
+        map.set(kursowkaOverlay.liveVehicleId, indexed);
+      }
+    }
+    return map;
+  }, [kursowkaOverlay]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileRef = useRef<L.TileLayer[]>([]);
@@ -362,6 +380,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const vehicleGroupRef = useRef<L.LayerGroup | null>(null);
   const liveBusMarkersRef = useRef<Map<string, LiveBusMarkerEntry>>(new Map());
   const liveBusByIdRef = useRef<Map<string, LiveBusVehicle>>(new Map());
+  const busInterpolatorRef = useRef<BusMotionInterpolator>(new BusMotionInterpolator());
+  const busAnimRafRef = useRef<number>(0);
+  const startBusAnimLoopRef = useRef<(() => void) | null>(null);
   const markerGroupRef = useRef<L.LayerGroup | null>(null);
   const stopGroupRef = useRef<L.LayerGroup | null>(null);
   const stopMarkersRef = useRef<Map<string, L.Marker>>(new Map());
@@ -708,6 +729,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     return () => {
       observer.disconnect();
+      if (busAnimRafRef.current) {
+        cancelAnimationFrame(busAnimRafRef.current);
+        busAnimRafRef.current = 0;
+      }
+      busInterpolatorRef.current.clear();
       tileRef.current = [];
       stopMarkersRef.current.clear();
       stopStateRef.current.clear();
@@ -1550,18 +1576,119 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripDestinationKey, showLiveBuses]);
 
-  /* Live GPS Wałbrzych buses (reconciled in-place so 10s updates never tear down DOM nodes) */
+  /* Wspólna pętla requestAnimationFrame do płynnego ruchu i obrotu autobusów GPS */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const applyPose = (
+      entry: LiveBusMarkerEntry,
+      lat: number,
+      lon: number,
+      bearingDeg: number | null,
+    ) => {
+      if (
+        Math.abs(entry.lastLat - lat) > 1e-7 ||
+        Math.abs(entry.lastLon - lon) > 1e-7
+      ) {
+        entry.marker.setLatLng([lat, lon]);
+        entry.lastLat = lat;
+        entry.lastLon = lon;
+      }
+      if (
+        bearingDeg !== null &&
+        (entry.lastBearing === null ||
+          Math.abs(entry.lastBearing - bearingDeg) > 0.15)
+      ) {
+        const arrow = entry.marker
+          .getElement()
+          ?.querySelector<HTMLElement>(".live-bus-arrow");
+        if (arrow) {
+          arrow.style.transform = `rotate(${bearingDeg.toFixed(1)}deg)`;
+          entry.lastBearing = bearingDeg;
+        }
+      }
+    };
+
+    const stepFrame = (nowMs: number) => {
+      busAnimRafRef.current = 0;
+      if (typeof document !== "undefined" && document.hidden) return;
+      const entries = liveBusMarkersRef.current;
+      if (!entries.size) return;
+
+      const area = map.getBounds().pad(0.18);
+      let anyAnimatingInView = false;
+
+      for (const [id, entry] of entries) {
+        const inView =
+          entry.selected || area.contains([entry.lastLat, entry.lastLon]);
+        if (!inView) continue;
+        const sample = busInterpolatorRef.current.sample(id, nowMs);
+        if (!sample) continue;
+        applyPose(entry, sample.lat, sample.lon, sample.bearingDeg);
+        if (!sample.settled) {
+          anyAnimatingInView = true;
+        }
+      }
+
+      if (anyAnimatingInView) {
+        busAnimRafRef.current = requestAnimationFrame(stepFrame);
+      }
+    };
+
+    const ensureLoopRunning = () => {
+      if (busAnimRafRef.current) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      busAnimRafRef.current = requestAnimationFrame(stepFrame);
+    };
+
+    const onViewportOrVisibility = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        if (busAnimRafRef.current) {
+          cancelAnimationFrame(busAnimRafRef.current);
+          busAnimRafRef.current = 0;
+        }
+        return;
+      }
+      stepFrame(performance.now());
+    };
+
+    startBusAnimLoopRef.current = ensureLoopRunning;
+    map.on("moveend zoomend", onViewportOrVisibility);
+    document.addEventListener("visibilitychange", onViewportOrVisibility);
+
+    return () => {
+      startBusAnimLoopRef.current = null;
+      map.off("moveend zoomend", onViewportOrVisibility);
+      document.removeEventListener("visibilitychange", onViewportOrVisibility);
+      if (busAnimRafRef.current) {
+        cancelAnimationFrame(busAnimRafRef.current);
+        busAnimRafRef.current = 0;
+      }
+    };
+  }, []);
+
+  /* Live GPS Wałbrzych buses (reconciled in-place with smooth 60fps GPS interpolation) */
   useEffect(() => {
     const group = vehicleGroupRef.current;
     if (!group) return;
 
     const existing = liveBusMarkersRef.current;
+    const interpolator = busInterpolatorRef.current;
     if (!showLiveBuses || !liveBuses.length) {
+      if (busAnimRafRef.current) {
+        cancelAnimationFrame(busAnimRafRef.current);
+        busAnimRafRef.current = 0;
+      }
+      interpolator.clear();
       group.clearLayers();
       existing.clear();
       liveBusByIdRef.current.clear();
       return;
     }
+
+    const nowMs = performance.now();
+    interpolator.syncFleet(liveBuses, nowMs, indexedLiveRoutes);
 
     const activeIds = new Set<string>();
     liveBusByIdRef.current.clear();
@@ -1570,9 +1697,16 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       activeIds.add(bus.vehicleId);
       liveBusByIdRef.current.set(bus.vehicleId, bus);
 
+      const sample = interpolator.sample(bus.vehicleId, nowMs);
+      const renderLat = sample ? sample.lat : bus.lat;
+      const renderLon = sample ? sample.lon : bus.lon;
+      const renderBearing = sample?.bearingDeg ?? bus.bearing;
+      const effectiveBus =
+        renderBearing !== bus.bearing ? { ...bus, bearing: renderBearing } : bus;
+
       const selected = bus.vehicleId === selectedLiveBusId;
-      const { html, tooltip } = buildBusMarker(
-        bus,
+      const { html, tooltip, templateKey } = buildBusMarker(
+        effectiveBus,
         {
           kursowka: busLabelKursowka,
           vehicleNumber: busLabelVehicleNumber,
@@ -1583,8 +1717,15 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
       const prev = existing.get(bus.vehicleId);
       if (prev) {
-        prev.marker.setLatLng([bus.lat, bus.lon]);
-        if (prev.html !== html) {
+        if (
+          Math.abs(prev.lastLat - renderLat) > 1e-7 ||
+          Math.abs(prev.lastLon - renderLon) > 1e-7
+        ) {
+          prev.marker.setLatLng([renderLat, renderLon]);
+          prev.lastLat = renderLat;
+          prev.lastLon = renderLon;
+        }
+        if (prev.templateKey !== templateKey) {
           prev.marker.setIcon(
             L.divIcon({
               className: "pin-wrap pin-wrap--passive",
@@ -1593,7 +1734,20 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
               iconAnchor: [105, 14],
             })
           );
-          prev.html = html;
+          prev.templateKey = templateKey;
+          prev.lastBearing = renderBearing;
+        } else if (
+          renderBearing !== null &&
+          (prev.lastBearing === null ||
+            Math.abs(prev.lastBearing - renderBearing) > 0.15)
+        ) {
+          const arrow = prev.marker
+            .getElement()
+            ?.querySelector<HTMLElement>(".live-bus-arrow");
+          if (arrow) {
+            arrow.style.transform = `rotate(${renderBearing.toFixed(1)}deg)`;
+            prev.lastBearing = renderBearing;
+          }
         }
         if (prev.selected !== selected) {
           prev.marker.setZIndexOffset(selected ? 2000 : 750);
@@ -1610,7 +1764,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           iconSize: [210, 56],
           iconAnchor: [105, 14],
         });
-        const marker = L.marker([bus.lat, bus.lon], {
+        const marker = L.marker([renderLat, renderLon], {
           icon,
           pane: "vehicles",
           zIndexOffset: selected ? 2000 : 750,
@@ -1621,11 +1775,16 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           offset: [0, -12],
           className: "waypoint-tooltip live-bus-tooltip",
         });
-        // Klik obsługuje delegowany listener na pane'cie pojazdów
-        // (patrz efekt niżej): działa nawet gdy sam element ikony ma
-        // `pointer-events: none`, a klik trafia w widoczną pigułkę.
         marker.addTo(group);
-        existing.set(bus.vehicleId, { marker, html, tooltip, selected });
+        existing.set(bus.vehicleId, {
+          marker,
+          templateKey,
+          tooltip,
+          selected,
+          lastLat: renderLat,
+          lastLon: renderLon,
+          lastBearing: renderBearing,
+        });
       }
     }
 
@@ -1635,6 +1794,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         existing.delete(id);
       }
     }
+
+    if (interpolator.hasActiveAnimations(nowMs)) {
+      startBusAnimLoopRef.current?.();
+    }
   }, [
     liveBuses,
     showLiveBuses,
@@ -1642,6 +1805,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     busLabelKursowka,
     busLabelVehicleNumber,
     tripDestinations,
+    indexedLiveRoutes,
   ]);
 
   /* Klik w autobus: delegacja na pane'cie pojazdów.

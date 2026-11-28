@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   Bus,
@@ -272,7 +272,7 @@ export interface MapInfoSidebarProps {
   onToggleLiveBuses?: () => void;
   operatorFilter?: "all" | WalbrzychOperatorKey;
   onOperatorFilter?: (value: "all" | WalbrzychOperatorKey) => void;
-  liveVehicles: LiveBusVehicle[];
+  liveVehicles?: LiveBusVehicle[];
   liveTraffic?: LiveTrafficSummary | null;
   liveLoading?: boolean;
   onRefreshLive?: () => void;
@@ -316,7 +316,27 @@ export interface MapInfoSidebarProps {
   courseContent?: ReactNode;
 }
 
-export default function MapInfoSidebar({
+function UserLocationFreshnessWarning({
+  userLocation,
+  weak,
+}: {
+  userLocation: UserLocation;
+  weak: boolean;
+}) {
+  const now = useSharedClock(1_000, true);
+  const ageS = Math.max(0, Math.round((now - userLocation.timestamp) / 1000));
+  const stale = ageS > STALE_AFTER_S;
+  if (!stale && !weak) return null;
+  return (
+    <p className="rounded-xl bg-warning-soft/75 px-3 py-2.5 text-[11px] font-semibold text-warning">
+      {stale
+        ? `Ostatni odczyt GPS ${ageS} s temu.`
+        : "Słaby sygnał GPS — pozycja przybliżona."}
+    </p>
+  );
+}
+
+function MapInfoSidebarInner({
   open,
   onOpenChange,
   onClose,
@@ -410,7 +430,6 @@ export default function MapInfoSidebar({
 
   const asideRef = useRef<HTMLElement | null>(null);
   const railRef = useRef<HTMLElement | null>(null);
-  const now = useSharedClock(1_000, Boolean(userLocation && open));
 
   useEffect(() => {
     if (!open) return;
@@ -442,10 +461,6 @@ export default function MapInfoSidebar({
   const stopsValue: StopDisplayMode =
     !isPlanner && visibility.stops === "route" ? "all" : visibility.stops;
 
-  const ageS = userLocation
-    ? Math.max(0, Math.round((now - userLocation.timestamp) / 1000))
-    : 0;
-  const stale = Boolean(userLocation && ageS > STALE_AFTER_S);
   const weak = Boolean(userLocation && userLocation.accuracy > WEAK_ACCURACY_M);
   const moving = Boolean(
     userLocation && userLocation.speedKmh !== null && userLocation.speedKmh >= 1,
@@ -1288,13 +1303,10 @@ export default function MapInfoSidebar({
                   )}
                 </dl>
 
-                {(stale || weak) && (
-                  <p className="rounded-xl bg-warning-soft/75 px-3 py-2.5 text-[11px] font-semibold text-warning">
-                    {stale
-                      ? `Ostatni odczyt GPS ${ageS} s temu.`
-                      : "Słaby sygnał GPS — pozycja przybliżona."}
-                  </p>
-                )}
+                <UserLocationFreshnessWarning
+                  userLocation={userLocation}
+                  weak={weak}
+                />
               </div>
             ) : (
               <p className="rounded-xl bg-soft/65 p-4 text-[12px] leading-relaxed text-mute">
@@ -1337,3 +1349,6 @@ export default function MapInfoSidebar({
     </div>
   );
 }
+
+const MapInfoSidebar = memo(MapInfoSidebarInner);
+export default MapInfoSidebar;

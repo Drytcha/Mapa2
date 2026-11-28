@@ -69,7 +69,9 @@ assert.match(location, /movedMeters >= 1\.5/, "próg ruchu GPS");
 assert.match(location, /lastEmittedRef/, "ostatnia wysłana pozycja jest pamiętana");
 
 // 8. Flota: identyczny odcisk danych nie powoduje re-rendera.
-assert.match(app, /fleetSignature/, "aktualizacje floty są deduplikowane");
+const fleetHook = read("src/lib/hooks/useLiveFleetState.ts");
+assert.match(app, /useLiveFleetState/, "MapPlanerApp korzysta z wydzielonego hooka floty");
+assert.match(fleetHook, /fleetSignature/, "aktualizacje floty są deduplikowane");
 
 // 9. Licznik FPS jest opt-in i nic nie robi bez ?perf=1.
 assert.match(hud, /get\("perf"\) === "1"/, "HUD włącza się parametrem ?perf=1");
