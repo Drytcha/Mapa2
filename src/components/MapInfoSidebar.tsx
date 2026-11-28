@@ -1115,7 +1115,7 @@ export default function MapInfoSidebar({
               />
               <SidebarSwitch
                 label="Numer taborowy wozu"
-                hint="Widoczny po przybliżeniu mapy (np. #340)"
+                hint="Widoczny na znaczniku pojazdu na mapie (np. #340)"
                 checked={visibility.busVehicleNumber}
                 onChange={(next) =>
                   onVisibilityChange({ busVehicleNumber: next })

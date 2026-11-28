@@ -635,6 +635,12 @@ assert.match(
   "dymek km/h i rozszerzenia są chowane przez display:none przy oddaleniu mapy",
 );
 
+assert.equal(
+  DEFAULT_VISIBILITY.busVehicleNumber,
+  true,
+  "numer taborowy pojazdu jest domyślnie włączony na mapie",
+);
+
 const busMarkerSample = buildBusMarker(
   sampleVehicles[0],
   { kursowka: true, vehicleNumber: true },
@@ -642,6 +648,31 @@ const busMarkerSample = buildBusMarker(
 );
 assert.match(busMarkerSample.html, /class="live-bus-line">7</, "numer linii jest zawsze oznaczony jako główny element pigułki");
 assert.match(busMarkerSample.html, /class="live-bus-extra">\/01</, "końcówka brygady ma klasę live-bus-extra chowaną przy oddaleniu");
+assert.match(
+  busMarkerSample.html,
+  /class="live-bus-veh-group"><span class="live-bus-sep">\|<\/span><span class="live-bus-veh">#404<\/span><\/span>/,
+  "numer pojazdu (#404) jest poza klasą live-bus-extra, więc pozostaje widoczny również z daleka",
+);
+assert.doesNotMatch(
+  cssSource,
+  /\.live-bus-veh[^{]*\{[^}]*display:\s*none/,
+  "CSS nie ukrywa numeru pojazdu przy oddaleniu mapy",
+);
+
+// Autobus bez wybranej linii pokazuje wyłącznie sam numer autobusu (bez '?' i bez linii)
+for (const emptyRoute of ["", "   ", "?", "-"]) {
+  const noLineMarker = buildBusMarker(
+    { ...sampleVehicles[0], routeName: emptyRoute, kursowka: "", vehicleId: "340" },
+    { kursowka: false, vehicleNumber: false },
+    false,
+  );
+  assert.match(
+    noLineMarker.html,
+    /<span class="live-bus-label"><span class="live-bus-veh live-bus-veh--solo">#340<\/span><\/span>/,
+    `gdy routeName="${emptyRoute}", pigułka pokazuje wyłącznie sam numer autobusu`,
+  );
+  assert.doesNotMatch(noLineMarker.html, /live-bus-line|>\?<|live-bus-veh-group/);
+}
 
 const mapViewSource = await readFile(new URL("../src/components/MapView.tsx", import.meta.url), "utf8");
 assert.match(mapViewSource, /dataset\.zoomTier/, "MapView aktualizuje data-zoom-tier przy zmianie przybliżenia");

@@ -14,14 +14,15 @@ export interface VisibilitySettings {
 
 export type VisibilityToggleKey = Exclude<keyof VisibilitySettings, "stops">;
 
-export const VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v2";
+export const VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v3";
+const PREV_VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v2";
 const LEGACY_VISIBILITY_STORAGE_KEY = "mapplaner.visibility.v1";
 
 export const DEFAULT_VISIBILITY: VisibilitySettings = {
   stops: "all",
   liveBuses: true,
   busKursowka: false,
-  busVehicleNumber: false,
+  busVehicleNumber: true,
   trafficSignals: true,
   turnarounds: true,
 };
@@ -50,11 +51,18 @@ import { readStorageJson, writeStorageJson } from "./core/time";
 export function loadVisibility(): VisibilitySettings {
   const current = readStorageJson(VISIBILITY_STORAGE_KEY);
   if (current) return restoreVisibility(current);
+  const previousV2 = readStorageJson(PREV_VISIBILITY_STORAGE_KEY);
+  if (previousV2) {
+    const migrated = restoreVisibility(previousV2);
+    migrated.busVehicleNumber = true;
+    return migrated;
+  }
   const previous = readStorageJson(LEGACY_VISIBILITY_STORAGE_KEY);
   if (!previous) return { ...DEFAULT_VISIBILITY };
-  // The old default was hidden. Reset it once on upgrade; subsequent choices persist.
+  // Upgrade legacy defaults once; subsequent choices persist under v3.
   const migrated = restoreVisibility(previous);
   if (migrated.stops === "off") migrated.stops = "all";
+  migrated.busVehicleNumber = true;
   return migrated;
 }
 

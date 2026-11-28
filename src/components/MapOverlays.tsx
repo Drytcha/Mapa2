@@ -53,6 +53,7 @@ import type {
 } from "@/lib/types";
 import { MAX_WAYPOINTS } from "@/lib/types";
 import { formatBrigadeTitle } from "@/lib/brigade";
+import { normalizeBusLine } from "@/lib/busMarker";
 import {
   dutyAssignmentStats,
   dutyLabel,
@@ -719,7 +720,7 @@ export function LiveBusCard({
             color: style.fg,
           }}
         >
-          {bus.routeName || "?"}
+          {normalizeBusLine(bus.routeName) || vehNum || "?"}
         </span>
         <div className="min-w-0 flex-1">
           <span className="block text-[7.5px] font-extrabold uppercase tracking-[0.15em] text-brand-ink/80">
