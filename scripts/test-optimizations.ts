@@ -71,6 +71,16 @@ async function main() {
   const busT1 = makeBus({ lat: 50.76655, lon: 16.28235, bearing: 10 });
   interp.syncFleet([busT1], 4_000);
   assert.equal(interp.hasActiveAnimations(4_100), true);
+  assert.deepEqual(interp.activeVehicleIds(4_100), ["340"]);
+  assert.deepEqual(interp.activeVehicleIds(8_000), []);
+
+  // 30 fps/map-busy throttling pauses the interpolation clock without a jump on resume.
+  const pauseInterp = new BusMotionInterpolator();
+  pauseInterp.syncFleet([busT0], 1_000);
+  pauseInterp.syncFleet([busT1], 4_000);
+  pauseInterp.resumeAfterPause(4_200, 5_200);
+  const resumed = pauseInterp.sample("340", 5_200);
+  assert.ok(resumed && resumed.progress < 0.1, "map pause must not fast-forward the bus");
 
   const sMid = interp.sample("340", 5_440); // ~50% z ~2880 ms
   assert.ok(sMid && !sMid.settled);
