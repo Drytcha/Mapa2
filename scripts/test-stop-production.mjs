@@ -41,15 +41,44 @@ try {
     maxBuffer: 10_000_000,
   });
   const html = await readFile(path.join(scratch, "dist/index.html"));
-  assert.match(html.toString("utf8"), /data:application\/(?:zip|octet-stream);base64,/);
-  server = createServer((request, response) => {
-    if (request.url === "/Mapa2/" || request.url === "/Mapa2/index.html") {
+  const singleFile = process.env.SINGLE_FILE === "1";
+  if (singleFile) {
+    assert.match(html.toString("utf8"), /data:application\/(?:zip|octet-stream);base64,/);
+  }
+  const mimeByExt = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".zip": "application/zip",
+    ".svg": "image/svg+xml",
+  };
+  const distDir = path.join(scratch, "dist");
+  server = createServer(async (request, response) => {
+    const reqPath = (request.url || "/").split("?")[0];
+    if (reqPath === "/Mapa2/" || reqPath === "/Mapa2/index.html") {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end(html);
-    } else {
-      response.writeHead(404);
-      response.end();
+      return;
     }
+    if (!singleFile && reqPath.startsWith("/Mapa2/")) {
+      const rel = reqPath.slice("/Mapa2/".length);
+      const target = path.resolve(distDir, rel);
+      if (target.startsWith(distDir + path.sep)) {
+        try {
+          const body = await readFile(target);
+          const ext = path.extname(target).toLowerCase();
+          response.writeHead(200, { "Content-Type": mimeByExt[ext] || "application/octet-stream" });
+          response.end(body);
+          return;
+        } catch {
+          /* fall through to 404 */
+        }
+      }
+    }
+    response.writeHead(404);
+    response.end();
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "0.0.0.0", resolve); });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -76,7 +105,9 @@ try {
       window.__embeddedGtfsFetched = false;
       window.fetch = (input, init) => {
         const url = String(input instanceof Request ? input.url : input);
-        if (/^data:application\/(?:zip|octet-stream);base64,/i.test(url)) window.__embeddedGtfsFetched = true;
+        if (/^data:application\/(?:zip|octet-stream);base64,/i.test(url) || /\/assets\/walbrzych-gtfs-.*\.zip/i.test(url)) {
+          window.__embeddedGtfsFetched = true;
+        }
         return nativeFetch(input, init);
       };
     });

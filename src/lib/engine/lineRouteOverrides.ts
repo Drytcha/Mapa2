@@ -11,7 +11,6 @@
  *     exported/imported as `line-route-overrides.json`.
  */
 
-import bundledFileRaw from "@/data/line-route-overrides.json";
 import { emitRuntimeEvent, runDeduped } from "../core/runtimeHub";
 import { foldStopKey } from "../core/text";
 import {
@@ -209,8 +208,48 @@ function emptyFile(): LineRouteOverridesFile {
   };
 }
 
-const bundledFile: LineRouteOverridesFile =
-  parseOverridesFile(bundledFileRaw) ?? emptyFile();
+let bundledFile: LineRouteOverridesFile = emptyFile();
+let bundledLoaded = false;
+
+function tryLoadBundledSyncInNode(): void {
+  if (typeof window !== "undefined" || bundledLoaded) return;
+  const nodeProc = (
+    globalThis as {
+      process?: {
+        cwd?: () => string;
+        getBuiltinModule?: (id: string) => {
+          readFileSync?: (p: string, enc: string) => string;
+        };
+      };
+    }
+  ).process;
+  const fsMod = nodeProc?.getBuiltinModule?.("node:fs");
+  if (!fsMod?.readFileSync || !nodeProc?.cwd) return;
+  try {
+    const rawText = fsMod.readFileSync(
+      `${nodeProc.cwd()}/src/data/line-route-overrides.json`,
+      "utf8",
+    );
+    bundledFile = parseOverridesFile(JSON.parse(rawText)) ?? emptyFile();
+    bundledLoaded = true;
+  } catch {
+    /* Fallback to async import */
+  }
+}
+
+tryLoadBundledSyncInNode();
+
+async function ensureBundledOverridesChunk(): Promise<void> {
+  if (bundledLoaded) return;
+  bundledLoaded = true;
+  try {
+    const mod = await import("@/data/line-route-overrides.json");
+    const raw = (mod as { default?: unknown }).default ?? mod;
+    bundledFile = parseOverridesFile(raw) ?? emptyFile();
+  } catch {
+    bundledFile = emptyFile();
+  }
+}
 
 let remoteFile: LineRouteOverridesFile | null = null;
 let remoteSource: LineRouteOverridesSummary["remoteSource"] = "bundled";
@@ -251,11 +290,43 @@ function rebuildMerged(emit = true): void {
   }
 }
 
-// Initialize bundled overrides synchronously at module load.
-rebuildMerged(false);
+// W przeglądarce dociągamy wbudowany plik korekt tras w osobnym chunku po starcie,
+// żeby nie blokować pierwszego renderowania 634 KB danych JSON.
+if (typeof window !== "undefined") {
+  const schedule =
+    (window as Window & { requestIdleCallback?: (cb: () => void) => number })
+      .requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 120));
+  schedule(() => {
+    void initLineRouteOverrides().catch(() => undefined);
+  });
+} else if (bundledLoaded) {
+  rebuildMerged(false);
+}
 
 export function getOverridesRevision(): number {
   return revision;
+}
+
+export interface OverridesWorkerOverlay {
+  revision: number;
+  saved: Record<string, LineRouteOverride>;
+  deleted: string[];
+}
+
+export function exportOverridesOverlay(): OverridesWorkerOverlay {
+  return {
+    revision,
+    saved: localDiff.saved,
+    deleted: localDiff.deleted,
+  };
+}
+
+export function applyOverridesOverlay(overlay: OverridesWorkerOverlay): void {
+  localDiff = {
+    saved: overlay.saved ?? {},
+    deleted: overlay.deleted ?? [],
+  };
+  rebuildMerged(false);
 }
 
 export function getLineRouteOverride(
@@ -594,7 +665,8 @@ export async function initLineRouteOverrides(): Promise<void> {
   initialized = true;
 
   await runDeduped("lineRouteOverrides:init", async () => {
-    const [storedLocal, storedRemote] = await Promise.all([
+    const [, storedLocal, storedRemote] = await Promise.all([
+      ensureBundledOverridesChunk(),
       idbGetKv<LocalDiffState>(LOCAL_DIFF_KV_KEY),
       idbGetKv<RemoteCacheRecord>(REMOTE_CACHE_KV_KEY),
     ]);

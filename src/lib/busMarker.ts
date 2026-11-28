@@ -99,7 +99,7 @@ export function buildBusMarker(
   bus: LiveBusVehicle,
   options: BusLabelOptions,
   selected: boolean
-): { html: string; tooltip: string } {
+): { html: string; tooltip: string; templateKey: string } {
   const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
   // Kierunek z rozkładu jest pewniejszy niż tablica kierunkowa GPS.
   const directionLabel = options.destination || bus.headsign || "";
@@ -123,7 +123,7 @@ export function buildBusMarker(
 
   const html = [
     `<div class="live-bus-wrap${selected ? " live-bus-wrap--selected" : ""}" data-vehicle-id="${escapeHtml(bus.vehicleId)}" style="--delay-bg:${style.bg};--delay-fg:${style.fg};">`,
-    `<div class="live-bus${compact ? " live-bus--compact" : ""}${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
+    `<div class="live-bus${compact ? " live-bus--compact" : " live-bus--with-op"}${selected ? " live-bus--selected" : ""}" style="--route-color:${escapeHtml(bus.routeColor || "#0d4f3b")}">`,
     pill,
     `</div>`,
     `<div class="live-bus-chip"><span>${escapeHtml(speedText)}</span><span class="live-bus-sep">|</span>`,
@@ -152,5 +152,10 @@ export function buildBusMarker(
     ),
   ].join("");
 
-  return { html, tooltip };
+  const directionTemplate = hasBearing
+    ? `<span class="live-bus-arrow" style="transform:rotate(0deg)" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M12 2L20.5 20.5L12 16.2L3.5 20.5L12 2Z" fill="currentColor" stroke="rgba(255,255,255,0.9)" stroke-width="2.2" stroke-linejoin="round"/></svg></span>`
+    : direction;
+  const templateKey = `${selected ? 1 : 0}|${style.bg}|${style.fg}|${bus.routeColor || "#0d4f3b"}|${operatorBadge}|${directionTemplate}|${labelHtml}|${speedText}|${delayText}|${delayDescription}`;
+
+  return { html, tooltip, templateKey };
 }

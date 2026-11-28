@@ -109,6 +109,10 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH
   ? `${process.env.NEXT_PUBLIC_BASE_PATH.replace(/\/+$/, "")}/`
   : "/";
 
+// Domyślnie budujemy rozbite, cache'owalne paczki JS/CSS + leniwe chunki Planisty.
+// Pojedynczy plik HTML można nadal wymusić przez SINGLE_FILE=1.
+const useSingleFile = process.env.SINGLE_FILE === "1";
+
 // https://vite.dev/config/
 export default defineConfig({
   base: basePath,
@@ -116,7 +120,52 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: [".e2b.app"],
   },
-  plugins: [lineRouteOverridesDevApi(), react(), tailwindcss(), viteSingleFile()],
+  plugins: [
+    lineRouteOverridesDevApi(),
+    react(),
+    tailwindcss(),
+    ...(useSingleFile ? [viteSingleFile()] : []),
+  ],
+  worker: {
+    format: "es",
+  },
+  build: useSingleFile
+    ? undefined
+    : {
+        target: "es2022",
+        cssCodeSplit: true,
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (
+                id.includes("/src/data/") &&
+                id.endsWith(".json") &&
+                !id.includes("line-route-overrides.json")
+              ) {
+                return "transit-data";
+              }
+              if (!id.includes("node_modules")) return undefined;
+              if (
+                id.includes("/react/") ||
+                id.includes("/react-dom/") ||
+                id.includes("/scheduler/")
+              ) {
+                return "vendor-react";
+              }
+              if (id.includes("/leaflet/")) {
+                return "vendor-leaflet";
+              }
+              if (id.includes("/jspdf/")) {
+                return "vendor-pdf";
+              }
+              if (id.includes("/luxon/")) {
+                return "vendor-luxon";
+              }
+              return undefined;
+            },
+          },
+        },
+      },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

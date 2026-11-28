@@ -36,14 +36,7 @@ import {
   QuickComparison,
   ShapeOverlayControl,
 } from "./MapOverlays";
-import {
-  FleetDialog,
-  PlanistLoginDialog,
-  ReportDialog,
-  SettingsDialog,
-  StepsDrawer,
-  Toast,
-} from "./Modals";
+import { Toast } from "./Toast";
 import {
   loadVisibility,
   saveVisibility,
@@ -55,35 +48,16 @@ const PlanningPanel = lazy(() => import("./PlanningPanel"));
 const LineRouteEditorPanel = lazy(() => import("./LineRouteEditorPanel"));
 const KursowkiDialog = lazy(() => import("./KursowkiDialog"));
 const LinesDialog = lazy(() => import("./LinesDialog"));
-const ScheduleDiffDialog = lazy(() => import("./ScheduleDiffDialog"));
-const RouteAuditDialog = lazy(() => import("./RouteAuditDialog"));
-const CustomGtfsBuilderDialog = lazy(() => import("./CustomGtfsBuilderDialog"));
 const CustomGtfsMapDrawToolbar = lazy(() => import("./CustomGtfsMapDrawToolbar"));
-const PdfExportDialog = lazy(() => import("./PdfExportDialog"));
 const TripPlannerPanel = lazy(() => import("./TripPlannerPanel"));
 const CoursePreviewCard = lazy(() => import("./CoursePreviewCard"));
+const WorkspaceDialogs = lazy(() => import("./WorkspaceDialogs"));
 import CourseNavigationHud from "./CourseNavigationHud";
-import { useSharedClock } from "@/lib/core/runtimeHub";
-import {
-  buildCourseNavRoute,
-  evaluateCourseNavigation,
-  type CourseNavRoute,
-} from "@/lib/courseNavigation";
-import {
-  journeyToMapGeometry,
-  journeyToRepairedMapGeometry,
-  type Journey,
-  type JourneyPoint as TripPoint,
-} from "@/lib/journeyPlanner";
-import {
-  deleteTravelerPlace,
-  fetchLastTravelerTrip,
-  fetchSavedTravelerPlaces,
-  saveLastTravelerTrip,
-  saveTravelerPlace,
-  type SavedTravelerPlace,
-} from "@/lib/travelerPlaces";
-import type { TripMapPlan } from "./MapView";
+import { useLiveFleetState } from "@/lib/hooks/useLiveFleetState";
+import { useCourseNavigation } from "@/lib/hooks/useCourseNavigation";
+import { usePlannerRouting } from "@/lib/hooks/usePlannerRouting";
+import { useTravelerJourneyState } from "@/lib/hooks/useTravelerJourneyState";
+import type { JourneyPoint as TripPoint } from "@/lib/journeyPlanner";
 import { APP_NAME, APP_TITLE, TRAVELER_TITLE } from "@/config/branding";
 import {
   cleanBrigade,
@@ -99,7 +73,6 @@ import {
   createEmptyWaypoint,
   createInitialWaypoints,
   DEFAULT_BUS_SPEED,
-  EMPTY_ROUTE,
   isWaypointSet,
 } from "@/lib/data";
 import {
@@ -114,17 +87,9 @@ import {
   WALBRZYCH_ZOOM,
   type Bounds,
 } from "@/lib/busStops";
-import {
-  getLatestFleetSnapshot,
-  onRuntimeEvent,
-  setFleetDemand,
-  subscribeSharedClock,
-  triggerFleetRefresh,
-  type LiveFleetSnapshot,
-} from "@/lib/core/runtimeHub";
-import { coordKey } from "@/lib/core/spatial";
+import { onRuntimeEvent } from "@/lib/core/runtimeHub";
+import { coordKey, polylineLengthMeters } from "@/lib/core/spatial";
 import PerfHud from "@/components/PerfHud";
-import { isPlannerOnlyLine } from "@/lib/core/text";
 import { formatWarsawClock, readStorageText, writeStorageJson, writeStorageText } from "@/lib/core/time";
 import { setOperatorOverride } from "@/lib/engine/fleetOperators";
 import { courseStopTarget } from "@/lib/courseRoute";
@@ -140,13 +105,9 @@ import {
   type GtfsPreviewStatus,
 } from "@/lib/engine/gtfsStore";
 import { getOverridesSummary, initLineRouteOverrides } from "@/lib/engine/lineRouteOverrides";
-import { detectTrafficSignalsAlongRoute } from "@/lib/engine/trafficSignals";
-import { detectTurnaroundSpotsAlongRoute, type TurnaroundSpot } from "@/lib/engine/turnarounds";
 import {
-  buildComparisons,
   currentStepForProgress,
   estimateAverageSpeed,
-  fetchRoute,
   formatDistance,
   formatDuration,
   haversine,
@@ -154,26 +115,19 @@ import {
   isValidSpeed,
   pointAtProgress,
   reverseGeocode,
-  scaleRouteTimes,
   stopsAlongRoute,
 } from "@/lib/geo";
 import {
-  calculateJourney,
   defaultSchedule,
   scheduleSummaryLines,
   SCHEDULE_STORAGE_KEY,
-  withJourney,
 } from "@/lib/schedule";
 import {
-  buildPlanKey,
-  buildSnapshot,
   cleanSpeeds,
   clearLastRoute,
   defaultSpeedMap,
   loadLastRoute,
-  snapshotSignature,
   SPEEDS_KEY,
-  writeSnapshot,
   type LastRouteSnapshot,
 } from "@/lib/lastRoute";
 import { FLEET_STORAGE_KEY, replaceFleet } from "@/lib/fleet";
@@ -184,15 +138,12 @@ import {
   type BrigadeInfo,
   type BusStop,
   type LiveBusVehicle,
-  type LiveTrafficSummary,
   type MapStyle,
   type Place,
-  type RouteData,
   type RouteStep,
   type ScheduleSettings,
   type SpeedOverrides,
   type ThemeMode,
-  type TrafficSignalIntersection,
   type VehicleId,
   type VehicleProfile,
   type WalbrzychOperatorKey,
@@ -205,6 +156,7 @@ const THEME_STORAGE_KEY = "mapplaner.theme";
 const ROLE_STORAGE_KEY = "mapplaner.role";
 const EMPTY_STRING_SET = new Set<string>();
 const EMPTY_NEAR_MAP = new Map<string, number>();
+const EMPTY_LIVE_VEHICLES: LiveBusVehicle[] = [];
 
 function loadRole(): AppRole {
   return readStorageText(ROLE_STORAGE_KEY) === "planner" ? "planner" : "traveler";
@@ -302,9 +254,6 @@ function MapPlanerWorkspace() {
   const [schedule, setSchedule] = useState<ScheduleSettings>(
     () => boot?.schedule ?? defaultSchedule()
   );
-  const [clockNow, setClockNow] = useState(() => Date.now());
-  const [route, setRoute] = useState<RouteData>(() => EMPTY_ROUTE);
-  const [resolvedKey, setResolvedKey] = useState("");
 
   // Bus stops
   const [busStops, setBusStops] = useState<BusStop[]>(() => getSnapshotBusStops());
@@ -344,143 +293,40 @@ function MapPlanerWorkspace() {
     if (role !== "planner") setPlannerLoginOpen(true);
   }, [role]);
 
-  // Planer podróży dla pasażera (kolorowy doradca "do jakiego wozu wejść")
-  const [tripOpen, setTripOpen] = useState(false);
-  const [tripPick, setTripPick] = useState<"origin" | "destination" | null>(null);
-  const [tripOrigin, setTripOrigin] = useState<TripPoint | null>(null);
-  const [tripDest, setTripDest] = useState<TripPoint | null>(null);
-  const [tripPreview, setTripPreview] = useState<Journey | null>(null);
-  const [tripNonce, setTripNonce] = useState(0);
-  const [savedPlaces, setSavedPlaces] = useState<SavedTravelerPlace[]>([]);
-  const [lastSavedTrip, setLastSavedTrip] = useState<{
-    origin: TripPoint | null;
-    destination: TripPoint | null;
-  } | null>(null);
-  const hasModifiedTripRef = useRef(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = useCallback((message: string) => setToastMessage(message), []);
+  const closeToast = useCallback(() => setToastMessage(null), []);
+  const clearContextMenu = useCallback(() => setContextMenu(null), []);
+  const clearSelectedStop = useCallback(() => setSelectedStop(null), []);
 
-  useEffect(() => {
-    if (!tripPick) return;
-    const cancelPick = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setTripPick(null);
-    };
-    window.addEventListener("keydown", cancelPick);
-    return () => window.removeEventListener("keydown", cancelPick);
-  }, [tripPick]);
-
-  // Wczytaj zapisane miejsca i ostatnie punkty pasażera z bazy danych
-  useEffect(() => {
-    let cancelled = false;
-    fetchSavedTravelerPlaces()
-      .then((places) => {
-        if (!cancelled) setSavedPlaces(places);
-      })
-      .catch(() => undefined);
-    fetchLastTravelerTrip()
-      .then((last) => {
-        if (!cancelled && (last.origin || last.destination)) {
-          setLastSavedTrip(last);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Zapisuj wybrane przez użytkownika punkty startu/celu w bazie danych
-  useEffect(() => {
-    if (!hasModifiedTripRef.current) return;
-    if (!tripOrigin && !tripDest) return;
-    const snapshot = { origin: tripOrigin, destination: tripDest };
-    setLastSavedTrip(snapshot);
-    const timer = window.setTimeout(() => {
-      void saveLastTravelerTrip(snapshot.origin, snapshot.destination).catch(() => undefined);
-    }, 650);
-    return () => window.clearTimeout(timer);
-  }, [tripOrigin, tripDest]);
-
-  const resolveTripPointAddress = useCallback(
-    (kind: "origin" | "destination", lat: number, lon: number) => {
-      reverseGeocode(lat, lon)
-        .then((place) => {
-          if (!place?.short) return;
-          const nextLabel = place.short.slice(0, 56);
-          const setter = kind === "origin" ? setTripOrigin : setTripDest;
-          setter((current) =>
-            current &&
-            !current.stopId &&
-            Math.abs(current.lat - lat) < 0.00001 &&
-            Math.abs(current.lon - lon) < 0.00001
-              ? { ...current, label: nextLabel }
-              : current
-          );
-        })
-        .catch(() => undefined);
-    },
-    []
-  );
-
-  const updateTripOrigin = useCallback((point: TripPoint | null) => {
-    hasModifiedTripRef.current = true;
-    setTripOrigin(point);
-    setTripPreview(null);
-  }, []);
-  const updateTripDest = useCallback((point: TripPoint | null) => {
-    hasModifiedTripRef.current = true;
-    setTripDest(point);
-    setTripPreview(null);
-  }, []);
-
-  /** Geometria planu dla mapy: start, cel, odcinki piesze i autobusowe, przesiadki. */
-  // Bus legs with GTFS shape gaps bridged by road geometry (async, per selected journey).
-  const [repairedTripLegs, setRepairedTripLegs] = useState<{
-    journeyId: string;
-    legs: ReturnType<typeof journeyToMapGeometry>["legs"];
-  } | null>(null);
-  useEffect(() => {
-    if (!tripPreview || isPlanner) return;
-    const controller = new AbortController();
-    const journey = tripPreview;
-    journeyToRepairedMapGeometry(journey, controller.signal)
-      .then((geometry) => {
-        if (!controller.signal.aborted) {
-          setRepairedTripLegs({ journeyId: journey.id, legs: geometry.legs });
-        }
-      })
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [tripPreview, isPlanner]);
-
-  const tripMapPlan = useMemo<TripMapPlan | null>(() => {
-    if (isPlanner) return null;
-    if (!tripOrigin && !tripDest) return null;
-    const geometry = tripPreview ? journeyToMapGeometry(tripPreview) : { legs: [], markers: [] };
-    const legs =
-      tripPreview && repairedTripLegs?.journeyId === tripPreview.id
-        ? repairedTripLegs.legs
-        : geometry.legs;
-    return {
-      origin: tripOrigin,
-      destination: tripDest,
-      legs,
-      markers: geometry.markers,
-      key: tripPreview?.id ?? "points",
-    };
-  }, [isPlanner, tripOrigin, tripDest, tripPreview, repairedTripLegs]);
-
-  // Traffic signals along route
-  const [trafficSignals, setTrafficSignals] = useState<TrafficSignalIntersection[]>([]);
-  const [signalsLoading, setSignalsLoading] = useState(false);
-
-  // Turn-around spots for long vehicles (12 m+): roundabouts and large crossings only
-  const [turnaroundSpots, setTurnaroundSpots] = useState<TurnaroundSpot[]>([]);
-
-  // Live GPS Wałbrzych buses (MZUK, ŚKA)
-  const [liveVehicles, setLiveVehicles] = useState<LiveBusVehicle[]>([]);
-  const [liveTraffic, setLiveTraffic] = useState<LiveTrafficSummary | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [operatorFilter, setOperatorFilter] = useState<"all" | WalbrzychOperatorKey>("all");
-  const [selectedLiveBus, setSelectedLiveBus] = useState<LiveBusVehicle | null>(null);
+  const {
+    tripOpen,
+    setTripOpen,
+    tripPick,
+    setTripPick,
+    tripOrigin,
+    tripDest,
+    setTripPreview,
+    tripNonce,
+    setTripNonce,
+    savedPlaces,
+    lastSavedTrip,
+    resolveTripPointAddress,
+    updateTripOrigin,
+    updateTripDest,
+    tripMapPlan,
+    setTravelerStopEndpoint,
+    handleSwapTripPoints,
+    handleClearTripPoints,
+    handleSaveContextPlace,
+    handleDeleteSavedPlace,
+    handleRestoreLastTrip,
+  } = useTravelerJourneyState({
+    isPlanner,
+    showToast,
+    onClearContextMenu: clearContextMenu,
+    onClearSelectedStop: clearSelectedStop,
+  });
 
   // Kursówki dialog & shape overlay
   const [kursowkiOpen, setKursowkiOpen] = useState(false);
@@ -493,18 +339,24 @@ function MapPlanerWorkspace() {
     setScheduleDiffOpen(true);
   }, [isPlanner]);
 
-  // Nawigacja kierowcy/użytkownika po całym przebiegu kursu linii
-  const [courseNavRoute, setCourseNavRoute] = useState<CourseNavRoute | null>(null);
-  const [courseNavMode, setCourseNavMode] = useState<"gps" | "sim">("gps");
-  const [courseNavSimMeters, setCourseNavSimMeters] = useState(0);
-  const [courseNavSimPlaying, setCourseNavSimPlaying] = useState(false);
-  const [courseNavSimSpeed, setCourseNavSimSpeed] = useState<1 | 3 | 8>(1);
-  const [courseNavStartedAt, setCourseNavStartedAt] = useState<number>(() => Date.now());
-  const [courseNavPunctualityMode, setCourseNavPunctualityMode] =
-    useState<"schedule" | "relative">("schedule");
-  const [courseNavManualStopOffset, setCourseNavManualStopOffset] = useState(0);
-  const [courseNavFollowCamera, setCourseNavFollowCamera] = useState(true);
-  const courseNavPrevAlongRef = useRef(0);
+  const {
+    liveVehicles,
+    liveTraffic,
+    operatorFilter,
+    setOperatorFilter,
+    selectedLiveBus,
+    setSelectedLiveBus,
+    fetchLiveBuses,
+    visibleLiveBuses,
+    hasLiveBuses,
+  } = useLiveFleetState({
+    isPlanner,
+    showLiveBuses,
+    tripOpen,
+    kursowkiOpen,
+    hasSelectedStop: Boolean(selectedStop),
+  });
+
   const [routeAuditOpen, setRouteAuditOpen] = useState(false);
   const [customGtfsBuilderOpen, setCustomGtfsBuilderOpen] = useState(false);
   const [customGtfsMapSession, setCustomGtfsMapSession] =
@@ -551,10 +403,6 @@ function MapPlanerWorkspace() {
   // Route editing & dialogs
   const [addMode, setAddMode] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
-  const [routingError, setRoutingError] = useState("");
-  const [isRouting, setIsRouting] = useState(false);
-  const [fitNonce, setFitNonce] = useState(0);
-  const [refreshTick, setRefreshTick] = useState(0);
   const [clearNonce, setClearNonce] = useState(0);
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
@@ -612,9 +460,6 @@ function MapPlanerWorkspace() {
     if (isPlanner) setSettingsOpen(true);
   }, [isPlanner]);
 
-  const [navActive, setNavActive] = useState(false);
-  const [navPlaying, setNavPlaying] = useState(false);
-  const [navProgress, setNavProgress] = useState(0);
   const [pickTarget, setPickTarget] = useState<string | null>(null);
   const [focus, setFocus] = useState<{
     lat: number;
@@ -622,7 +467,6 @@ function MapPlanerWorkspace() {
     zoom?: number;
     nonce: number;
   } | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // GPS użytkownika: prośba o zgodę przy otwarciu strony, potem centrowanie mapy.
   const { status: locationStatus, location: userLocation, start: startLocation } =
@@ -635,79 +479,60 @@ function MapPlanerWorkspace() {
   const mapRef = useRef<MapHandle | null>(null);
   const mapAreaRef = useRef<HTMLElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const requestIdRef = useRef(0);
-  const pendingFitRef = useRef(false);
   const busAbortRef = useRef<AbortController | null>(null);
-  const arrivalToastRef = useRef(false);
-  const lastSavedSignatureRef = useRef("");
-  const skipNextRouteKeyRef = useRef<string | null>(null);
-  const bootPlanKeyRef = useRef<string | null>(null);
-  const resolvedKeyRef = useRef("");
 
   const waypointsRef = useRef(waypoints);
   waypointsRef.current = waypoints;
-  const avoidRef = useRef(avoid);
-  avoidRef.current = avoid;
 
-  const showToast = useCallback((message: string) => setToastMessage(message), []);
-  const closeToast = useCallback(() => setToastMessage(null), []);
-
-  const fetchLiveBuses = useCallback(async (force = false) => {
-    await triggerFleetRefresh(force);
+  const collapseMobileSheet = useCallback(() => {
+    setMobileExpanded(false);
   }, []);
 
-  // Subscribe once to the central deduplicated live-fleet stream (re-renders only when fleet changes)
-  useEffect(() => {
-    // Każdy tick floty to pełny re-render planisty, a pozycje często się nie
-    // zmieniają (te same wozy, ten sam przystanek). Porównujemy więc odcisk
-    // danych i pomijamy identyczne aktualizacje — inaczej mapa „drga” co 2,5 s.
-    const fleetSignature = (vehicles: LiveBusVehicle[]) =>
-      vehicles
-        .map(
-          (vehicle) =>
-            `${vehicle.vehicleId}:${vehicle.lat.toFixed(5)}:${vehicle.lon.toFixed(5)}:` +
-            `${vehicle.delaySeconds}:${vehicle.speedKmh?.toFixed(1) ?? ""}:` +
-            `${vehicle.routeName}:${vehicle.kursowka ?? ""}:${vehicle.bearing?.toFixed(0) ?? ""}:` +
-            `${vehicle.tripId ?? ""}:${vehicle.upcomingStops[0]?.sequence ?? ""}:${vehicle.upcomingStops[0]?.scheduledDeparture ?? ""}`
-        )
-        .join("|");
-    let lastVehicleSignature = "";
-    const applySnapshot = (snapshot: LiveFleetSnapshot) => {
-      const signature = fleetSignature(snapshot.vehicles);
-      setLiveTraffic(snapshot.traffic);
-      if (signature === lastVehicleSignature) return;
-      lastVehicleSignature = signature;
-      setLiveVehicles(snapshot.vehicles);
-      setSelectedLiveBus((prev) =>
-        prev ? snapshot.vehicles.find((v) => v.vehicleId === prev.vehicleId) ?? prev : null
-      );
-    };
-
-    const initial = getLatestFleetSnapshot();
-    if (initial) {
-      applySnapshot(initial);
-    }
-    const offUpdate = onRuntimeEvent("fleet:updated", ({ snapshot }) => {
-      applySnapshot(snapshot);
-    });
-    const offLoading = onRuntimeEvent("fleet:loading", setLiveLoading);
-    return () => {
-      offUpdate();
-      offLoading();
-    };
-  }, []);
-
-  // Adaptive single-timer demand: fast (2.5s) when tracking a bus, standard (4s) when visible,
-  // eco (20s) when hidden on map & panels closed, and 0Hz when browser tab is hidden.
-  const hasSelectedLiveBus = Boolean(selectedLiveBus);
-  const liveDemandActive =
-    showLiveBuses || tripOpen || kursowkiOpen || Boolean(selectedStop);
-  useEffect(() => {
-    return setFleetDemand("workspace", {
-      active: liveDemandActive,
-      fast: hasSelectedLiveBus,
-    });
-  }, [liveDemandActive, hasSelectedLiveBus]);
+  const {
+    route,
+    routingError,
+    isRouting,
+    fitNonce,
+    clockNow,
+    refreshClockNow,
+    trafficSignals,
+    signalsLoading,
+    turnaroundSpots,
+    activeVehicle,
+    assignedCount,
+    routeReady,
+    activeRoute,
+    comparisons,
+    metrics,
+    scheduleEvaluation,
+    exportReady,
+    navigationRoute,
+    navActive,
+    navPlaying,
+    navProgress,
+    stopNavigation,
+    startNavigation,
+    toggleNavigation,
+    queueFitOnNextRoute,
+    resetRoutingState,
+    requestRouteRecalculate,
+    saveCurrentRouteSnapshot,
+    applySavedBrigadeRoute,
+  } = usePlannerRouting({
+    isPlanner,
+    addMode,
+    waypoints,
+    avoid,
+    vehicle,
+    fleet,
+    speeds,
+    schedule,
+    brigade,
+    liveTraffic,
+    mapRef,
+    showToast,
+    onCollapseMobileSheet: collapseMobileSheet,
+  });
 
   // Trigger initial client-side GTFS seed check once
   useEffect(() => {
@@ -747,117 +572,11 @@ function MapPlanerWorkspace() {
     };
   }, [contextMenu]);
 
-  const readyForRouting = waypoints.length >= 2 && waypoints.every(isWaypointSet);
-  const assignedCount = useMemo(() => waypoints.filter(isWaypointSet).length, [waypoints]);
-
-  const planKey = buildPlanKey(waypoints, avoid);
-  const routeReady =
-    isPlanner &&
-    readyForRouting &&
-    resolvedKey === planKey &&
-    route.engine === "osrm" &&
-    !isRouting &&
-    !addMode &&
-    !routingError;
-  // The drawn route stays visible while a recalculation is in flight (as a preview) so the
-  // line can keep being dragged / clicked to add points; it is only removed on an explicit
-  // clear or a routing failure. Travelers never see a planned route.
-  const activeRoute =
-    isPlanner && route.engine === "osrm" && route.coords.length >= 2 ? route : EMPTY_ROUTE;
   // A saved "near route" preference must not blank a fresh map with no route.
   const stopDisplay =
     visibility.stops === "route" && activeRoute.coords.length < 2 ? "all" : visibility.stops;
 
-  // Detect traffic signals whenever route geometry updates
-  useEffect(() => {
-    if (activeRoute.coords.length < 2) {
-      setTrafficSignals([]);
-      return;
-    }
-    const controller = new AbortController();
-    setSignalsLoading(true);
-    detectTrafficSignalsAlongRoute(activeRoute.coords, controller.signal)
-      .then((res) => {
-        if (!controller.signal.aborted) {
-          setTrafficSignals(res.intersections);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setTrafficSignals([]);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSignalsLoading(false);
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [activeRoute.coords]);
-
-  const activeVehicle = fleet.find((item) => item.id === vehicle) ?? fleet[0];
-  const turnaroundsActive =
-    isPlanner && (activeVehicle?.lengthM ?? 0) >= 12 && activeRoute.coords.length >= 2;
-  useEffect(() => {
-    if (!turnaroundsActive) {
-      setTurnaroundSpots([]);
-      return;
-    }
-    const controller = new AbortController();
-    detectTurnaroundSpotsAlongRoute(activeRoute.coords, controller.signal)
-      .then((res) => {
-        if (!controller.signal.aborted) setTurnaroundSpots(res.spots);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setTurnaroundSpots([]);
-      });
-    return () => controller.abort();
-  }, [turnaroundsActive, activeRoute.coords]);
-
-  const baseComparisons = useMemo(
-    () => buildComparisons(activeRoute, undefined, avoid, speeds),
-    [activeRoute, avoid, speeds, fleet]
-  );
-
-  const scheduleContext = useMemo(
-    () => ({
-      signalCount: trafficSignals.length,
-      liveDelayPercent: liveTraffic?.recommendedPeakPercent,
-    }),
-    [trafficSignals.length, liveTraffic?.recommendedPeakPercent]
-  );
-
-  const scheduledProfiles = useMemo(
-    () =>
-      baseComparisons.map((metric) => {
-        const evaluation = calculateJourney(metric.duration, schedule, clockNow, scheduleContext);
-        return { metric: withJourney(metric, evaluation), evaluation };
-      }),
-    [baseComparisons, schedule, clockNow, scheduleContext]
-  );
-
-  const comparisons = useMemo(
-    () => scheduledProfiles.map((item) => item.metric),
-    [scheduledProfiles]
-  );
-  const activePlan =
-    scheduledProfiles.find((item) => item.metric.id === vehicle) ?? scheduledProfiles[0];
-  const metrics = activePlan.metric;
-  const scheduleEvaluation = activePlan.evaluation;
-
-  const exportReady = routeReady && !!metrics.journey;
-  const navigationRoute = useMemo(
-    () => scaleRouteTimes(activeRoute, metrics.duration),
-    [activeRoute, metrics.duration]
-  );
   const visibleStops = useMemo(() => filterStops(busStops, busQuery), [busStops, busQuery]);
-  const visibleLiveBuses = useMemo(() => {
-    // Special "S" lines stay planner-only on the live map as well.
-    const base = isPlanner
-      ? liveVehicles
-      : liveVehicles.filter((v) => !isPlannerOnlyLine(v.routeName));
-    return operatorFilter === "all" || operatorFilter === "other"
-      ? base
-      : base.filter((v) => v.operatorKey === operatorFilter);
-  }, [liveVehicles, operatorFilter, isPlanner]);
 
   const usedStopKeys = useMemo(
     () =>
@@ -912,29 +631,6 @@ function MapPlanerWorkspace() {
   useEffect(() => {
     persistSavedBrigades(savedBrigades);
   }, [savedBrigades]);
-
-  useEffect(() => {
-    if (!isPlanner) return;
-    return subscribeSharedClock(30_000, setClockNow);
-  }, [isPlanner]);
-
-  useEffect(() => {
-    if (!routeReady || addMode) return;
-    const snapshot = buildSnapshot({
-      waypoints,
-      vehicle,
-      fleet,
-      speeds,
-      schedule,
-      avoid,
-      brigade,
-      route,
-    });
-    const signature = snapshotSignature(snapshot);
-    if (signature === lastSavedSignatureRef.current) return;
-    lastSavedSignatureRef.current = signature;
-    writeSnapshot(snapshot);
-  }, [routeReady, addMode, planKey, route, waypoints, vehicle, fleet, speeds, schedule, avoid, brigade]);
 
   useEffect(() => {
     const query = window.matchMedia("(min-width: 1024px)");
@@ -994,214 +690,49 @@ function MapPlanerWorkspace() {
     saveVisibility(visibility);
   }, [visibility]);
 
-  useEffect(() => {
-    if (!isPlanner) return;
-    if (skipNextRouteKeyRef.current === planKey) {
-      skipNextRouteKeyRef.current = null;
-      return;
+  const clearBusAndCourseTargetForNav = useCallback(() => {
+    setCourseTargetStop(null);
+    setBusOverlay(false);
+    setSelectedLiveBus(null);
+  }, [setSelectedLiveBus]);
+
+  const collapseMobileDrawersForNav = useCallback(() => {
+    if (!isRailViewportRef.current) {
+      setMapSidebarOpen(false);
+      setCourseDrawerOpen(false);
     }
-    if (bootPlanKeyRef.current === planKey && refreshTick === 0) {
-      return;
-    }
-    bootPlanKeyRef.current = null;
-
-    if (addMode || !readyForRouting) {
-      requestIdRef.current += 1;
-      resolvedKeyRef.current = "";
-      setIsRouting(false);
-      setRoutingError("");
-      setRoute(EMPTY_ROUTE);
-      setResolvedKey("");
-      setTrafficSignals([]);
-      return;
-    }
-
-    // Keep the previously drawn route visible as a preview until OSRM responds
-    // (or fails) — clearing it here would flash the map blank and block adding
-    // further points by dragging the line.
-
-    const controller = new AbortController();
-    const requestId = ++requestIdRef.current;
-    setIsRouting(true);
-    setRoutingError("");
-    const timer = window.setTimeout(() => {
-      fetchRoute({
-        waypoints: waypointsRef.current,
-        avoid: avoidRef.current,
-        signal: controller.signal,
-      })
-        .then((data) => {
-          if (controller.signal.aborted || requestId !== requestIdRef.current) return;
-          resolvedKeyRef.current = planKey;
-          setRoute(data);
-          setResolvedKey(planKey);
-          if (pendingFitRef.current) {
-            pendingFitRef.current = false;
-            setFitNonce((current) => current + 1);
-          }
-        })
-        .catch((error: unknown) => {
-          if (controller.signal.aborted || requestId !== requestIdRef.current) return;
-          resolvedKeyRef.current = "";
-          setRoute(EMPTY_ROUTE);
-          setResolvedKey("");
-          setTrafficSignals([]);
-          setRoutingError(
-            error instanceof Error
-              ? error.message
-              : "Nie udało się pobrać trasy. Spróbuj ponownie."
-          );
-        })
-        .finally(() => {
-          if (!controller.signal.aborted && requestId === requestIdRef.current) {
-            setIsRouting(false);
-          }
-        });
-    }, 650);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [planKey, refreshTick, addMode, readyForRouting]);
-
-  useEffect(() => {
-    if (!navActive || !navPlaying) return;
-    const interval = window.setInterval(() => {
-      setNavProgress((current) => Math.min(1, current + 0.0055));
-    }, 170);
-    return () => window.clearInterval(interval);
-  }, [navActive, navPlaying]);
-
-  useEffect(() => {
-    if (navActive && navProgress >= 1 && !arrivalToastRef.current) {
-      arrivalToastRef.current = true;
-      setNavPlaying(false);
-      showToast("Dojechałeś do celu. Dziękujemy za podróż!");
-    }
-    if (!navActive) arrivalToastRef.current = false;
-  }, [navActive, navProgress, showToast]);
-
-  const stopNavigation = useCallback(() => {
-    setNavActive(false);
-    setNavPlaying(false);
-    setNavProgress(0);
-    arrivalToastRef.current = false;
   }, []);
 
-  const stopCourseNavigation = useCallback(() => {
-    setCourseNavRoute(null);
-    setCourseNavSimPlaying(false);
-    setCourseNavSimMeters(0);
-    setCourseNavManualStopOffset(0);
-    courseNavPrevAlongRef.current = 0;
-  }, []);
-
-  const startCourseNavigation = useCallback(
-    (source: NonNullable<typeof kursowkaOverlay> | NonNullable<NonNullable<typeof kursowkaOverlay>["course"]>) => {
-      const built = buildCourseNavRoute(source);
-      if (!built) {
-        showToast("Brak geometrii trasy do uruchomienia nawigacji.");
-        return;
-      }
-      stopNavigation();
-      setCourseTargetStop(null);
-      setBusOverlay(false);
-      setSelectedLiveBus(null);
-      courseNavPrevAlongRef.current = 0;
-      setCourseNavManualStopOffset(0);
-      setCourseNavSimMeters(0);
-      setCourseNavStartedAt(Date.now());
-      setCourseNavFollowCamera(true);
-
-      const now = Date.now();
-      const withinScheduleWindow =
-        built.startMs !== null &&
-        built.endMs !== null &&
-        now >= built.startMs - 45 * 60_000 &&
-        now <= built.endMs + 45 * 60_000;
-      setCourseNavPunctualityMode(withinScheduleWindow ? "schedule" : "relative");
-
-      const gpsUnavailable =
-        locationStatus === "denied" || locationStatus === "unavailable";
-      if (gpsUnavailable) {
-        setCourseNavMode("sim");
-        setCourseNavSimPlaying(true);
-      } else {
-        startLocation();
-        setCourseNavMode("gps");
-        setCourseNavSimPlaying(false);
-      }
-
-      setCourseNavRoute(built);
-      if (!isRailViewportRef.current) {
-        setMapSidebarOpen(false);
-        setCourseDrawerOpen(false);
-      }
-
-      const startPt = built.path[0];
-      if (startPt) {
-        mapRef.current?.centerOn(startPt[0], startPt[1], 16);
-      }
-      showToast(
-        gpsUnavailable
-          ? `Uruchomiono symulację przejazdu: ${built.title}.`
-          : `Nawigacja po trasie kursu uruchomiona: ${built.title}.`,
-      );
-    },
-    [locationStatus, showToast, startLocation, stopNavigation],
-  );
-
-  useEffect(() => {
-    if (!courseNavRoute || courseNavMode !== "sim" || !courseNavSimPlaying) return;
-    // Realistyczna średnia prędkość jazdy autobusu miejskiego ~34 km/h (9.5 m/s) × mnożnik
-    const stepMs = 120;
-    const metersPerTick = 9.5 * (stepMs / 1000) * courseNavSimSpeed;
-    const timer = window.setInterval(() => {
-      setCourseNavSimMeters((prev) => {
-        const next = Math.min(courseNavRoute.totalMeters, prev + metersPerTick);
-        if (next >= courseNavRoute.totalMeters) {
-          setCourseNavSimPlaying(false);
-        }
-        return next;
-      });
-    }, stepMs);
-    return () => window.clearInterval(timer);
-  }, [courseNavRoute, courseNavMode, courseNavSimPlaying, courseNavSimSpeed]);
-
-  const courseNavClock = useSharedClock(1000, Boolean(courseNavRoute));
-  const courseNavState = useMemo(() => {
-    if (!courseNavRoute) return null;
-    const evaluated = evaluateCourseNavigation({
-      route: courseNavRoute,
-      mode: courseNavMode,
-      gps: userLocation
-        ? {
-            lat: userLocation.lat,
-            lon: userLocation.lon,
-            accuracy: userLocation.accuracy,
-            speedKmh: userLocation.speedKmh,
-            heading: userLocation.heading,
-          }
-        : null,
-      simMeters: courseNavSimMeters,
-      prevAlongMeters: courseNavPrevAlongRef.current,
-      manualStopOffset: courseNavManualStopOffset,
-      nowMs: courseNavClock,
-      startedAtMs: courseNavStartedAt,
-      punctualityMode: courseNavPunctualityMode,
-    });
-    courseNavPrevAlongRef.current = evaluated.alongMeters;
-    return evaluated;
-  }, [
+  const {
     courseNavRoute,
     courseNavMode,
-    userLocation,
-    courseNavSimMeters,
-    courseNavManualStopOffset,
-    courseNavClock,
+    courseNavSimPlaying,
+    courseNavSimSpeed,
     courseNavStartedAt,
     courseNavPunctualityMode,
-  ]);
+    courseNavFollowCamera,
+    setCourseNavFollowCamera,
+    courseNavState,
+    courseNavProgressOverlay,
+    stopCourseNavigation,
+    startCourseNavigation,
+    handleNavModeChange,
+    handleToggleSimPlay,
+    handleCycleSimSpeed,
+    handleRecenterNavCamera,
+    handleTogglePunctualityMode,
+    handleStepNavStop,
+    handleJumpToNavStop,
+  } = useCourseNavigation({
+    userLocation,
+    locationStatus,
+    startLocation,
+    stopNavigation,
+    onClearBusAndCourseTarget: clearBusAndCourseTargetForNav,
+    onCollapseMobileDrawers: collapseMobileDrawersForNav,
+    mapRef,
+    showToast,
+  });
 
   const handleRoleChange = (next: AppRole) => {
     if (next === role) return;
@@ -1226,29 +757,6 @@ function MapPlanerWorkspace() {
         : "Wylogowano. Widok użytkownika: mapa, GPS, rozkład oraz wybór startu i celu prawym na mapie."
     );
   };
-
-  const startNavigation = useCallback(() => {
-    if (!exportReady) {
-      showToast("Najpierw wyznacz aktualną trasę i podaj poprawny termin.");
-      return;
-    }
-    arrivalToastRef.current = false;
-    setNavProgress(0);
-    setNavActive(true);
-    setNavPlaying(true);
-    setMobileExpanded(false);
-    const start = waypointsRef.current[0];
-    if (isWaypointSet(start)) mapRef.current?.centerOn(start.lat, start.lon, 13);
-    showToast("Podgląd nawigacji uruchomiony.");
-  }, [showToast, exportReady]);
-
-  const toggleNavigation = useCallback(() => {
-    if (!navActive) {
-      startNavigation();
-      return;
-    }
-    setNavPlaying((current) => !current);
-  }, [navActive, startNavigation]);
 
   const loadBusStops = useCallback(async (
     bounds: Bounds,
@@ -1389,7 +897,7 @@ function MapPlanerWorkspace() {
         next.splice(Math.min(Math.max(slot + 1, 1), next.length - 1), 0, point);
         return next;
       });
-      pendingFitRef.current = true;
+      queueFitOnNextRoute();
       setMobileExpanded(false);
       showToast(
         effectiveRole === "via"
@@ -1399,7 +907,7 @@ function MapPlanerWorkspace() {
             : `Meta ustawiona na przystanku ${stopDisplayName(stop)}.`
       );
     },
-    [showToast, stopNavigation, route, routeReady]
+    [showToast, stopNavigation, route, routeReady, queueFitOnNextRoute]
   );
 
   const addStopsAlongRoute = useCallback(() => {
@@ -1445,14 +953,14 @@ function MapPlanerWorkspace() {
     setAddMode(false);
     setPickTarget(null);
     setWaypoints(working);
-    pendingFitRef.current = true;
+    queueFitOnNextRoute();
     setMobileExpanded(false);
     showToast(
       added === 1
         ? "Dodano 1 przystanek przy trasie."
         : `Dodano ${added} przystanków w kolejności przejazdu.`
     );
-  }, [busStops, route, routeReady, showToast, stopNavigation]);
+  }, [busStops, route, routeReady, showToast, stopNavigation, queueFitOnNextRoute]);
 
   // Do not automatically abandon Wałbrzych when GPS is far from its stops.
   // Explicitly pressing the location button still works anywhere in the world.
@@ -1500,7 +1008,7 @@ function MapPlanerWorkspace() {
     options: { fit?: boolean; resolveAddress?: boolean } = {}
   ) => {
     stopNavigation();
-    if (options.fit) pendingFitRef.current = true;
+    if (options.fit) queueFitOnNextRoute();
     setWaypoints((current) =>
       current.map((point) => {
         if (point.id !== id) return point;
@@ -1660,122 +1168,6 @@ function MapPlanerWorkspace() {
     showToast(`${target === "start" ? "Miejsce startowe" : "Miejsce końcowe"} ustawione.`);
   };
 
-  const setTravelerStopEndpoint = useCallback(
-    (stop: BusStop, target: "origin" | "destination") => {
-      const point: TripPoint = {
-        lat: stop.lat,
-        lon: stop.lon,
-        label: stopDisplayName(stop),
-        stopId: stop.gtfsId,
-        stopIds: stop.gtfsIds,
-      };
-      setSelectedStop(null);
-      setTripPick(null);
-      setTripOpen(true);
-      if (target === "origin") {
-        updateTripOrigin(point);
-        showToast(
-          tripDest
-            ? `Start: ${point.label} — wyznaczam połączenia.`
-            : `Start ustawiony na przystanku ${point.label}.`
-        );
-      } else {
-        updateTripDest(point);
-        showToast(
-          tripOrigin
-            ? `Cel: ${point.label} — wyznaczam połączenia.`
-            : `Cel ustawiony na przystanku ${point.label}.`
-        );
-      }
-    },
-    [showToast, tripDest, tripOrigin, updateTripDest, updateTripOrigin]
-  );
-
-  const handleSwapTripPoints = useCallback(() => {
-    if (!tripOrigin && !tripDest) return;
-    setContextMenu(null);
-    setTripPick(null);
-    hasModifiedTripRef.current = true;
-    const prevOrigin = tripOrigin;
-    const prevDest = tripDest;
-    setTripOrigin(prevDest);
-    setTripDest(prevOrigin);
-    setTripPreview(null);
-    setTripOpen(true);
-    showToast("Zamieniono miejsce startowe z docelowym.");
-  }, [showToast, tripDest, tripOrigin]);
-
-  const handleClearTripPoints = useCallback(() => {
-    setContextMenu(null);
-    setTripPick(null);
-    setTripOrigin(null);
-    setTripDest(null);
-    setTripPreview(null);
-    showToast("Wyczyszczono miejsce startowe i docelowe.");
-  }, [showToast]);
-
-  const handleSaveContextPlace = useCallback(async () => {
-    if (!contextMenu) return;
-    const { lat, lon, stop, addressLabel } = contextMenu;
-    setContextMenu(null);
-    let label = stop
-      ? stopDisplayName(stop)
-      : addressLabel || `Punkt (${lat.toFixed(5)}, ${lon.toFixed(5)})`;
-    if (!stop && !addressLabel) {
-      try {
-        const resolved = await reverseGeocode(lat, lon);
-        if (resolved?.short) label = resolved.short.slice(0, 56);
-      } catch {
-        /* Fallback to coordinate label */
-      }
-    }
-    try {
-      const saved = await saveTravelerPlace({
-        lat,
-        lon,
-        label,
-        stopId: stop?.gtfsId,
-        stopIds: stop?.gtfsIds,
-      });
-      if (saved) {
-        setSavedPlaces((current) => [
-          saved,
-          ...current.filter((item) => item.id !== saved.id),
-        ]);
-        showToast(`Zapisano miejsce: ${saved.label}.`);
-      } else {
-        showToast("Nie udało się zapisać miejsca.");
-      }
-    } catch {
-      showToast("Nie udało się zapisać miejsca.");
-    }
-  }, [contextMenu, showToast]);
-
-  const handleDeleteSavedPlace = useCallback(
-    async (id: number) => {
-      try {
-        const removed = await deleteTravelerPlace(id);
-        if (removed) {
-          setSavedPlaces((current) => current.filter((item) => item.id !== id));
-          showToast("Usunięto zapisane miejsce.");
-        }
-      } catch {
-        showToast("Nie udało się usunąć miejsca.");
-      }
-    },
-    [showToast]
-  );
-
-  const handleRestoreLastTrip = useCallback(() => {
-    if (!lastSavedTrip) return;
-    hasModifiedTripRef.current = true;
-    setTripOrigin(lastSavedTrip.origin);
-    setTripDest(lastSavedTrip.destination);
-    setTripPreview(null);
-    setTripOpen(true);
-    showToast("Przywrócono ostatnie punkty podróży.");
-  }, [lastSavedTrip, showToast]);
-
   const appendMapPoint = (lat: number, lon: number, slot?: number) => {
     const current = waypointsRef.current;
     const firstId = current[0]?.id;
@@ -1806,7 +1198,7 @@ function MapPlanerWorkspace() {
     waypointsRef.current = next;
     setWaypoints(next);
     if (next.length >= MAX_WAYPOINTS) setAddMode(false);
-    pendingFitRef.current = true;
+    queueFitOnNextRoute();
   };
 
   const handleToggleAddMode = () => {
@@ -1932,16 +1324,9 @@ function MapPlanerWorkspace() {
 
   const handleClearEndpoint = (id: string) => {
     stopNavigation();
-    requestIdRef.current += 1;
-    bootPlanKeyRef.current = null;
-    resolvedKeyRef.current = "";
-    lastSavedSignatureRef.current = "";
+    resetRoutingState({ clearSavedSignature: true });
     clearLastRoute();
     setPickTarget((current) => (current === id ? null : current));
-    setRoutingError("");
-    setRoute(EMPTY_ROUTE);
-    setResolvedKey("");
-    setTrafficSignals([]);
     setClearNonce((current) => current + 1);
     setWaypoints((current) =>
       current.map((point) => (point.id === id ? createEmptyWaypoint(point.id) : point))
@@ -1950,18 +1335,10 @@ function MapPlanerWorkspace() {
 
   const handleClearRoute = () => {
     stopNavigation();
-    requestIdRef.current += 1;
-    pendingFitRef.current = false;
-    bootPlanKeyRef.current = null;
-    resolvedKeyRef.current = "";
-    lastSavedSignatureRef.current = "";
+    resetRoutingState({ clearSavedSignature: true, cancelPendingFit: true });
     clearLastRoute();
     setAddMode(false);
     setPickTarget(null);
-    setRoutingError("");
-    setRoute(EMPTY_ROUTE);
-    setResolvedKey("");
-    setTrafficSignals([]);
     setKursowkaOverlay(null);
     setSelectedStop(null);
     setContextMenu(null);
@@ -1974,7 +1351,7 @@ function MapPlanerWorkspace() {
     stopNavigation();
     setWaypoints((current) => [...current].reverse());
     setPickTarget(null);
-    pendingFitRef.current = true;
+    queueFitOnNextRoute();
     showToast("Zamieniono punkt startowy z metą.");
   };
 
@@ -1996,7 +1373,7 @@ function MapPlanerWorkspace() {
     );
     setPickTarget(null);
     setMobileExpanded(false);
-    pendingFitRef.current = true;
+    queueFitOnNextRoute();
     showToast(`Ustawiono: ${place.short}`);
   };
 
@@ -2027,7 +1404,7 @@ function MapPlanerWorkspace() {
           : point
       )
     );
-    pendingFitRef.current = true;
+    queueFitOnNextRoute();
     const role =
       id === waypointsRef.current[0]?.id
         ? "Start"
@@ -2086,38 +1463,8 @@ function MapPlanerWorkspace() {
     setAvoid(next);
   };
 
-  const handleRecalculate = () => {
-    if (!readyForRouting) {
-      showToast("Wybierz najpierw punkt startowy A i metę B.");
-      return;
-    }
-    pendingFitRef.current = true;
-    setIsRouting(true);
-    setRefreshTick((current) => current + 1);
-  };
-
-  const handleSaveRoute = () => {
-    if (!routeReady) {
-      showToast("Najpierw wyznacz poprawną trasę, aby zapisać ostatni plan.");
-      return;
-    }
-    const snapshot = buildSnapshot({
-      waypoints,
-      vehicle,
-      fleet,
-      speeds,
-      schedule,
-      avoid,
-      brigade,
-      route,
-    });
-    if (writeSnapshot(snapshot)) {
-      lastSavedSignatureRef.current = snapshotSignature(snapshot);
-      showToast("Ostatnia wyznaczona trasa zapisana w tej przeglądarce.");
-    } else {
-      showToast("Nie udało się zapisać trasy.");
-    }
-  };
+  const handleRecalculate = requestRouteRecalculate;
+  const handleSaveRoute = saveCurrentRouteSnapshot;
 
   const handleSaveBrigadePlan = () => {
     const cleaned = cleanBrigade(brigade);
@@ -2153,7 +1500,6 @@ function MapPlanerWorkspace() {
     stopNavigation();
     setAddMode(false);
     setPickTarget(null);
-    setRoutingError("");
     setBrigade(plan.brigade);
     if (plan.fleet?.length) {
       const restored = replaceFleet(plan.fleet);
@@ -2166,24 +1512,9 @@ function MapPlanerWorkspace() {
     }
     if (plan.speeds) setSpeeds(plan.speeds);
     if (plan.schedule) setSchedule(plan.schedule);
-    bootPlanKeyRef.current = null;
-    const currentPlanKey = buildPlanKey(waypointsRef.current, avoidRef.current);
+    applySavedBrigadeRoute(plan.waypoints, plan.avoid, plan.route);
     setAvoid(plan.avoid);
     setWaypoints(plan.waypoints);
-    const nextPlanKey = buildPlanKey(plan.waypoints, plan.avoid);
-    if (plan.route && plan.route.engine === "osrm" && plan.route.coords.length >= 2) {
-      if (nextPlanKey !== currentPlanKey) skipNextRouteKeyRef.current = nextPlanKey;
-      resolvedKeyRef.current = nextPlanKey;
-      setRoute(plan.route);
-      setResolvedKey(nextPlanKey);
-      setFitNonce((current) => current + 1);
-    } else {
-      resolvedKeyRef.current = "";
-      setRoute(EMPTY_ROUTE);
-      setResolvedKey("");
-      setTrafficSignals([]);
-      pendingFitRef.current = true;
-    }
     showToast(`Wczytano brygadę: ${plan.title}.`);
   };
 
@@ -2425,15 +1756,9 @@ function MapPlanerWorkspace() {
       headsign?: string;
     }) => {
       stopNavigation();
-      requestIdRef.current += 1;
-      bootPlanKeyRef.current = null;
-      resolvedKeyRef.current = "";
+      resetRoutingState();
       setAddMode(false);
       setPickTarget(null);
-      setRoutingError("");
-      setRoute(EMPTY_ROUTE);
-      setResolvedKey("");
-      setTrafficSignals([]);
       setKursowkaOverlay(null);
       setBrigade({ line: payload.line, duty: payload.duty });
       setWaypoints(payload.waypoints);
@@ -2444,14 +1769,14 @@ function MapPlanerWorkspace() {
           time: payload.departureTime!,
         }));
       }
-      pendingFitRef.current = true;
+      queueFitOnNextRoute();
       setKursowkiOpen(false);
       setMobileExpanded(false);
       showToast(
         `Wczytano kurs kursówki ${payload.duty} (${payload.headsign || `${payload.waypoints.length} przyst.`}) do Planera.`
       );
     },
-    [stopNavigation, showToast]
+    [stopNavigation, resetRoutingState, queueFitOnNextRoute, showToast]
   );
 
   const handleShare = async () => {
@@ -2487,7 +1812,7 @@ function MapPlanerWorkspace() {
 
   const handleScheduleChange = (next: ScheduleSettings) => {
     stopNavigation();
-    setClockNow(Date.now());
+    refreshClockNow();
     setSchedule(next);
   };
 
@@ -2546,18 +1871,6 @@ function MapPlanerWorkspace() {
     if (courseNavState) return courseNavState.position;
     return navActive ? pointAtProgress(activeRoute, navProgress) : null;
   }, [courseNavState, navActive, activeRoute, navProgress]);
-
-  const courseNavProgressOverlay = useMemo(
-    () =>
-      courseNavState
-        ? {
-            passed: courseNavState.splitPath.passed,
-            remaining: courseNavState.splitPath.remaining,
-            passedStopCount: courseNavState.passedStopCount,
-          }
-        : null,
-    [courseNavState],
-  );
 
   const panelProps = {
     brigade,
@@ -2640,17 +1953,20 @@ function MapPlanerWorkspace() {
     onOpenCustomGtfsBuilder: () => setCustomGtfsBuilderOpen(true),
   };
 
+  const anyDialogOpen =
+    plannerLoginOpen ||
+    scheduleDiffOpen ||
+    routeAuditOpen ||
+    customGtfsBuilderOpen ||
+    stepsOpen ||
+    fleetOpen ||
+    settingsOpen ||
+    reportOpen ||
+    pdfOpen;
+
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       <PerfHud />
-      <PlanistLoginDialog
-        open={plannerLoginOpen}
-        onClose={() => setPlannerLoginOpen(false)}
-        onSuccess={() => {
-          setPlannerLoginOpen(false);
-          handleRoleChange("planner");
-        }}
-      />
 
       <div className="flex min-h-0 flex-1">
         {isDesktop && isPlanner && (
@@ -2922,11 +2238,8 @@ function MapPlanerWorkspace() {
                     handlersRef={customGtfsMapHandlersRef}
                     onApplyRoute={(lineId, variantId, drawnPath) => {
                       void (async () => {
-                        const [{ loadCustomGtfsLines, upsertCustomGtfsLine }, { polylineLengthMeters }] =
-                          await Promise.all([
-                            import("@/lib/engine/customGtfsLines"),
-                            import("@/lib/core/spatial"),
-                          ]);
+                        const { loadCustomGtfsLines, upsertCustomGtfsLine } =
+                          await import("@/lib/engine/customGtfsLines");
                         const all = await loadCustomGtfsLines();
                         const target = all.find((l) => l.id === lineId);
                         if (target) {
@@ -3013,7 +2326,7 @@ function MapPlanerWorkspace() {
                         sidebarOpen={mapSidebarOpen}
                         onToggleSidebar={() => setMapSidebarOpen((open) => !open)}
                         showLiveBuses={showLiveBuses}
-                        liveVehicles={liveVehicles}
+                        hasLiveBuses={hasLiveBuses}
                         busStops={busStops}
                         onSelectBus={handleSelectBus}
                         onSelectStop={selectStopFromFinder}
@@ -3032,7 +2345,6 @@ function MapPlanerWorkspace() {
                         liveVehicles={liveVehicles}
                         busStops={busStops}
                         liveTraffic={liveTraffic}
-                        liveLoading={liveLoading}
                         onRefreshLive={() => void fetchLiveBuses(true)}
                         signalCount={isPlanner ? trafficSignals.length : 0}
                         showTrafficSignals={visibility.trafficSignals}
@@ -3064,68 +2376,21 @@ function MapPlanerWorkspace() {
                 <CourseNavigationHud
                   route={courseNavRoute}
                   state={courseNavState}
+                  startedAtMs={courseNavStartedAt}
                   mode={courseNavMode}
-                  onModeChange={(nextMode) => {
-                    setCourseNavMode(nextMode);
-                    if (nextMode === "sim") {
-                      setCourseNavSimMeters(courseNavState.alongMeters);
-                      setCourseNavSimPlaying(true);
-                    } else {
-                      setCourseNavSimPlaying(false);
-                      startLocation();
-                    }
-                  }}
+                  onModeChange={handleNavModeChange}
                   simPlaying={courseNavSimPlaying}
-                  onToggleSimPlay={() => {
-                    if (courseNavSimMeters >= courseNavRoute.totalMeters - 10) {
-                      setCourseNavSimMeters(0);
-                      setCourseNavSimPlaying(true);
-                    } else {
-                      setCourseNavSimPlaying((v) => !v);
-                    }
-                  }}
+                  onToggleSimPlay={handleToggleSimPlay}
                   simSpeedMultiplier={courseNavSimSpeed}
-                  onCycleSimSpeed={() =>
-                    setCourseNavSimSpeed((s) => (s === 1 ? 3 : s === 3 ? 8 : 1))
-                  }
+                  onCycleSimSpeed={handleCycleSimSpeed}
                   gpsAvailable={Boolean(userLocation)}
                   gpsSpeedKmh={userLocation?.speedKmh ?? null}
                   followingCamera={courseNavFollowCamera}
-                  onRecenterCamera={() => {
-                    setCourseNavFollowCamera(true);
-                    mapRef.current?.centerOn(
-                      courseNavState.position[0],
-                      courseNavState.position[1],
-                      16,
-                    );
-                  }}
+                  onRecenterCamera={handleRecenterNavCamera}
                   punctualityMode={courseNavPunctualityMode}
-                  onTogglePunctualityMode={() =>
-                    setCourseNavPunctualityMode((m) =>
-                      m === "schedule" ? "relative" : "schedule",
-                    )
-                  }
-                  onStepStop={(delta) => {
-                    if (courseNavMode === "sim") {
-                      const targetIdx = Math.min(
-                        Math.max(0, courseNavState.nextStopIndex + delta),
-                        Math.max(0, courseNavRoute.stops.length - 1),
-                      );
-                      const stop = courseNavRoute.stops[targetIdx];
-                      if (stop) {
-                        setCourseNavSimMeters(stop.alongMeters);
-                      }
-                    } else {
-                      setCourseNavManualStopOffset((prev) => prev + delta);
-                    }
-                  }}
-                  onJumpToStop={(stopIndex) => {
-                    const stop = courseNavRoute.stops[stopIndex];
-                    if (stop) {
-                      setCourseNavFollowCamera(false);
-                      mapRef.current?.centerOn(stop.lat, stop.lon, 16);
-                    }
-                  }}
+                  onTogglePunctualityMode={handleTogglePunctualityMode}
+                  onStepStop={handleStepNavStop}
+                  onJumpToStop={handleJumpToNavStop}
                   onStopNavigation={stopCourseNavigation}
                 />
               )}
@@ -3303,9 +2568,6 @@ function MapPlanerWorkspace() {
             onToggleLiveBuses={() => toggleVisibility("liveBuses")}
             operatorFilter={operatorFilter}
             onOperatorFilter={setOperatorFilter}
-            liveVehicles={liveVehicles}
-            liveTraffic={liveTraffic}
-            liveLoading={liveLoading}
             onRefreshLive={() => void fetchLiveBuses(true)}
             mapStopCount={mapStops.length}
             busLoading={busLoading}
@@ -3355,7 +2617,7 @@ function MapPlanerWorkspace() {
                 <Suspense fallback={null}>
                   <TripPlannerPanel
                     embedded
-                    buses={liveVehicles}
+                    buses={sidebarView === "trip" ? liveVehicles : EMPTY_LIVE_VEHICLES}
                     origin={tripOrigin}
                     destination={tripDest}
                     onOriginChange={updateTripOrigin}
@@ -3436,7 +2698,7 @@ function MapPlanerWorkspace() {
                         }
                       : undefined
                   }
-                  liveVehicles={liveVehicles}
+                  liveVehicles={sidebarView === "kursowki" ? liveVehicles : EMPTY_LIVE_VEHICLES}
                   onSelectBus={handleSelectBus}
                   onShowShapeOverlay={(overlay) => {
                     if (overlayEpoch !== overlayEpochRef.current) return;
@@ -3589,7 +2851,7 @@ function MapPlanerWorkspace() {
                 hasDestination={Boolean(tripDest)}
                 onSetStart={() => setContextCoordinate("start")}
                 onSetEnd={() => setContextCoordinate("end")}
-                onSavePlace={!isPlanner ? handleSaveContextPlace : undefined}
+                onSavePlace={!isPlanner ? () => void handleSaveContextPlace(contextMenu) : undefined}
                 onSwap={!isPlanner ? handleSwapTripPoints : undefined}
                 onClear={!isPlanner ? handleClearTripPoints : undefined}
               />
@@ -3634,44 +2896,31 @@ function MapPlanerWorkspace() {
         </main>
       </div>
 
-      {isPlanner && scheduleDiffOpen && (
+      {anyDialogOpen && (
         <Suspense fallback={null}>
-          <ScheduleDiffDialog
-            open={scheduleDiffOpen}
-            initialPreset={scheduleDiffPreset}
-            onClose={() => setScheduleDiffOpen(false)}
-            onToast={showToast}
-          />
-        </Suspense>
-      )}
-
-      {isPlanner && routeAuditOpen && (
-        <Suspense fallback={null}>
-          <RouteAuditDialog
-            open={routeAuditOpen}
-            onClose={() => setRouteAuditOpen(false)}
+          <WorkspaceDialogs
+            isPlanner={isPlanner}
+            plannerLoginOpen={plannerLoginOpen}
+            onClosePlannerLogin={() => setPlannerLoginOpen(false)}
+            onSuccessPlannerLogin={() => {
+              setPlannerLoginOpen(false);
+              handleRoleChange("planner");
+            }}
+            scheduleDiffOpen={scheduleDiffOpen}
+            scheduleDiffPreset={scheduleDiffPreset}
+            onCloseScheduleDiff={() => setScheduleDiffOpen(false)}
+            routeAuditOpen={routeAuditOpen}
+            onCloseRouteAudit={() => setRouteAuditOpen(false)}
             onFixInEditor={(lineShort, variantKey) => {
               openLineRouteEditor(lineShort, variantKey);
             }}
-            onShowOnMap={(overlay) => {
+            onShowOverlayOnMap={(overlay) => {
               setKursowkaOverlay(overlay);
               showToast(`Wyświetlono na mapie: ${overlay.title}.`);
             }}
-            onToast={showToast}
-          />
-        </Suspense>
-      )}
-
-      {isPlanner && customGtfsBuilderOpen && (
-        <Suspense fallback={null}>
-          <CustomGtfsBuilderDialog
-            open={customGtfsBuilderOpen}
-            onClose={() => setCustomGtfsBuilderOpen(false)}
-            onShowOnMap={(overlay) => {
-              setKursowkaOverlay(overlay);
-              showToast(`Wyświetlono na mapie: ${overlay.title}.`);
-            }}
-            onStartMapSession={(session) => {
+            customGtfsBuilderOpen={customGtfsBuilderOpen}
+            onCloseCustomGtfsBuilder={() => setCustomGtfsBuilderOpen(false)}
+            onStartCustomGtfsMapSession={(session) => {
               setLineEditorOpen(false);
               setCustomGtfsBuilderOpen(false);
               setCustomGtfsMapSession(session);
@@ -3682,65 +2931,32 @@ function MapPlanerWorkspace() {
                   : `Klikaj na mapie punkty trasy linii ${session.lineShort} (Po drogach OSRM włączone).`,
               );
             }}
-            resumeTarget={customGtfsResumeTarget}
-            onToast={showToast}
-          />
-        </Suspense>
-      )}
-
-      {stepsOpen && (
-        <StepsDrawer
-          open={stepsOpen}
-          onClose={() => setStepsOpen(false)}
-          route={navigationRoute}
-          waypoints={waypoints}
-          metrics={metrics}
-          vehicle={vehicle}
-          onFocusStep={handleFocusStep}
-          onStartNavigation={startNavigation}
-        />
-      )}
-      {fleetOpen && (
-        <FleetDialog
-          open={fleetOpen}
-          onClose={() => setFleetOpen(false)}
-          fleet={fleet}
-          activeId={vehicle}
-          onSelect={handleVehicleChange}
-          onChange={handleFleetChange}
-        />
-      )}
-      {isPlanner && settingsOpen && (
-        <SettingsDialog
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          engine={activeRoute.engine === "osrm" ? "OSRM (bez klucza)" : "Schemat demonstracyjny"}
-        />
-      )}
-      {reportOpen && (
-        <ReportDialog
-          open={reportOpen}
-          onClose={() => setReportOpen(false)}
-          waypoints={waypoints}
-          route={activeRoute}
-          metrics={comparisons}
-          activeVehicle={vehicle}
-          brigade={brigade}
-          onOpenPdf={openPdf}
-          pdfDisabled={!exportReady}
-        />
-      )}
-      {pdfOpen && (
-        <Suspense fallback={null}>
-          <PdfExportDialog
-            open={pdfOpen}
-            onClose={() => setPdfOpen(false)}
-            route={navigationRoute}
+            customGtfsResumeTarget={customGtfsResumeTarget}
+            stepsOpen={stepsOpen}
+            onCloseSteps={() => setStepsOpen(false)}
+            navigationRoute={navigationRoute}
+            activeRoute={activeRoute}
             waypoints={waypoints}
             metrics={metrics}
+            comparisons={comparisons}
             vehicle={vehicle}
             brigade={brigade}
-            routeReady={exportReady}
+            fleet={fleet}
+            onFocusStep={handleFocusStep}
+            onStartNavigation={startNavigation}
+            fleetOpen={fleetOpen}
+            onCloseFleet={() => setFleetOpen(false)}
+            onVehicleChange={handleVehicleChange}
+            onFleetChange={handleFleetChange}
+            settingsOpen={settingsOpen}
+            onCloseSettings={() => setSettingsOpen(false)}
+            reportOpen={reportOpen}
+            onCloseReport={() => setReportOpen(false)}
+            onOpenPdf={openPdf}
+            exportReady={exportReady}
+            pdfOpen={pdfOpen}
+            onClosePdf={() => setPdfOpen(false)}
+            showToast={showToast}
           />
         </Suspense>
       )}

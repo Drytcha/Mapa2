@@ -28,7 +28,8 @@
     "test:route-editor:e2e": "node scripts/test-line-route-editor-e2e.mjs",
     "test:schedule-diff": "tsx scripts/test-schedule-diff.ts && tsx scripts/test-schedule-diff-ui.tsx",
     "test:route-audit": "tsx scripts/test-route-audit.ts && tsx scripts/test-route-audit-ui.tsx",
-    "test:gtfs-builder": "tsx scripts/test-gtfs-export-builder.ts && tsx scripts/test-gtfs-export-builder-ui.tsx"
+    "test:gtfs-builder": "tsx scripts/test-gtfs-export-builder.ts && tsx scripts/test-gtfs-export-builder-ui.tsx",
+    "test:optimizations": "tsx scripts/test-optimizations.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",

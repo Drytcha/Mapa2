@@ -520,9 +520,9 @@ path.course-stop--tappable:hover {
     0 4px 12px rgb(0 0 0 / 42%);
   transition: box-shadow 0.16s ease;
 }
-[data-zoom-tier="close"] .live-bus:has(.live-bus-op),
-.live-bus-wrap:hover .live-bus:has(.live-bus-op),
-.live-bus-wrap--selected .live-bus:has(.live-bus-op) {
+[data-zoom-tier="close"] .live-bus--with-op,
+.live-bus-wrap:hover .live-bus--with-op,
+.live-bus-wrap--selected .live-bus--with-op {
   padding-left: 10px;
 }
 .leaflet-vehicles-pane .live-bus,
@@ -593,9 +593,9 @@ path.course-stop--tappable:hover {
     font-size: 10px;
     border-width: 1.5px;
   }
-  [data-zoom-tier="close"] .leaflet-vehicles-pane .live-bus:has(.live-bus-op),
-  .leaflet-vehicles-pane .live-bus-wrap:hover .live-bus:has(.live-bus-op),
-  .leaflet-vehicles-pane .live-bus-wrap--selected .live-bus:has(.live-bus-op) {
+  [data-zoom-tier="close"] .leaflet-vehicles-pane .live-bus--with-op,
+  .leaflet-vehicles-pane .live-bus-wrap:hover .live-bus--with-op,
+  .leaflet-vehicles-pane .live-bus-wrap--selected .live-bus--with-op {
     padding-left: 9px;
   }
   .leaflet-vehicles-pane .live-bus-op {

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { forwardRef, memo, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   ArrowUpDown,
@@ -63,6 +63,7 @@ import { formatDistance, formatDuration, formatDurationShort } from "@/lib/geo";
 import { dedupeLines, filterLinesForRole, formatDutyCode, isSameDutyLine } from "@/lib/core/text";
 import { cn } from "@/utils/cn";
 import { OPERATOR_STYLES } from "@/lib/transit";
+import { onRuntimeEvent } from "@/lib/core/runtimeHub";
 import BusSearch from "./BusSearch";
 import {
   DELAY_STYLES,
@@ -244,11 +245,12 @@ export function MapRouteCard({
 /*  Compact Map Quick Bar (Sidebar Trigger + Unified Search)                  */
 /* -------------------------------------------------------------------------- */
 
-export function MapQuickBar({
+export const MapQuickBar = memo(function MapQuickBar({
   sidebarOpen,
   onToggleSidebar,
   showLiveBuses,
   liveVehicles,
+  hasLiveBuses,
   busStops,
   onSelectBus,
   onSelectStop,
@@ -258,7 +260,8 @@ export function MapQuickBar({
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   showLiveBuses: boolean;
-  liveVehicles: LiveBusVehicle[];
+  liveVehicles?: LiveBusVehicle[];
+  hasLiveBuses?: boolean;
   busStops: BusStop[];
   onSelectBus: (bus: LiveBusVehicle) => void;
   onSelectStop: (stop: BusStop) => void;
@@ -266,6 +269,7 @@ export function MapQuickBar({
   /** Gdy obok jest stały pasek ikon (md+), nie dublujemy przycisku otwierania. */
   hideToggle?: boolean;
 }) {
+  const anyLive = hasLiveBuses ?? Boolean(liveVehicles && liveVehicles.length > 0);
   return (
     <div
       data-testid="map-quick-bar"
@@ -291,7 +295,7 @@ export function MapQuickBar({
             )}
           >
             <PanelLeftOpen className="h-4 w-4" strokeWidth={2.1} />
-            {showLiveBuses && liveVehicles.length > 0 && !sidebarOpen && (
+            {showLiveBuses && anyLive && !sidebarOpen && (
               <span
                 aria-hidden="true"
                 className="absolute right-0 top-0 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-surface"
@@ -317,13 +321,13 @@ export function MapQuickBar({
       </div>
     </div>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Live Fleet Bar (MZUK, ŚKA GPS) + Traffic Signals Toggle                   */
 /* -------------------------------------------------------------------------- */
 
-export function LiveFleetControl({
+export const LiveFleetControl = memo(function LiveFleetControl({
   showLiveBuses,
   onToggleLiveBuses,
   operatorFilter,
@@ -331,7 +335,7 @@ export function LiveFleetControl({
   liveVehicles,
   busStops = [],
   liveTraffic,
-  liveLoading,
+  liveLoading: propLiveLoading,
   onRefreshLive,
   signalCount,
   showTrafficSignals,
@@ -355,7 +359,7 @@ export function LiveFleetControl({
   liveVehicles: LiveBusVehicle[];
   busStops?: BusStop[];
   liveTraffic: LiveTrafficSummary | null;
-  liveLoading: boolean;
+  liveLoading?: boolean;
   onRefreshLive: () => void;
   signalCount: number;
   showTrafficSignals: boolean;
@@ -367,6 +371,12 @@ export function LiveFleetControl({
   onSelectStop?: (stop: BusStop) => void;
 }) {
   const [legendExpanded, setLegendExpanded] = useState(false);
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  useEffect(() => {
+    if (propLiveLoading !== undefined) return;
+    return onRuntimeEvent("fleet:loading", setRuntimeLoading);
+  }, [propLiveLoading]);
+  const liveLoading = propLiveLoading ?? runtimeLoading;
   const dutyStats = dutyAssignmentStats(liveVehicles);
   const counts = liveTraffic?.operatorBreakdown ?? {
     mzuk: liveVehicles.filter((v) => v.operatorKey === "mzuk").length,
@@ -535,7 +545,7 @@ export function LiveFleetControl({
 
     </div>
   );
-}
+});
 
 /** Always available while an overlay is displayed, including route editing modes. */
 export function ShapeOverlayControl({
