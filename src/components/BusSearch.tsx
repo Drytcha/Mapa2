@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Bus, BusFront, Search, X } from "lucide-react";
 import type { BusStop, LiveBusVehicle } from "@/lib/types";
 import { filterStops, stopDisplayName } from "@/lib/busStops";
+import { normalizeBusLine } from "@/lib/busMarker";
 import {
   filterLinesForRole,
   foldPolish,
@@ -374,15 +375,17 @@ export default function BusSearch({
                               <span className="metric rounded bg-brand-soft px-1.5 py-0.5 text-[10px] font-extrabold text-brand-ink">
                                 Brygada {formatDutyCode(duty.code, "/")}
                               </span>
-                            ) : (
+                            ) : normalizeBusLine(bus.routeName) ? (
                               <>
-                                <span>Linia {bus.routeName || "—"}</span>
+                                <span>Linia {normalizeBusLine(bus.routeName)}</span>
                                 {duty.code ? (
                                   <span className="metric rounded bg-brand-soft px-1.5 py-0.5 text-[9.5px] font-extrabold text-brand-ink">
                                     bryg. {formatDutyCode(duty.code, "/")}
                                   </span>
                                 ) : null}
                               </>
+                            ) : (
+                              <span>Autobus {formatVehicleNumber(bus.vehicleId)}</span>
                             )}
                             {!duty.code && showDutyStatus ? (
                               <span

@@ -9,7 +9,7 @@ import {
 } from "./delay";
 import type { LiveBusVehicle } from "./types";
 
-/** Direction, line, speed and delay stay visible; only extra identifiers are optional. */
+/** Direction, line, vehicle number, speed and delay stay visible; extra duty is optional. */
 export interface BusLabelOptions {
   kursowka: boolean;
   vehicleNumber: boolean;
@@ -21,69 +21,77 @@ export interface BusLabelOptions {
   destination?: string | null;
 }
 
-interface MarkerLabelSegment {
-  primary?: boolean;
-  html: string;
+/** Zwraca oczyszczony numer linii albo pusty ciąg, gdy autobus nie ma wybranej linii. */
+export function normalizeBusLine(routeName: string | null | undefined): string {
+  const cleaned = String(routeName ?? "").trim();
+  if (!cleaned || cleaned === "?" || cleaned === "-" || cleaned === "—") return "";
+  if (/^(brak|null|none|undefined)$/i.test(cleaned)) return "";
+  return cleaned;
 }
 
-const SEPARATOR = '<span class="live-bus-sep live-bus-extra">|</span>';
-
 /**
- * Builds deduplicated label segments for a live bus marker:
- * - Same-line duty (`routeName = "2"`, `kursowka = "2/03"`): renders `2/03` once (never `2 | 2/03` or `2 | 2`).
- * - Cross-line duty (`routeName = "19"`, `kursowka = "9/01"`): renders `19 | 9/01` (distinct current line + duty).
- * - Identical raw values (`routeName = "2"`, `kursowka = "2"`): renders `2` once.
+ * Builds deduplicated label HTML for a live bus marker:
+ * - No selected line (`routeName` empty / `"?"`): renders ONLY the vehicle number (`#340`), never `?`.
+ * - With line (`routeName = "15"`, `vehicleId = "340"`): renders `15 | #340` visible at all zoom levels
+ *   (including zoomed-out city/far map views) when `options.vehicleNumber` is enabled.
+ * - Optional duty (`options.kursowka`): `/03` or `| 9/01` stays `.live-bus-extra` (shown up close / selected).
  */
-function buildMarkerSegments(
+function buildMarkerLabelHtml(
   bus: Pick<LiveBusVehicle, "kursowka" | "routeName" | "vehicleId">,
   options: BusLabelOptions
-): { segments: MarkerLabelSegment[]; hasExtra: boolean } {
-  const line = bus.routeName.trim() || "?";
-  const segments: MarkerLabelSegment[] = [];
-  let hasExtra = false;
-
+): { labelHtml: string; hasExtra: boolean } {
+  const line = normalizeBusLine(bus.routeName);
+  const vehicle = formatVehicleNumber(bus.vehicleId);
   const rawDuty = options.kursowka ? bus.kursowka.trim() : "";
   const canonicalDuty = rawDuty ? formatDutyCode(rawDuty, "/") : "";
   const parsedDuty = canonicalDuty ? parseDutyPair(canonicalDuty) : null;
 
+  // Gdy autobus nie ma wybranej linii — pokazujemy wyłącznie sam numer autobusu.
+  if (!line) {
+    const soloLabel = vehicle || "?";
+    const parts = [
+      `<span class="live-bus-veh live-bus-veh--solo">${escapeHtml(soloLabel)}</span>`,
+    ];
+    let hasExtra = false;
+    if (canonicalDuty) {
+      parts.push(
+        `<span class="live-bus-extra"><span class="live-bus-sep">|</span>${escapeHtml(canonicalDuty)}</span>`
+      );
+      hasExtra = true;
+    }
+    return { labelHtml: parts.join(""), hasExtra };
+  }
+
+  const parts: string[] = [];
+  let hasExtra = false;
+
   if (canonicalDuty && isSameDutyLine(line, canonicalDuty)) {
     if (parsedDuty) {
-      // Same line as duty prefix (e.g. line "2" + duty "2/03") -> single combined "2/03"
-      segments.push({
-        primary: true,
-        html: `<span class="live-bus-line">${escapeHtml(parsedDuty.line)}</span><span class="live-bus-extra">/${escapeHtml(parsedDuty.suffix)}</span>`,
-      });
+      parts.push(
+        `<span class="live-bus-primary"><span class="live-bus-line">${escapeHtml(parsedDuty.line)}</span><span class="live-bus-extra">/${escapeHtml(parsedDuty.suffix)}</span></span>`
+      );
       hasExtra = true;
     } else {
-      // Exact duplicate (e.g. "2" and "2") -> render line once
-      segments.push({
-        primary: true,
-        html: `<span class="live-bus-line">${escapeHtml(line)}</span>`,
-      });
+      parts.push(`<span class="live-bus-line">${escapeHtml(line)}</span>`);
     }
   } else {
-    segments.push({
-      primary: true,
-      html: `<span class="live-bus-line">${escapeHtml(line)}</span>`,
-    });
+    parts.push(`<span class="live-bus-line">${escapeHtml(line)}</span>`);
     if (canonicalDuty) {
-      // Cross-line trip (e.g. line "19" served by duty "9/01")
-      segments.push({
-        html: `<span class="live-bus-extra">${escapeHtml(canonicalDuty)}</span>`,
-      });
+      parts.push(
+        `<span class="live-bus-extra"><span class="live-bus-sep">|</span>${escapeHtml(canonicalDuty)}</span>`
+      );
       hasExtra = true;
     }
   }
 
-  if (options.vehicleNumber) {
-    const vehicle = formatVehicleNumber(bus.vehicleId);
-    if (vehicle) {
-      segments.push({ html: `<span class="live-bus-extra">${escapeHtml(vehicle)}</span>` });
-      hasExtra = true;
-    }
+  if (options.vehicleNumber && vehicle) {
+    parts.push(
+      `<span class="live-bus-veh-group"><span class="live-bus-sep">|</span><span class="live-bus-veh">${escapeHtml(vehicle)}</span></span>`
+    );
+    hasExtra = true;
   }
 
-  return { segments, hasExtra };
+  return { labelHtml: parts.join(""), hasExtra };
 }
 
 /** HTML of the Leaflet divIcon and the hover tooltip for one live bus. */
@@ -95,8 +103,8 @@ export function buildBusMarker(
   const style = DELAY_STYLES[delayTone(bus.delaySeconds)];
   // Kierunek z rozkładu jest pewniejszy niż tablica kierunkowa GPS.
   const directionLabel = options.destination || bus.headsign || "";
-  const { segments, hasExtra } = buildMarkerSegments(bus, options);
-  const compact = !hasExtra && segments.length === 1;
+  const { labelHtml, hasExtra } = buildMarkerLabelHtml(bus, options);
+  const compact = !hasExtra;
   const speedText = formatSpeed(bus.speedKmh);
   const delayText = formatDelay(bus.delaySeconds);
   const delayDescription = describeDelay(bus.delaySeconds);
@@ -111,7 +119,6 @@ export function buildBusMarker(
   const operatorBadge = compact
     ? ""
     : `<span class="live-bus-op live-bus-op--${bus.operatorKey}">${opLetter}</span>`;
-  const labelHtml = segments.map((s) => s.html).join(SEPARATOR);
   const pill = `${operatorBadge}${direction}<span class="live-bus-label">${labelHtml}</span>`;
 
   const html = [
@@ -123,15 +130,15 @@ export function buildBusMarker(
     `<span class="live-bus-delay" title="${escapeHtml(delayDescription)}">${escapeHtml(delayText)}</span></div></div>`,
   ].join("");
 
-  const line = bus.routeName.trim() || "?";
+  const line = normalizeBusLine(bus.routeName);
   const canonicalDuty = bus.kursowka.trim() ? formatDutyCode(bus.kursowka.trim(), "/") : "";
   const vehicleNumber = formatVehicleNumber(bus.vehicleId);
   const tooltipRows = [
-    { key: "Linia", value: line === "?" ? "brak numeru linii" : line },
+    { key: "Linia", value: line || "brak wybranej linii" },
     ...(options.kursowka && canonicalDuty && canonicalDuty.toUpperCase() !== line.toUpperCase()
       ? [{ key: "Brygada / kursówka", value: canonicalDuty }]
       : []),
-    ...(options.vehicleNumber && vehicleNumber
+    ...((options.vehicleNumber || !line) && vehicleNumber
       ? [{ key: "Numer taborowy wozu", value: vehicleNumber }]
       : []),
     ...(directionLabel ? [{ key: "Kierunek", value: directionLabel }] : []),
