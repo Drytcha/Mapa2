@@ -180,6 +180,32 @@ button {
   animation-play-state: paused;
 }
 
+/* At far zoom the complete fleet can mean dozens of HTML markers. While the
+   map is moving, keep their locations visible as tiny route-coloured dots and
+   drop label/SVG/shadow paint + hit-testing; restore full pills on map idle. */
+.leaflet-container.map-busy[data-zoom-tier="far"] .leaflet-vehicles-pane,
+.leaflet-container.map-busy[data-zoom-tier="far"] .leaflet-vehicles-pane .live-bus-wrap,
+.leaflet-container.map-busy[data-zoom-tier="far"] .leaflet-vehicles-pane .live-bus-wrap > * {
+  pointer-events: none !important;
+}
+.leaflet-container.map-busy[data-zoom-tier="far"] .leaflet-vehicles-pane .live-bus-wrap:not(.live-bus-wrap--selected) .live-bus {
+  display: block;
+  width: 9px;
+  min-width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: var(--route-color, #0d4f3b);
+  box-shadow: none;
+  color: transparent;
+  font-size: 0;
+  transition: none;
+}
+.leaflet-container.map-busy[data-zoom-tier="far"] .leaflet-vehicles-pane .live-bus-wrap:not(.live-bus-wrap--selected) .live-bus > * {
+  display: none !important;
+}
+
 .leaflet-control-attribution {
   border-radius: 6px 0 0 0 !important;
   border: 1px solid var(--color-line) !important;

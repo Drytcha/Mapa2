@@ -36,6 +36,8 @@ assert.match(mapView, /classList\.contains\("map-busy"\)/, "ruch mapy pauzuje ak
 assert.match(mapView, /TARGET_FRAME_INTERVAL_MS = 1000 \/ 30/, "animacja floty ma limit 30 kl./s");
 assert.match(mapView, /activeVehicleIds\(nowMs\)/, "w animacji pomijane są nieruchome autobusy");
 assert.match(mapView, /arrowElement: HTMLElement \| null/, "strzałka markera jest cache'owana zamiast wyszukiwana w DOM co klatkę");
+assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap:not\(\.live-bus-wrap--selected\) \.live-bus \{[\s\S]*?width: 9px/, "podczas przesuwania przy dalekim zoomie autobusowe pigułki redukują się do lekkich kropek");
+assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap > \* \{\s*pointer-events: none !important;/, "podczas przesuwania markery nie biorą udziału w hit-testach");
 assert.match(css, /map-busy \.nav-vehicle/, "animacje są pauzowane przez klasę map-busy");
 
 // 2b. Przystanki rysowane tylko wokół widoku (mniej DOM = płynniejsze przesuwanie).
