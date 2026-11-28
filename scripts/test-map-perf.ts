@@ -39,6 +39,8 @@ assert.match(mapView, /arrowElement: HTMLElement \| null/, "strzałka markera je
 assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap:not\(\.live-bus-wrap--selected\) \.live-bus \{[\s\S]*?width: 9px/, "podczas przesuwania przy dalekim zoomie autobusowe pigułki redukują się do lekkich kropek");
 assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap > \* \{\s*pointer-events: none !important;/, "podczas przesuwania markery nie biorą udziału w hit-testach");
 assert.match(css, /map-busy \.nav-vehicle/, "animacje są pauzowane przez klasę map-busy");
+assert.match(css, /live-bus-tooltip::before \{\s*border-top-color: var\(--color-line\)/, "ogon dymka autobusu ma obrys zgodny z borderem karty");
+assert.match(css, /live-bus-tooltip::after \{[\s\S]*?border-top-color: var\(--color-surface\)/, "ogon dymka autobusu ma osobne wypełnienie wnętrza");
 
 // 2b. Przystanki rysowane tylko wokół widoku (mniej DOM = płynniejsze przesuwanie).
 assert.match(mapView, /const STOP_SHOW_PAD = 0\.\d+/, "zasięg dodawania markerów");

@@ -243,6 +243,23 @@ button {
 .leaflet-tooltip-top.waypoint-tooltip::before {
   border-top-color: var(--color-surface);
 }
+/* Tail bus-tooltip: zewnętrzny trójkąt rysuje border, wewnętrzny wypełnienie
+   karty — dzięki temu grot wyrasta z obramowania zamiast wyglądać na odklejony. */
+.leaflet-tooltip-top.live-bus-tooltip::before {
+  border-top-color: var(--color-line);
+}
+.leaflet-tooltip-top.live-bus-tooltip::after {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  margin-left: -5px;
+  margin-bottom: -10px;
+  border: 5px solid transparent;
+  border-top-color: var(--color-surface);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+}
 .leaflet-tooltip.waypoint-tooltip--hint {
   background: var(--color-ink);
   color: var(--color-canvas);
