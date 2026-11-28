@@ -281,6 +281,14 @@ interface LiveBusMarkerEntry {
   lastBearing: number | null;
 }
 
+interface LiveBusCanvasEntry {
+  marker: L.CircleMarker;
+  tooltip: string;
+  routeColor: string;
+  lastLat: number;
+  lastLon: number;
+}
+
 const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   {
     route,
@@ -356,8 +364,10 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     return map;
   }, [kursowkaOverlay]);
+  const [zoomTier, setZoomTier] = useState<"far" | "city" | "close">("city");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const vehicleCanvasRendererRef = useRef<L.Canvas | null>(null);
   const tileRef = useRef<L.TileLayer[]>([]);
   const routeGroupRef = useRef<L.LayerGroup | null>(null);
   const kursowkaGroupRef = useRef<L.LayerGroup | null>(null);
@@ -380,6 +390,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   const turnaroundGroupRef = useRef<L.LayerGroup | null>(null);
   const vehicleGroupRef = useRef<L.LayerGroup | null>(null);
   const liveBusMarkersRef = useRef<Map<string, LiveBusMarkerEntry>>(new Map());
+  const liveBusCanvasMarkersRef = useRef<Map<string, LiveBusCanvasEntry>>(new Map());
   const liveBusByIdRef = useRef<Map<string, LiveBusVehicle>>(new Map());
   const busInterpolatorRef = useRef<BusMotionInterpolator>(new BusMotionInterpolator());
   const busAnimRafRef = useRef<number>(0);
@@ -653,6 +664,16 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const signalPane = map.createPane("signals");
     signalPane.style.zIndex = "550";
 
+    const vehicleCanvasPane = map.createPane("vehicleCanvas");
+    vehicleCanvasPane.style.zIndex = "679";
+
+    const vehicleTooltipPane = map.createPane("vehicleTooltips");
+    vehicleTooltipPane.style.zIndex = "720";
+
+    const vehicleCanvasRenderer = L.canvas({ pane: "vehicleCanvas", padding: 0.35 });
+    vehicleCanvasRenderer.addTo(map);
+    vehicleCanvasRendererRef.current = vehicleCanvasRenderer;
+
     const vehiclePane = map.createPane("vehicles");
     vehiclePane.style.zIndex = "680";
 
@@ -718,7 +739,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     };
     const syncZoomTier = () => {
       const z = map.getZoom();
-      container.dataset.zoomTier = z < 13 ? "far" : z < 15 ? "city" : "close";
+      const tier = z < 13 ? "far" : z < 15 ? "city" : "close";
+      container.dataset.zoomTier = tier;
+      setZoomTier((current) => (current === tier ? current : tier));
     };
     syncZoomTier();
     map.on("movestart zoomstart", setBusy(true));
@@ -739,6 +762,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       stopMarkersRef.current.clear();
       stopStateRef.current.clear();
       liveBusMarkersRef.current.clear();
+      liveBusCanvasMarkersRef.current.clear();
+      vehicleCanvasRendererRef.current = null;
       liveBusByIdRef.current.clear();
       delete (container as HTMLElement & { __map?: L.Map }).__map;
       map.remove();
@@ -1633,19 +1658,33 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       const activeIds = interpolator.activeVehicleIds(nowMs);
       if (!activeIds.length) return;
       const entries = liveBusMarkersRef.current;
+      const canvasEntries = liveBusCanvasMarkersRef.current;
       const area = map.getBounds().pad(0.18);
       let anyAnimatingInView = false;
 
       // Settled vehicles are skipped entirely while other buses are still moving.
       for (const id of activeIds) {
         const entry = entries.get(id);
-        if (!entry) continue;
+        const canvasEntry = canvasEntries.get(id);
+        if (!entry && !canvasEntry) continue;
+        const lastLat = entry?.lastLat ?? canvasEntry!.lastLat;
+        const lastLon = entry?.lastLon ?? canvasEntry!.lastLon;
         const inView =
-          entry.selected || area.contains([entry.lastLat, entry.lastLon]);
+          entry?.selected || area.contains([lastLat, lastLon]);
         if (!inView) continue;
         const sample = interpolator.sample(id, nowMs);
         if (!sample) continue;
-        applyPose(entry, sample.lat, sample.lon, sample.bearingDeg);
+        if (entry) {
+          applyPose(entry, sample.lat, sample.lon, sample.bearingDeg);
+        } else if (
+          canvasEntry &&
+          (Math.abs(canvasEntry.lastLat - sample.lat) > 1e-7 ||
+            Math.abs(canvasEntry.lastLon - sample.lon) > 1e-7)
+        ) {
+          canvasEntry.marker.setLatLng([sample.lat, sample.lon]);
+          canvasEntry.lastLat = sample.lat;
+          canvasEntry.lastLon = sample.lon;
+        }
         if (!sample.settled) anyAnimatingInView = true;
       }
 
@@ -1697,8 +1736,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const group = vehicleGroupRef.current;
     if (!group) return;
 
+    const map = mapRef.current;
     const existing = liveBusMarkersRef.current;
+    const canvasMarkers = liveBusCanvasMarkersRef.current;
     const interpolator = busInterpolatorRef.current;
+    if (!map) return;
     if (!showLiveBuses || !liveBuses.length) {
       if (busAnimRafRef.current) {
         cancelAnimationFrame(busAnimRafRef.current);
@@ -1706,6 +1748,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       }
       interpolator.clear();
       group.clearLayers();
+      for (const entry of canvasMarkers.values()) entry.marker.remove();
+      canvasMarkers.clear();
       existing.clear();
       liveBusByIdRef.current.clear();
       return;
@@ -1738,6 +1782,73 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         },
         selected
       );
+
+      const useCanvas = zoomTier === "far" && !selected && vehicleCanvasRendererRef.current;
+      let canvasEntry = canvasMarkers.get(bus.vehicleId);
+      if (useCanvas) {
+        const domEntry = existing.get(bus.vehicleId);
+        if (domEntry) {
+          group.removeLayer(domEntry.marker);
+          existing.delete(bus.vehicleId);
+        }
+
+        const routeColor = bus.routeColor || "#0d4f3b";
+        if (canvasEntry) {
+          if (
+            Math.abs(canvasEntry.lastLat - renderLat) > 1e-7 ||
+            Math.abs(canvasEntry.lastLon - renderLon) > 1e-7
+          ) {
+            canvasEntry.marker.setLatLng([renderLat, renderLon]);
+            canvasEntry.lastLat = renderLat;
+            canvasEntry.lastLon = renderLon;
+          }
+          if (canvasEntry.routeColor !== routeColor) {
+            canvasEntry.marker.setStyle({ fillColor: routeColor });
+            canvasEntry.routeColor = routeColor;
+          }
+          if (canvasEntry.tooltip !== tooltip) {
+            canvasEntry.marker.setTooltipContent(tooltip);
+            canvasEntry.tooltip = tooltip;
+          }
+        } else {
+          const marker = L.circleMarker([renderLat, renderLon], {
+            renderer: vehicleCanvasRendererRef.current!,
+            pane: "vehicleCanvas",
+            radius: 5.5,
+            color: "#ffffff",
+            weight: 1.5,
+            opacity: 0.98,
+            fillColor: routeColor,
+            fillOpacity: 1,
+            bubblingMouseEvents: false,
+          });
+          marker.bindTooltip(tooltip, {
+            direction: "top",
+            offset: [0, -8],
+            className: "waypoint-tooltip live-bus-tooltip",
+            pane: "vehicleTooltips",
+          });
+          marker.on("click", () => {
+            const currentBus = liveBusByIdRef.current.get(bus.vehicleId);
+            if (currentBus) liveBusClickRef.current?.(currentBus);
+          });
+          marker.addTo(map);
+          canvasEntry = {
+            marker,
+            tooltip,
+            routeColor,
+            lastLat: renderLat,
+            lastLon: renderLon,
+          };
+          canvasMarkers.set(bus.vehicleId, canvasEntry);
+        }
+        continue;
+      }
+
+      if (canvasEntry) {
+        canvasEntry.marker.remove();
+        canvasMarkers.delete(bus.vehicleId);
+      }
 
       const prev = existing.get(bus.vehicleId);
       if (prev) {
@@ -1798,6 +1909,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           direction: "top",
           offset: [0, -12],
           className: "waypoint-tooltip live-bus-tooltip",
+          pane: "vehicleTooltips",
         });
         marker.addTo(group);
         existing.set(bus.vehicleId, {
@@ -1820,6 +1932,12 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         existing.delete(id);
       }
     }
+    for (const [id, entry] of canvasMarkers) {
+      if (!activeIds.has(id)) {
+        entry.marker.remove();
+        canvasMarkers.delete(id);
+      }
+    }
 
     if (interpolator.hasActiveAnimations(nowMs)) {
       startBusAnimLoopRef.current?.();
@@ -1832,6 +1950,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     busLabelVehicleNumber,
     tripDestinations,
     indexedLiveRoutes,
+    zoomTier,
   ]);
 
   /* Klik w autobus: delegacja na pane'cie pojazdów.
