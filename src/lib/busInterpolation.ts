@@ -564,6 +564,28 @@ export class BusMotionInterpolator {
     return this.evaluateTrack(track, nowMs);
   }
 
+  activeVehicleIds(nowMs: number): string[] {
+    const active: string[] = [];
+    for (const [id, track] of this.tracks) {
+      if (!track.settled && nowMs - track.startedAtMs < track.durationMs) {
+        active.push(id);
+      }
+    }
+    return active;
+  }
+
+  resumeAfterPause(pausedAtMs: number, resumedAtMs: number): void {
+    if (resumedAtMs <= pausedAtMs) return;
+    for (const track of this.tracks.values()) {
+      if (track.settled) continue;
+      // Account for tracks created/refreshed while the map was busy too.
+      const trackPauseAtMs = Math.max(pausedAtMs, track.startedAtMs);
+      if (resumedAtMs > trackPauseAtMs) {
+        track.startedAtMs += resumedAtMs - trackPauseAtMs;
+      }
+    }
+  }
+
   hasActiveAnimations(
     nowMs: number,
     visibleVehicleIds?: ReadonlySet<string>,

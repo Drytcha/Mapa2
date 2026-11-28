@@ -272,6 +272,7 @@ function createStopDivIcon(id: string, state: string): L.DivIcon {
 
 interface LiveBusMarkerEntry {
   marker: L.Marker;
+  arrowElement: HTMLElement | null;
   templateKey: string;
   tooltip: string;
   selected: boolean;
@@ -1576,10 +1577,14 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripDestinationKey, showLiveBuses]);
 
-  /* Wspólna pętla requestAnimationFrame do płynnego ruchu i obrotu autobusów GPS */
+  /* Wspólna, ograniczona do 30 kl./s pętla ruchu widocznych autobusów GPS */
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+
+    let lastFrameAtMs = 0;
+    let mapBusySinceMs = 0;
+    const TARGET_FRAME_INTERVAL_MS = 1000 / 30;
 
     const applyPose = (
       entry: LiveBusMarkerEntry,
@@ -1595,14 +1600,13 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         entry.lastLat = lat;
         entry.lastLon = lon;
       }
+      // Bearings do not need a DOM write for every sub-degree interpolation step.
       if (
         bearingDeg !== null &&
         (entry.lastBearing === null ||
-          Math.abs(entry.lastBearing - bearingDeg) > 0.15)
+          Math.abs(entry.lastBearing - bearingDeg) > 0.8)
       ) {
-        const arrow = entry.marker
-          .getElement()
-          ?.querySelector<HTMLElement>(".live-bus-arrow");
+        const arrow = entry.arrowElement;
         if (arrow) {
           arrow.style.transform = `rotate(${bearingDeg.toFixed(1)}deg)`;
           entry.lastBearing = bearingDeg;
@@ -1613,22 +1617,36 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const stepFrame = (nowMs: number) => {
       busAnimRafRef.current = 0;
       if (typeof document !== "undefined" && document.hidden) return;
-      const entries = liveBusMarkersRef.current;
-      if (!entries.size) return;
+      // During pan/zoom Leaflet is already repainting the whole viewport; pause
+      // vehicle DOM writes, then compensate the interpolation clock on moveend.
+      if (map.getContainer().classList.contains("map-busy")) {
+        if (!mapBusySinceMs) mapBusySinceMs = nowMs;
+        return;
+      }
+      if (nowMs - lastFrameAtMs < TARGET_FRAME_INTERVAL_MS) {
+        busAnimRafRef.current = requestAnimationFrame(stepFrame);
+        return;
+      }
+      lastFrameAtMs = nowMs;
 
+      const interpolator = busInterpolatorRef.current;
+      const activeIds = interpolator.activeVehicleIds(nowMs);
+      if (!activeIds.length) return;
+      const entries = liveBusMarkersRef.current;
       const area = map.getBounds().pad(0.18);
       let anyAnimatingInView = false;
 
-      for (const [id, entry] of entries) {
+      // Settled vehicles are skipped entirely while other buses are still moving.
+      for (const id of activeIds) {
+        const entry = entries.get(id);
+        if (!entry) continue;
         const inView =
           entry.selected || area.contains([entry.lastLat, entry.lastLon]);
         if (!inView) continue;
-        const sample = busInterpolatorRef.current.sample(id, nowMs);
+        const sample = interpolator.sample(id, nowMs);
         if (!sample) continue;
         applyPose(entry, sample.lat, sample.lon, sample.bearingDeg);
-        if (!sample.settled) {
-          anyAnimatingInView = true;
-        }
+        if (!sample.settled) anyAnimatingInView = true;
       }
 
       if (anyAnimatingInView) {
@@ -1650,7 +1668,13 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         }
         return;
       }
-      stepFrame(performance.now());
+      const nowMs = performance.now();
+      if (mapBusySinceMs) {
+        busInterpolatorRef.current.resumeAfterPause(mapBusySinceMs, nowMs);
+        mapBusySinceMs = 0;
+        lastFrameAtMs = 0;
+      }
+      stepFrame(nowMs);
     };
 
     startBusAnimLoopRef.current = ensureLoopRunning;
@@ -1668,7 +1692,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     };
   }, []);
 
-  /* Live GPS Wałbrzych buses (reconciled in-place with smooth 60fps GPS interpolation) */
+  /* Live GPS Wałbrzych buses (reconciled in-place with budgeted GPS interpolation) */
   useEffect(() => {
     const group = vehicleGroupRef.current;
     if (!group) return;
@@ -1734,6 +1758,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
               iconAnchor: [105, 14],
             })
           );
+          prev.arrowElement = prev.marker
+            .getElement()
+            ?.querySelector<HTMLElement>(".live-bus-arrow") ?? null;
           prev.templateKey = templateKey;
           prev.lastBearing = renderBearing;
         } else if (
@@ -1741,11 +1768,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           (prev.lastBearing === null ||
             Math.abs(prev.lastBearing - renderBearing) > 0.15)
         ) {
-          const arrow = prev.marker
-            .getElement()
-            ?.querySelector<HTMLElement>(".live-bus-arrow");
-          if (arrow) {
-            arrow.style.transform = `rotate(${renderBearing.toFixed(1)}deg)`;
+          if (prev.arrowElement) {
+            prev.arrowElement.style.transform = `rotate(${renderBearing.toFixed(1)}deg)`;
             prev.lastBearing = renderBearing;
           }
         }
@@ -1778,6 +1802,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
         marker.addTo(group);
         existing.set(bus.vehicleId, {
           marker,
+          arrowElement:
+            marker.getElement()?.querySelector<HTMLElement>(".live-bus-arrow") ?? null,
           templateKey,
           tooltip,
           selected,

@@ -32,7 +32,15 @@ assert.ok(
 );
 assert.doesNotMatch(css, /will-change: opacity/, "kafle nie wymuszają osobnej warstwy na czas fade");
 assert.match(mapView, /classList\.toggle\("map-busy"/, "ruch mapy wstrzymuje animacje markerów");
+assert.match(mapView, /classList\.contains\("map-busy"\)/, "ruch mapy pauzuje aktualizacje pozycji floty");
+assert.match(mapView, /TARGET_FRAME_INTERVAL_MS = 1000 \/ 30/, "animacja floty ma limit 30 kl./s");
+assert.match(mapView, /activeVehicleIds\(nowMs\)/, "w animacji pomijane są nieruchome autobusy");
+assert.match(mapView, /arrowElement: HTMLElement \| null/, "strzałka markera jest cache'owana zamiast wyszukiwana w DOM co klatkę");
+assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap:not\(\.live-bus-wrap--selected\) \.live-bus \{[\s\S]*?width: 9px/, "podczas przesuwania przy dalekim zoomie autobusowe pigułki redukują się do lekkich kropek");
+assert.match(css, /map-busy\[data-zoom-tier="far"\][\s\S]*?\.live-bus-wrap > \* \{\s*pointer-events: none !important;/, "podczas przesuwania markery nie biorą udziału w hit-testach");
 assert.match(css, /map-busy \.nav-vehicle/, "animacje są pauzowane przez klasę map-busy");
+assert.match(css, /live-bus-tooltip::before \{\s*border-top-color: var\(--color-line\)/, "ogon dymka autobusu ma obrys zgodny z borderem karty");
+assert.match(css, /live-bus-tooltip::after \{[\s\S]*?border-top-color: var\(--color-surface\)/, "ogon dymka autobusu ma osobne wypełnienie wnętrza");
 
 // 2b. Przystanki rysowane tylko wokół widoku (mniej DOM = płynniejsze przesuwanie).
 assert.match(mapView, /const STOP_SHOW_PAD = 0\.\d+/, "zasięg dodawania markerów");
